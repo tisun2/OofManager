@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Inno Setup output (binary installer is shipped via GitHub Releases)
+Installer/Output/
+
+# Visual Studio / Rider / VS Code per-user
+.vs/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# Logs / temp
+*.log
+*.tmp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local NuGet caches
+*.nupkg
+packages/
