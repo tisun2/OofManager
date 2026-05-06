@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>OOF Manager — 安装与使用说明</title>
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --ink: #1f2937;
+    --muted: #6b7280;
+    --brand: #2563eb;
+    --brand-dark: #1e40af;
+    --accent: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --border: #e5e7eb;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+                 "Microsoft YaHei", "PingFang SC", sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ===== Layout ===== */
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  /* ===== Hero ===== */
+  .hero {
+    background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    color: #fff;
+    border-radius: 18px;
+    padding: 44px 40px 40px;
+    box-shadow: 0 10px 30px rgba(37, 99, 235, 0.25);
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: -40% -10% auto auto;
+    width: 380px;
+    height: 380px;
+    background: radial-gradient(circle, rgba(255,255,255,0.18), transparent 60%);
+    pointer-events: none;
+  }
+  .hero-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+  .hero-logo {
+    width: 84px; height: 84px;
+    background: rgba(255,255,255,0.18);
+    border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 46px;
+    backdrop-filter: blur(6px);
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  .hero h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: 0.2px; }
+  .hero .sub { margin-top: 6px; opacity: 0.92; font-size: 16px; }
+  .hero .badges {
+    margin-top: 22px;
+    display: flex; flex-wrap: wrap; gap: 10px;
+  }
+  .badge {
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.3);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+  }
+
+  /* ===== Cards ===== */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 26px 28px;
+    margin-top: 26px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 22px;
+    color: var(--brand-dark);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .card h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px;
+    background: var(--brand); color: #fff;
+    border-radius: 50%;
+    font-size: 15px; font-weight: 700;
+  }
+  .card h3 {
+    margin: 22px 0 8px;
+    font-size: 17px;
+    color: var(--brand-dark);
+  }
+  .lead { color: var(--muted); margin-top: 0; }
+
+  /* ===== TOC ===== */
+  .toc {
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 24px;
+    margin-top: 26px;
+  }
+  .toc strong { color: var(--brand-dark); }
+  .toc ol {
+    margin: 8px 0 0;
+    padding-left: 22px;
+    columns: 2;
+    column-gap: 28px;
+  }
+  .toc li { margin: 4px 0; }
+
+  /* ===== SVG mockups ===== */
+  .mock-wrap {
+    margin: 18px 0;
+    background: #f0f4fa;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+  }
+  .mock-wrap svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  .mock-cap {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 13px;
+    font-style: italic;
+  }
+
+  /* ===== Callouts ===== */
+  .callout {
+    border-left: 4px solid var(--brand);
+    background: #eff6ff;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 14px 0;
+    color: #1e3a8a;
+  }
+  .callout.warn { border-color: var(--warn); background: #fffbeb; color: #92400e; }
+  .callout.tip  { border-color: var(--accent); background: #ecfdf5; color: #065f46; }
+  .callout.danger { border-color: var(--danger); background: #fef2f2; color: #991b1b; }
+  .callout strong { display: inline-block; margin-right: 6px; }
+
+  /* ===== Code ===== */
+  pre, code {
+    font-family: Consolas, "Cascadia Mono", Menlo, Monaco, monospace;
+    font-size: 13.5px;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    padding: 14px 16px;
+    border-radius: 10px;
+    overflow-x: auto;
+  }
+  code:not(pre code) {
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+
+  /* ===== Steps ===== */
+  ol.steps { padding-left: 22px; }
+  ol.steps > li { margin: 8px 0; }
+
+  /* ===== Tables ===== */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 14.5px;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: #f8fafc; color: var(--brand-dark); }
+
+  /* ===== Footer ===== */
+  footer {
+    margin-top: 40px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13.5px;
+    text-align: center;
+  }
+  footer a { color: var(--brand); }
+
+  /* ===== Buttons (mock UI) ===== */
+  .btn-row {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin: 14px 0;
+  }
+  .btn-link {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px;
+    background: var(--brand);
+    color: #fff !important;
+    border-radius: 8px;
+    font-weight: 600;
+    text-decoration: none !important;
+  }
+  .btn-link:hover { background: var(--brand-dark); }
+  .btn-link.alt { background: #fff; color: var(--brand) !important; border: 1.5px solid var(--brand); }
+  .btn-link.alt:hover { background: #eff6ff; }
+
+  /* ===== Tip Grid ===== */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .tile {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .tile .icon { font-size: 26px; }
+  .tile h4 { margin: 6px 0 4px; color: var(--brand-dark); font-size: 15px; }
+  .tile p { margin: 0; font-size: 13.5px; color: var(--muted); }
+
+  @media (max-width: 720px) {
+    .toc ol { columns: 1; }
+    .hero h1 { font-size: 26px; }
+    .card { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ===== HERO ===== -->
+  <header class="hero">
+    <div class="hero-row">
+      <div class="hero-logo">📧</div>
+      <div>
+        <h1>OOF Manager — 安装与使用指南</h1>
+        <div class="sub">Microsoft 365 / Exchange Online 自动回复（OOF）一键管理工具</div>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge">🪟 Windows 10/11</span>
+      <span class="badge">⚡ .NET Framework 4.8</span>
+      <span class="badge">🆓 免费 · MIT 开源</span>
+      <span class="badge">📦 ~9 MB 安装包</span>
+      <span class="badge">🔒 数据本地处理</span>
+    </div>
+  </header>
+
+  <!-- ===== TOC ===== -->
+  <nav class="toc">
+    <strong>📖 本文目录</strong>
+    <ol>
+      <li><a href="#what">这是什么？</a></li>
+      <li><a href="#requirements">系统要求</a></li>
+      <li><a href="#download">下载安装包</a></li>
+      <li><a href="#install">安装步骤</a></li>
+      <li><a href="#first-run">首次启动 / 登录</a></li>
+      <li><a href="#main-ui">主界面导览</a></li>
+      <li><a href="#schedule">配置工作时间排程</a></li>
+      <li><a href="#templates">使用模板库</a></li>
+      <li><a href="#tray">系统托盘 / 关闭行为</a></li>
+      <li><a href="#troubleshoot">常见问题</a></li>
+      <li><a href="#uninstall">卸载</a></li>
+    </ol>
+  </nav>
+
+  <!-- ===== WHAT ===== -->
+  <section id="what" class="card">
+    <h2><span class="num">?</span>这是什么？</h2>
+    <p class="lead">
+      OOF Manager 是一个轻量的 Windows 桌面工具，帮你自动管理 Microsoft 365 邮箱的<strong>自动回复（Out-of-Office）</strong>状态。
+      你只需登录一次，配好工作时间和回复内容，它就会在后台每 5 分钟自动开 / 关你的 OOF —— 再也不用每天手动进 Outlook 设置。
+    </p>
+    <div class="grid">
+      <div class="tile"><div class="icon">🗓️</div><h4>按周排程</h4><p>逐天勾选 + 30 分钟粒度的开关时间。</p></div>
+      <div class="tile"><div class="icon">📋</div><h4>模板库</h4><p>预存出差 / 休假等常用文案。</p></div>
+      <div class="tile"><div class="icon">🖥️</div><h4>静默驻留</h4><p>最小化到系统托盘后几乎无感。</p></div>
+      <div class="tile"><div class="icon">🔐</div><h4>本地运行</h4><p>不依赖云流程，凭据从不落盘。</p></div>
+    </div>
+  </section>
+
+  <!-- ===== REQUIREMENTS ===== -->
+  <section id="requirements" class="card">
+    <h2><span class="num">1</span>系统要求</h2>
+    <table>
+      <tr><th>项目</th><th>要求</th></tr>
+      <tr><td>操作系统</td><td>Windows 10 (1809+) 或 Windows 11，x64 架构</td></tr>
+      <tr><td>.NET 运行时</td><td>.NET Framework 4.8（Windows 10/11 自带，无需单独安装）</td></tr>
+      <tr><td>账号</td><td>一个能登录的 Microsoft 365 / Exchange Online 邮箱</td></tr>
+      <tr><td>权限</td><td>普通用户即可，<strong>不需要管理员权限</strong></td></tr>
+      <tr><td>网络</td><td>启动时与 Exchange Online 通信；之后每 5 分钟一次轮询</td></tr>
+    </table>
+  </section>
+
+  <!-- ===== DOWNLOAD ===== -->
+  <section id="download" class="card">
+    <h2><span class="num">2</span>下载安装包</h2>
+    <p>从 GitHub Releases 页下载最新版安装包：</p>
+    <div class="btn-row">
+      <a class="btn-link" href="https://github.com/tisun2/OofManager/releases/latest" target="_blank" rel="noopener">
+        ⬇️ 下载最新版 OofManagerSetup.exe
+      </a>
+      <a class="btn-link alt" href="https://github.com/tisun2/OofManager" target="_blank" rel="noopener">
+        🐙 查看源代码
+      </a>
+    </div>
+    <div class="callout tip">
+      <strong>💡 提示：</strong>v1.0.0 安装包大小约 9 MB，已内置 ExchangeOnlineManagement PowerShell 模块，无需任何额外下载。
+    </div>
+  </section>
+
+  <!-- ===== INSTALL ===== -->
+  <section id="install" class="card">
+    <h2><span class="num">3</span>安装步骤</h2>
+
+    <div class="mock-wrap">
+      <!-- Mock Inno Setup wizard (matches actual screenshot) -->
+      <svg viewBox="0 0 760 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Setup wizard mockup">
+        <!-- Window outline -->
+        <rect x="0" y="0" width="760" height="560" rx="6" fill="#ffffff" stroke="#d1d5db"/>
+
+        <!-- Title bar -->
+        <rect x="0" y="0" width="760" height="40" fill="#f3f4f6"/>
+        <!-- Mail icon -->
+        <rect x="12" y="10" width="20" height="20" rx="3" fill="#1976d2"/>
+        <rect x="16" y="16" width="12" height="8" rx="1" fill="#ffffff"/>
+        <polyline points="16,16 22,21 28,16" fill="none" stroke="#1976d2" stroke-width="1.4"/>
+        <text x="42" y="25" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="500">Setup - OOF Manager version 1.0.0</text>
+        <!-- Window controls (Win11) -->
+        <text x="676" y="26" font-family="Segoe UI" font-size="14" fill="#475569">—</text>
+        <rect x="704" y="14" width="14" height="14" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="738" y="27" font-family="Segoe UI" font-size="14" fill="#475569">✕</text>
+
+        <!-- Page heading -->
+        <text x="20" y="74" font-family="Segoe UI" font-size="14" fill="#0f172a" font-weight="bold">Select Additional Tasks</text>
+        <text x="20" y="96" font-family="Segoe UI" font-size="13" fill="#1f2937">Which additional tasks should be performed?</text>
+
+        <!-- Wizard CD-pack illustration (top-right) -->
+        <g transform="translate(680,52)">
+          <!-- Box -->
+          <rect x="0" y="0" width="44" height="56" fill="none" stroke="#1976d2" stroke-width="2"/>
+          <!-- Disc -->
+          <circle cx="14" cy="36" r="13" fill="#ffffff" stroke="#94a3b8" stroke-width="1.6"/>
+          <circle cx="14" cy="36" r="3.5" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
+        </g>
+
+        <!-- Body text -->
+        <text x="20" y="170" font-family="Segoe UI" font-size="13" fill="#1f2937">Select the additional tasks you would like Setup to perform while installing OOF</text>
+        <text x="20" y="188" font-family="Segoe UI" font-size="13" fill="#1f2937">Manager, then click Next.</text>
+
+        <text x="20" y="226" font-family="Segoe UI" font-size="13" fill="#1f2937">Additional shortcuts:</text>
+
+        <!-- Checkbox (unchecked, default) -->
+        <rect x="20" y="244" width="14" height="14" rx="2" fill="#ffffff" stroke="#9ca3af" stroke-width="1.4"/>
+        <text x="42" y="256" font-family="Segoe UI" font-size="13" fill="#1f2937">Create a desktop shortcut</text>
+
+        <!-- Bottom separator -->
+        <line x1="0" y1="488" x2="760" y2="488" stroke="#e5e7eb"/>
+
+        <!-- Next button (highlighted) -->
+        <rect x="544" y="506" width="92" height="34" rx="3" fill="#ffffff" stroke="#dc2626" stroke-width="2.5"/>
+        <text x="590" y="528" font-family="Segoe UI" font-size="13" fill="#0f172a" text-anchor="middle">Next</text>
+        <!-- Cancel button -->
+        <rect x="650" y="506" width="92" height="34" rx="3" fill="#ffffff" stroke="#9ca3af"/>
+        <text x="696" y="528" font-family="Segoe UI" font-size="13" fill="#0f172a" text-anchor="middle">Cancel</text>
+      </svg>
+      <div class="mock-cap">图 1 · 安装向导（Inno Setup，一路点 Next 即可）</div>
+    </div>
+
+    <ol class="steps">
+      <li>双击下载的 <code>OofManagerSetup.exe</code>。</li>
+      <li>如果 Windows SmartScreen 弹窗，点击 <strong>"More info" → "Run anyway"</strong>。
+        <div class="callout warn"><strong>⚠️ 关于 SmartScreen：</strong>这是因为安装包尚未购买代码签名证书。你可以通过 GitHub Releases 页直接看到源码与构建过程，确保来源可信。</div>
+      </li>
+      <li><strong>一路点 Next 直到完成</strong>即可——除了"Create a desktop shortcut"（是否创建桌面快捷方式）这一项你可能会想勾上，其它无需修改。</li>
+      <li>安装结束后默认会启动程序，开始下一节"首次启动 / 登录"。</li>
+    </ol>
+
+    <div class="callout tip">
+      <strong>💡 安装位置：</strong>默认安装到 <code>%LocalAppData%\Programs\OofManager</code>，<strong>不需要管理员权限</strong>，也不会污染 Program Files。
+    </div>
+  </section>
+
+  <!-- ===== FIRST RUN ===== -->
+  <section id="first-run" class="card">
+    <h2><span class="num">4</span>首次启动 / 登录</h2>
+    <p>首次打开看到登录界面：</p>
+
+    <div class="mock-wrap">
+      <!-- Mock login (matches actual app screen) -->
+      <svg viewBox="0 0 720 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Login screen mockup">
+        <!-- Window outline -->
+        <rect x="0" y="0" width="720" height="440" rx="6" fill="#ffffff" stroke="#d1d5db"/>
+
+        <!-- Title bar -->
+        <rect x="0" y="0" width="720" height="32" fill="#ffffff"/>
+        <text x="14" y="21" font-family="Segoe UI" font-size="12" fill="#1f2937">OOF Manager</text>
+        <!-- Window controls (Win11-style) -->
+        <text x="640" y="21" font-family="Segoe UI" font-size="14" fill="#475569">—</text>
+        <rect x="666" y="11" width="11" height="11" fill="none" stroke="#475569" stroke-width="1.2"/>
+        <text x="700" y="22" font-family="Segoe UI" font-size="14" fill="#475569">✕</text>
+
+        <!-- App icon (blue rounded square + envelope + red badge) -->
+        <rect x="320" y="92" width="80" height="80" rx="14" fill="#1976d2"/>
+        <!-- Envelope body -->
+        <rect x="334" y="118" width="52" height="34" rx="3" fill="#ffffff"/>
+        <!-- Envelope flap -->
+        <polygon points="334,118 360,140 386,118" fill="none" stroke="#1976d2" stroke-width="2"/>
+        <!-- Red notification dot -->
+        <circle cx="390" cy="106" r="9" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
+        <text x="390" y="111" font-family="Segoe UI" font-size="12" fill="#ffffff" text-anchor="middle" font-weight="bold">+</text>
+
+        <!-- Title -->
+        <text x="360" y="218" font-family="Segoe UI" font-size="32" fill="#1976d2" text-anchor="middle" font-weight="bold">OOF Manager</text>
+        <text x="360" y="248" font-family="Segoe UI" font-size="15" fill="#6b7280" text-anchor="middle">Out of Office Manager</text>
+
+        <!-- Caption above button -->
+        <text x="360" y="312" font-family="Segoe UI" font-size="13" fill="#374151" text-anchor="middle">Sign in with your Microsoft 365 account</text>
+
+        <!-- Sign-in button -->
+        <rect x="220" y="332" width="280" height="52" rx="4" fill="#1976d2"/>
+        <!-- Key icon (simplified) -->
+        <circle cx="290" cy="358" r="6" fill="none" stroke="#ffffff" stroke-width="2"/>
+        <line x1="296" y1="358" x2="316" y2="358" stroke="#ffffff" stroke-width="2"/>
+        <line x1="312" y1="358" x2="312" y2="364" stroke="#ffffff" stroke-width="2"/>
+        <line x1="308" y1="358" x2="308" y2="362" stroke="#ffffff" stroke-width="2"/>
+        <text x="370" y="364" font-family="Segoe UI" font-size="15" fill="#ffffff" font-weight="600">Sign in with Microsoft</text>
+      </svg>
+      <div class="mock-cap">图 2 · 登录页（首次启动）</div>
+    </div>
+
+    <ol class="steps">
+      <li>点击 <strong>🔑 Sign in with Microsoft</strong>。</li>
+      <li>程序会调用 <code>Connect-ExchangeOnline</code>，弹出 Microsoft 标准登录窗口。</li>
+      <li>输入你的工作邮箱 → 走完 MFA / 条件访问流程。</li>
+      <li>登录成功后自动跳转到主界面。</li>
+    </ol>
+
+    <div class="callout">
+      <strong>🔒 安全说明：</strong>登录使用微软现代认证（OAuth 2.0），程序<strong>不接触你的密码</strong>，也不会把任何凭据写入磁盘。会话令牌由 ExchangeOnlineManagement 模块本身管理。
+    </div>
+  </section>
+
+  <!-- ===== MAIN UI ===== -->
+  <section id="main-ui" class="card">
+    <h2><span class="num">5</span>主界面导览</h2>
+
+    <div class="mock-wrap">
+      <!-- Mock main page (matches actual screenshot) -->
+      <svg viewBox="0 0 760 980" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Main page mockup">
+        <!-- Window outline -->
+        <rect x="0" y="0" width="760" height="980" rx="6" fill="#ffffff" stroke="#d1d5db"/>
+
+        <!-- Title bar -->
+        <rect x="0" y="0" width="760" height="32" fill="#ffffff"/>
+        <text x="14" y="21" font-family="Segoe UI" font-size="12" fill="#1f2937">OOF Manager</text>
+        <text x="676" y="21" font-family="Segoe UI" font-size="14" fill="#475569">—</text>
+        <rect x="704" y="11" width="11" height="11" fill="none" stroke="#475569" stroke-width="1.2"/>
+        <text x="738" y="22" font-family="Segoe UI" font-size="14" fill="#475569">✕</text>
+
+        <!-- ========== User card ========== -->
+        <rect x="14" y="44" width="732" height="68" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="28" y="70" font-family="Segoe UI" font-size="15" fill="#0f172a" font-weight="bold">tisun@microsoft.com</text>
+        <text x="28" y="92" font-family="Segoe UI" font-size="11.5" fill="#6b7280">tisun@microsoft.com</text>
+
+        <!-- Hide to Tray button -->
+        <rect x="544" y="62" width="98" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="555" y="82" font-family="Segoe UI" font-size="12" fill="#1f2937">📥 Hide to Tray</text>
+        <!-- Sign Out button -->
+        <rect x="650" y="62" width="82" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="660" y="82" font-family="Segoe UI" font-size="12" fill="#1f2937">Sign Out</text>
+
+        <!-- Status banner -->
+        <rect x="324" y="118" width="116" height="22" rx="3" fill="#f3f4f6" stroke="#d1d5db"/>
+        <text x="338" y="133" font-family="Segoe UI" font-size="11" fill="#1f2937">☑ OOF turned off</text>
+
+        <!-- ========== Out of Office card ========== -->
+        <rect x="14" y="150" width="732" height="100" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="28" y="178" font-family="Segoe UI" font-size="17" fill="#0f172a" font-weight="bold">Out of Office</text>
+        <text x="28" y="200" font-family="Segoe UI" font-size="13" fill="#1f2937">Disabled</text>
+        <!-- Toggle Off -->
+        <rect x="640" y="172" width="44" height="22" rx="11" fill="#9ca3af"/>
+        <circle cx="651" cy="183" r="8" fill="#ffffff"/>
+        <text x="694" y="188" font-family="Segoe UI" font-size="13" fill="#1f2937">Off</text>
+        <!-- Save Now button -->
+        <rect x="28" y="214" width="704" height="28" rx="3" fill="#1976d2"/>
+        <text x="380" y="233" font-family="Segoe UI" font-size="13" fill="#ffffff" text-anchor="middle" font-weight="600">⚡ Save Now</text>
+
+        <!-- ========== Work Schedule card ========== -->
+        <rect x="14" y="262" width="732" height="180" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="28" y="286" font-family="Segoe UI" font-size="14" fill="#0f172a" font-weight="bold">🗓️ Work Schedule</text>
+        <!-- Toggle On -->
+        <rect x="640" y="278" width="44" height="22" rx="11" fill="#1976d2"/>
+        <circle cx="673" cy="289" r="8" fill="#ffffff"/>
+        <text x="694" y="294" font-family="Segoe UI" font-size="13" fill="#1f2937">On</text>
+
+        <text x="28" y="306" font-family="Segoe UI" font-size="11" fill="#6b7280">Currently inside working hours; OOF should be off</text>
+        <text x="28" y="324" font-family="Segoe UI" font-size="11" fill="#6b7280">Check the boxes for workdays. During working hours on workdays OOF is turned off; outside those hours OOF is turned on automatically.</text>
+
+        <!-- Weekday checkboxes (7 columns) -->
+        <g font-family="Segoe UI" font-size="11" fill="#1f2937">
+          <!-- Mon -->
+          <text x="62" y="346" text-anchor="middle">Mon</text>
+          <rect x="50" y="354" width="20" height="20" rx="2" fill="#1976d2" stroke="#1976d2"/>
+          <polyline points="55,364 60,369 67,358" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+          <!-- Tue -->
+          <text x="166" y="346" text-anchor="middle">Tue</text>
+          <rect x="154" y="354" width="20" height="20" rx="2" fill="#1976d2" stroke="#1976d2"/>
+          <polyline points="159,364 164,369 171,358" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+          <!-- Wed -->
+          <text x="270" y="346" text-anchor="middle">Wed</text>
+          <rect x="258" y="354" width="20" height="20" rx="2" fill="#1976d2" stroke="#1976d2"/>
+          <polyline points="263,364 268,369 275,358" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+          <!-- Thu -->
+          <text x="374" y="346" text-anchor="middle">Thu</text>
+          <rect x="362" y="354" width="20" height="20" rx="2" fill="#1976d2" stroke="#1976d2"/>
+          <polyline points="367,364 372,369 379,358" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+          <!-- Fri -->
+          <text x="478" y="346" text-anchor="middle">Fri</text>
+          <rect x="466" y="354" width="20" height="20" rx="2" fill="#1976d2" stroke="#1976d2"/>
+          <polyline points="471,364 476,369 483,358" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+          <!-- Sat -->
+          <text x="582" y="346" text-anchor="middle" fill="#6b7280">Sat</text>
+          <rect x="570" y="354" width="20" height="20" rx="2" fill="#ffffff" stroke="#9ca3af"/>
+          <!-- Sun -->
+          <text x="686" y="346" text-anchor="middle" fill="#6b7280">Sun</text>
+          <rect x="674" y="354" width="20" height="20" rx="2" fill="#ffffff" stroke="#9ca3af"/>
+        </g>
+
+        <!-- Work Start / End time labels -->
+        <text x="28" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work Start Time</text>
+        <text x="386" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work End Time</text>
+        <!-- Start ComboBox -->
+        <rect x="28" y="402" width="340" height="28" rx="3" fill="#ffffff" stroke="#d1d5db"/>
+        <text x="40" y="421" font-family="Segoe UI" font-size="12" fill="#1f2937">09:00</text>
+        <text x="356" y="421" font-family="Segoe UI" font-size="11" fill="#6b7280" text-anchor="end">▾</text>
+        <!-- End ComboBox -->
+        <rect x="386" y="402" width="346" height="28" rx="3" fill="#ffffff" stroke="#d1d5db"/>
+        <text x="398" y="421" font-family="Segoe UI" font-size="12" fill="#1f2937">17:30</text>
+        <text x="720" y="421" font-family="Segoe UI" font-size="11" fill="#6b7280" text-anchor="end">▾</text>
+
+        <!-- Save and Apply / Check Now buttons -->
+        <rect x="28" y="448" width="340" height="32" rx="3" fill="#1976d2"/>
+        <text x="198" y="468" font-family="Segoe UI" font-size="12" fill="#ffffff" text-anchor="middle">Save and Apply</text>
+        <rect x="386" y="448" width="346" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="559" y="468" font-family="Segoe UI" font-size="12" fill="#1f2937" text-anchor="middle">Check Now</text>
+
+        <!-- ========== Internal / External Reply cards (side by side) ========== -->
+        <!-- Internal -->
+        <rect x="14" y="494" width="362" height="244" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="28" y="518" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="bold">🏢 Internal Reply</text>
+        <text x="28" y="538" font-family="Segoe UI" font-size="10.5" fill="#6b7280">Sent to people inside your organization</text>
+        <rect x="28" y="548" width="334" height="146" rx="3" fill="#ffffff" stroke="#d1d5db"/>
+        <text x="38" y="568" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Dear sender,</text>
+        <text x="38" y="588" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Our business working hour is from 9am - 6:00 pm (UTC+8) Monday to</text>
+        <text x="38" y="604" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Friday. I'm out of office now and please expect delayed response.</text>
+        <text x="38" y="630" font-family="Segoe UI" font-size="11.5" fill="#1f2937">For immediate technical assistance during my absence:</text>
+        <text x="38" y="650" font-family="Segoe UI" font-size="11.5" fill="#1f2937">· During our business hour: please send email to</text>
+        <text x="38" y="666" font-family="Segoe UI" font-size="11.5" fill="#1f2937">cndgpteam@microsoft.com</text>
+
+        <!-- Save Settings (blue) -->
+        <rect x="28" y="704" width="334" height="28" rx="3" fill="#1976d2"/>
+        <text x="195" y="723" font-family="Segoe UI" font-size="12" fill="#ffffff" text-anchor="middle">💾 Save Settings</text>
+
+        <!-- External -->
+        <rect x="384" y="494" width="362" height="244" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="398" y="518" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="bold">🌐 External Reply</text>
+        <text x="398" y="538" font-family="Segoe UI" font-size="10.5" fill="#6b7280">Sent to contacts outside your organization</text>
+        <!-- All senders toggle (on) -->
+        <text x="612" y="538" font-family="Segoe UI" font-size="11" fill="#1f2937">All senders</text>
+        <rect x="688" y="528" width="36" height="18" rx="9" fill="#1976d2"/>
+        <circle cx="715" cy="537" r="7" fill="#ffffff"/>
+
+        <rect x="398" y="548" width="334" height="146" rx="3" fill="#ffffff" stroke="#d1d5db"/>
+        <text x="408" y="568" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Dear customer,</text>
+        <text x="408" y="588" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Our business working hour is from 9am - 6:00 pm (UTC+8) Monday to</text>
+        <text x="408" y="604" font-family="Segoe UI" font-size="11.5" fill="#1f2937">Friday. I'm out of office now and please expect delayed response.</text>
+        <text x="408" y="630" font-family="Segoe UI" font-size="11.5" fill="#1f2937">For immediate technical assistance during my absence:</text>
+        <text x="408" y="650" font-family="Segoe UI" font-size="11.5" fill="#1f2937">· During our business hour: please send email to</text>
+        <text x="408" y="666" font-family="Segoe UI" font-size="11.5" fill="#1f2937">cndgpteam@microsoft.com</text>
+
+        <!-- Save as Template (gray) -->
+        <rect x="398" y="704" width="334" height="28" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="565" y="723" font-family="Segoe UI" font-size="12" fill="#1f2937" text-anchor="middle">📋 Save as Template</text>
+
+        <!-- ========== My Templates ========== -->
+        <text x="28" y="770" font-family="Segoe UI" font-size="14" fill="#0f172a" font-weight="bold">📁 My Templates</text>
+        <text x="28" y="790" font-family="Segoe UI" font-size="11" fill="#6b7280">Click a template to load it</text>
+
+        <rect x="14" y="804" width="732" height="56" rx="4" fill="#f3f4f6" stroke="#e5e7eb"/>
+        <text x="34" y="828" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="bold">Regular</text>
+        <text x="34" y="846" font-family="Segoe UI" font-size="11" fill="#6b7280">2026-05-06 06:06</text>
+        <!-- Load button -->
+        <rect x="640" y="820" width="56" height="24" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="668" y="836" font-family="Segoe UI" font-size="11" fill="#1f2937" text-anchor="middle">Load</text>
+        <!-- Trash button -->
+        <rect x="704" y="820" width="28" height="24" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="718" y="838" font-family="Segoe UI" font-size="13" fill="#1f2937" text-anchor="middle">🗑</text>
+
+      </svg>
+      <div class="mock-cap">图 3 · 主界面（登录后）</div>
+    </div>
+
+    <table>
+      <tr><th>区域</th><th>说明</th></tr>
+      <tr><td>顶部用户卡片</td><td>显示当前账号；右侧按钮：<code>📥 Hide to Tray</code>、<code>Sign Out</code>；下方一行显示当前 OOF 状态（例如 <code>OOF turned off</code>）</td></tr>
+      <tr><td>Out of Office</td><td>查看当前状态（Disabled / Scheduled / Enabled），右上角的 <strong>On / Off</strong> 开关可临时切换；点击 <code>⚡ Save Now</code> 立即把当前选择推送到服务器</td></tr>
+      <tr><td>🗓️ Work Schedule</td><td>排程开关 + 工作日勾选 + 起止时间下拉（30 分钟粒度）；<code>Save and Apply</code> 保存配置并立即同步，<code>Check Now</code> 强制重新评估当前状态</td></tr>
+      <tr><td>🏢 Internal Reply</td><td>给同公司同事看到的回复正文</td></tr>
+      <tr><td>🌐 External Reply</td><td>给外部发件人看到的回复正文；<code>All senders</code> 关闭时仅回复联系人内的外部发件人</td></tr>
+      <tr><td>底部按钮</td><td><code>💾 Save Settings</code> 保存所有回复内容；<code>📋 Save as Template</code> 把当前回复存为模板</td></tr>
+      <tr><td>📁 My Templates</td><td>已保存的模板列表，点 <code>Load</code> 填入回复框，点垃圾桶图标删除</td></tr>
+    </table>
+  </section>
+
+  <!-- ===== SCHEDULE ===== -->
+  <section id="schedule" class="card">
+    <h2><span class="num">6</span>配置工作时间排程</h2>
+    <p>这是 OOF Manager 最核心的功能：让程序在你的工作时间外自动开启自动回复。</p>
+
+    <ol class="steps">
+      <li>打开 <strong>🗓️ Work Schedule</strong> 卡片右上角的开关，启用排程。</li>
+      <li>勾选你的工作日（默认周一至周五；轮班族可自由勾选）。</li>
+      <li>从 <strong>Start</strong> / <strong>End</strong> 下拉选择起止时间（30 分钟粒度）。</li>
+      <li>点击 <strong>Save and Apply</strong>。</li>
+    </ol>
+
+    <h3>🤖 它是怎么工作的？</h3>
+    <p>启用后，程序每 <strong>5 分钟</strong>检查一次：</p>
+    <ul>
+      <li><strong>当前在工作时间内：</strong>把 OOF 设为 <code>Disabled</code>（关闭自动回复）</li>
+      <li><strong>当前在工作时间外或非工作日：</strong>把 OOF 设为 <code>Enabled</code>（开启自动回复，使用你保存的内/外回复内容）</li>
+    </ul>
+
+    <div class="callout tip">
+      <strong>💡 提示：</strong>点击 <strong>Check Now</strong> 可立即跑一次同步，方便你测试。
+    </div>
+    <div class="callout warn">
+      <strong>⚠️ 注意：</strong>排程依赖你电脑保持开机或休眠唤醒后联网。如果整周关机，OOF 状态会停留在最后一次同步的状态。
+    </div>
+  </section>
+
+  <!-- ===== TEMPLATES ===== -->
+  <section id="templates" class="card">
+    <h2><span class="num">7</span>使用模板库</h2>
+    <p>在 <strong>📁 My Templates</strong> 卡片中可以保存常用文案：</p>
+    <ol class="steps">
+      <li>在内/外回复编辑框写好内容。</li>
+      <li>点击 <strong>📋 Save as Template</strong>，给模板起个名字（例如"年假"、"出差"、"培训"）。</li>
+      <li>下次需要时，在模板列表点击对应条目右侧的 <strong>Load</strong> 即可填入回复框。</li>
+      <li>不再需要时，可以删除模板。</li>
+    </ol>
+    <div class="callout">
+      <strong>📂 模板存储位置：</strong>
+      <code>%LocalAppData%\OofManager\templates.db</code>（SQLite，纯本地）
+    </div>
+  </section>
+
+  <!-- ===== TRAY ===== -->
+  <section id="tray" class="card">
+    <h2><span class="num">8</span>系统托盘 / 关闭按钮行为</h2>
+    <p>OOF Manager 支持最小化到系统托盘后台运行：</p>
+
+    <div class="mock-wrap">
+      <!-- Mock tray menu -->
+      <svg viewBox="0 0 460 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tray menu mockup">
+        <!-- Taskbar -->
+        <rect x="0" y="200" width="460" height="40" fill="#0f172a"/>
+        <!-- Tray icon -->
+        <circle cx="380" cy="220" r="11" fill="#2563eb"/>
+        <text x="380" y="225" font-family="Segoe UI" font-size="12" fill="#fff" text-anchor="middle">📧</text>
+        <!-- Tooltip arrow -->
+        <polygon points="376,205 384,205 380,200" fill="#fff"/>
+        <!-- Menu -->
+        <rect x="240" y="40" width="200" height="160" rx="8" fill="#fff" stroke="#cbd5e1" filter="drop-shadow(0 6px 18px rgba(0,0,0,0.18))"/>
+        <text x="256" y="68" font-family="Segoe UI" font-size="12.5" fill="#0f172a">🪟  Show Window</text>
+        <text x="256" y="94" font-family="Segoe UI" font-size="12.5" fill="#0f172a">📥  Hide to Tray</text>
+        <line x1="252" y1="108" x2="428" y2="108" stroke="#e2e8f0"/>
+        <text x="256" y="130" font-family="Segoe UI" font-size="11.5" fill="#475569">↺  Reset Close Button</text>
+        <text x="256" y="148" font-family="Segoe UI" font-size="11.5" fill="#475569">    Behavior (Ask Again)</text>
+        <line x1="252" y1="162" x2="428" y2="162" stroke="#e2e8f0"/>
+        <text x="256" y="184" font-family="Segoe UI" font-size="12.5" fill="#dc2626">🚪  Exit</text>
+      </svg>
+      <div class="mock-cap">图 4 · 托盘右键菜单</div>
+    </div>
+
+    <h3>托盘操作</h3>
+    <ul>
+      <li><strong>左键单击</strong>托盘图标 → 还原窗口</li>
+      <li><strong>右键</strong> → 弹出菜单：Show Window / Hide to Tray / Exit / 重置关闭按钮行为</li>
+    </ul>
+
+    <h3>自定义关闭按钮行为</h3>
+    <p>点击主窗口右上角的 ❌ 关闭按钮时，程序会询问你想要什么行为：</p>
+    <ul>
+      <li><strong>📥 Hide to Tray</strong> — 最小化到托盘，程序继续运行</li>
+      <li><strong>❌ Exit</strong> — 完全退出（排程将停止）</li>
+      <li><strong>Cancel</strong> — 不关闭</li>
+    </ul>
+    <p>勾选 <em>"Remember my choice, don't ask again"</em> 即可记住选择。要重置该设置，从托盘菜单选 <strong>Reset Close Button Behavior (Ask Again Next Time)</strong>。</p>
+
+    <div class="callout warn">
+      <strong>⚠️ 重要：</strong>如果选择 <strong>Exit</strong> 完全退出，自动排程也会停止。要让它持续生效，请使用 <strong>Hide to Tray</strong>。
+    </div>
+  </section>
+
+  <!-- ===== TROUBLESHOOTING ===== -->
+  <section id="troubleshoot" class="card">
+    <h2><span class="num">9</span>常见问题</h2>
+
+    <h3>Q：登录后报 "Connected, but failed to read the current signed-in user"</h3>
+    <p>A：通常是网络中途断开或 Exchange Online 端临时拒绝。点击 Sign Out 后重试。如果持续失败，检查是否能访问 <code>outlook.office365.com</code>。</p>
+
+    <h3>Q：保存提示 "Save request was sent but the server-side state was not updated…"</h3>
+    <p>A：这表示请求已发出但服务器端没生效。可能原因：</p>
+    <ul>
+      <li>租户管理员的 OWA / Exchange 策略禁止用户修改自动回复</li>
+      <li>登录账号的角色没有 <code>Set-MailboxAutoReplyConfiguration</code> 权限</li>
+      <li>极少数情况下，ExchangeOnlineManagement 模块版本与租户端点不兼容</li>
+    </ul>
+    <p>遇到这种情况请联系你的 IT / Exchange 管理员确认。</p>
+
+    <h3>Q：SmartScreen 提示"Windows protected your PC"</h3>
+    <p>A：因为安装包目前未购买代码签名证书。点击 <strong>More info → Run anyway</strong>。源码完全公开在 GitHub 可供审计。</p>
+
+    <h3>Q：开了排程，第二天 OOF 没自动开</h3>
+    <p>A：检查：</p>
+    <ul>
+      <li>程序是否仍在运行（任务栏 / 托盘是否能看到）</li>
+      <li>登录会话是否还有效（Sign Out 后重新登录）</li>
+      <li>电脑过夜是否一直处于联网状态（深度睡眠会让网络停止）</li>
+      <li>用 <strong>Check Now</strong> 强制同步一次看是否成功</li>
+    </ul>
+
+    <h3>Q：日志在哪里？</h3>
+    <p>A：当前版本主要通过界面状态栏反馈。后续版本会增加文件日志。</p>
+  </section>
+
+  <!-- ===== UNINSTALL ===== -->
+  <section id="uninstall" class="card">
+    <h2><span class="num">⌫</span>卸载</h2>
+    <ol class="steps">
+      <li>打开 Windows 设置 → <strong>应用 → 已安装的应用</strong>。</li>
+      <li>搜索 <strong>OOF Manager</strong> → 点击右侧 <strong>···</strong> → <strong>Uninstall</strong>。</li>
+      <li>卸载会移除程序本体，但<strong>保留</strong>你的偏好和模板（在 <code>%LocalAppData%\OofManager</code>）。</li>
+      <li>如果你想一并删除偏好与模板，运行下面这条 PowerShell 命令：</li>
+    </ol>
+    <pre>Remove-Item -Recurse -Force "$env:LocalAppData\OofManager"</pre>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer>
+    OOF Manager · MIT License · 源码与最新版本：
+    <a href="https://github.com/tisun2/OofManager" target="_blank" rel="noopener">github.com/tisun2/OofManager</a><br/>
+    本文档随 v1.0.0 一同发布。
+  </footer>
+
+</div>
+</body>
+</html>

@@ -102,10 +102,28 @@ public partial class MainViewModel : ObservableObject
     partial void OnSelectedTemplateChanged(OofTemplate? value)
     {
         if (value == null) return;
-        InternalReply = value.InternalReply;
-        ExternalReply = value.ExternalReply;
-        ExternalAudienceAll = value.ExternalAudienceAll;
-        StatusMessage = $"Loaded template \u201c{value.Name}\u201d";
+        ApplyTemplate(value);
+    }
+
+    /// <summary>
+    /// Loads a template's content into the reply editors.
+    /// Bound directly to the "Load" button so it always fires, even if the
+    /// user clicks the same template twice in a row (which would otherwise
+    /// be a no-op for the SelectedTemplate setter).
+    /// </summary>
+    [RelayCommand]
+    private void LoadTemplate(OofTemplate? template)
+    {
+        if (template == null) return;
+        ApplyTemplate(template);
+    }
+
+    private void ApplyTemplate(OofTemplate template)
+    {
+        InternalReply = template.InternalReply;
+        ExternalReply = template.ExternalReply;
+        ExternalAudienceAll = template.ExternalAudienceAll;
+        StatusMessage = $"Loaded template \u201c{template.Name}\u201d";
     }
 
     [RelayCommand]
