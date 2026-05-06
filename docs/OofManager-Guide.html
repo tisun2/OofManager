@@ -269,7 +269,7 @@
       <span class="badge">🆓 免费 · MIT 开源</span>
       <span class="badge">📦 ~9 MB 安装包</span>
       <span class="badge">🔒 数据本地处理</span>
-      <span class="badge">🎉 最新版 v1.0.1</span>
+      <span class="badge">🎉 最新版 v1.0.2</span>
     </div>
   </header>
 
@@ -277,7 +277,7 @@
   <nav class="toc">
     <strong>📖 本文目录</strong>
     <ol>
-      <li><a href="#whatsnew">⚡ 最新变更（v1.0.1）</a></li>
+      <li><a href="#whatsnew">⚡ 最新变更（v1.0.2）</a></li>
       <li><a href="#what">这是什么？</a></li>
       <li><a href="#requirements">系统要求</a></li>
       <li><a href="#download">下载安装包</a></li>
@@ -294,20 +294,27 @@
 
   <!-- ===== WHAT'S NEW ===== -->
   <section id="whatsnew" class="card">
-    <h2><span class="num">⚡</span>最新变更（v1.0.1）</h2>
+    <h2><span class="num">⚡</span>最新变更（v1.0.2）</h2>
+    <h3>✨ 新功能</h3>
+    <ul>
+      <li><strong>工作起止时间支持手动输入。</strong>
+          <code>Work Start Time</code> / <code>Work End Time</code> 现在既能从 30 分钟一档的下拉里选，也能直接键入任意时间——支持
+          <code>8:45</code>、<code>17:30</code>、<code>09:15</code>、<code>9 PM</code> 等格式。无效输入会被忽略，不会清空已有值。</li>
+    </ul>
     <h3>🐛 Bug 修复</h3>
     <ul>
-      <li><strong>修复：点击模板的 Load 按钮后， Internal / External Reply 不更新。</strong>
-          现在点击 Load 会可靠地把模板内容写回两个回复编辑框，重复点击同一个模板也会生效。</li>
+      <li><strong>修复：自动排程触发后，主界面没有同步刷新。</strong>
+          后台每 5 分钟轮询切换 OOF 状态时，<strong>Out of Office</strong> 卡片的状态文字（Enabled / Disabled）和右上角开关现在会立即跟进；
+          底部状态栏还会显示一条带时间戳的"Auto-applied"提示，让你看清自动切换发生的时间点。</li>
     </ul>
-    <h3>📝 文档</h3>
+    <h3>📝 历史变更</h3>
     <ul>
-      <li>新增本安装与使用说明页（即你现在所看到的页面）。</li>
+      <li><strong>v1.0.1：</strong>修复点击模板 <code>Load</code> 后内 / 外回复编辑框不更新的问题；新增本文档。</li>
     </ul>
     <h3>📥 下载</h3>
     <p>老用户请重新下载 <code>OofManagerSetup.exe</code>：</p>
     <div class="btn-row">
-      <a class="btn-link" href="https://github.com/tisun2/OofManager/releases/tag/v1.0.1" target="_blank" rel="noopener">⬇️ 下载 v1.0.1</a>
+      <a class="btn-link" href="https://github.com/tisun2/OofManager/releases/tag/v1.0.2" target="_blank" rel="noopener">⬇️ 下载 v1.0.2</a>
       <a class="btn-link alt" href="https://github.com/tisun2/OofManager/releases" target="_blank" rel="noopener">📜 查看所有版本</a>
     </div>
   </section>
@@ -353,7 +360,7 @@
       </a>
     </div>
     <div class="callout tip">
-      <strong>💡 提示：</strong>v1.0.1 安装包大小约 9 MB，已内置 ExchangeOnlineManagement PowerShell 模块，无需任何额外下载。
+      <strong>💡 提示：</strong>v1.0.2 安装包大小约 9 MB，已内置 ExchangeOnlineManagement PowerShell 模块，无需任何额外下载。
     </div>
   </section>
 
@@ -373,7 +380,7 @@
         <rect x="12" y="10" width="20" height="20" rx="3" fill="#1976d2"/>
         <rect x="16" y="16" width="12" height="8" rx="1" fill="#ffffff"/>
         <polyline points="16,16 22,21 28,16" fill="none" stroke="#1976d2" stroke-width="1.4"/>
-        <text x="42" y="25" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="500">Setup - OOF Manager version 1.0.1</text>
+        <text x="42" y="25" font-family="Segoe UI" font-size="13" fill="#0f172a" font-weight="500">Setup - OOF Manager version 1.0.2</text>
         <!-- Window controls (Win11) -->
         <text x="676" y="26" font-family="Segoe UI" font-size="14" fill="#475569">—</text>
         <rect x="704" y="14" width="14" height="14" fill="none" stroke="#94a3b8" stroke-width="1.2"/>
@@ -576,11 +583,11 @@
         </g>
 
         <!-- Work Start / End time labels -->
-        <text x="28" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work Start Time</text>
-        <text x="386" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work End Time</text>
+        <text x="28" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work Start Time (editable)</text>
+        <text x="386" y="396" font-family="Segoe UI" font-size="11" fill="#6b7280">Work End Time (editable)</text>
         <!-- Start ComboBox -->
         <rect x="28" y="402" width="340" height="28" rx="3" fill="#ffffff" stroke="#d1d5db"/>
-        <text x="40" y="421" font-family="Segoe UI" font-size="12" fill="#1f2937">09:00</text>
+        <text x="40" y="421" font-family="Segoe UI" font-size="12" fill="#1f2937">08:45</text>
         <text x="356" y="421" font-family="Segoe UI" font-size="11" fill="#6b7280" text-anchor="end">▾</text>
         <!-- End ComboBox -->
         <rect x="386" y="402" width="346" height="28" rx="3" fill="#ffffff" stroke="#d1d5db"/>
@@ -653,7 +660,7 @@
       <tr><th>区域</th><th>说明</th></tr>
       <tr><td>顶部用户卡片</td><td>显示当前账号；右侧按钮：<code>📥 Hide to Tray</code>、<code>Sign Out</code>；下方一行显示当前 OOF 状态（例如 <code>OOF turned off</code>）</td></tr>
       <tr><td>Out of Office</td><td>查看当前状态（Disabled / Scheduled / Enabled），右上角的 <strong>On / Off</strong> 开关可临时切换；点击 <code>⚡ Save Now</code> 立即把当前选择推送到服务器</td></tr>
-      <tr><td>🗓️ Work Schedule</td><td>排程开关 + 工作日勾选 + 起止时间下拉（30 分钟粒度）；<code>Save and Apply</code> 保存配置并立即同步，<code>Check Now</code> 强制重新评估当前状态</td></tr>
+      <tr><td>🗓️ Work Schedule</td><td>排程开关 + 工作日勾选 + 起止时间下拉（可从 30 分钟预设里选，也可手动输入任意时间）；<code>Save and Apply</code> 保存配置并立即同步，<code>Check Now</code> 强制重新评估当前状态</td></tr>
       <tr><td>🏢 Internal Reply</td><td>给同公司同事看到的回复正文</td></tr>
       <tr><td>🌐 External Reply</td><td>给外部发件人看到的回复正文；<code>All senders</code> 关闭时仅回复联系人内的外部发件人</td></tr>
       <tr><td>底部按钮</td><td><code>💾 Save Settings</code> 保存所有回复内容；<code>📋 Save as Template</code> 把当前回复存为模板</td></tr>
@@ -669,7 +676,7 @@
     <ol class="steps">
       <li>打开 <strong>🗓️ Work Schedule</strong> 卡片右上角的开关，启用排程。</li>
       <li>勾选你的工作日（默认周一至周五；轮班族可自由勾选）。</li>
-      <li>从 <strong>Start</strong> / <strong>End</strong> 下拉选择起止时间（30 分钟粒度）。</li>
+      <li>设置 <strong>Work Start Time</strong> / <strong>Work End Time</strong>：可以从下拉里选 30 分钟一档的预设，也可以直接在框里键入任意时间（例如 <code>8:45</code>、<code>17:30</code>、<code>9 PM</code>）。</li>
       <li>点击 <strong>Save and Apply</strong>。</li>
     </ol>
 
@@ -679,6 +686,7 @@
       <li><strong>当前在工作时间内：</strong>把 OOF 设为 <code>Disabled</code>（关闭自动回复）</li>
       <li><strong>当前在工作时间外或非工作日：</strong>把 OOF 设为 <code>Enabled</code>（开启自动回复，使用你保存的内/外回复内容）</li>
     </ul>
+    <p>每次自动切换都会在主界面底部状态栏留下一条带时间戳的提示，例如 <code>✅ 18:00 · Outside working hours: OOF turned on automatically</code>，方便你确认排程确实在跑。</p>
 
     <div class="callout tip">
       <strong>💡 提示：</strong>点击 <strong>Check Now</strong> 可立即跑一次同步，方便你测试。
@@ -800,7 +808,7 @@
   <footer>
     OOF Manager · MIT License · 源码与最新版本：
     <a href="https://github.com/tisun2/OofManager" target="_blank" rel="noopener">github.com/tisun2/OofManager</a><br/>
-    本文档随 v1.0.1 一同发布。
+    本文档随 v1.0.2 一同发布。
   </footer>
 
 </div>
