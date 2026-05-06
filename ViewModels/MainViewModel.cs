@@ -51,8 +51,10 @@ public partial class MainViewModel : ObservableObject
 
     // Half-hourly time slots from 00:00 to 23:30 used by the work-time ComboBoxes.
     // Generated once and shared by both the start and end pickers.
-    public IReadOnlyList<TimeSpan> WorkTimeOptions { get; } =
-        Enumerable.Range(0, 48).Select(i => TimeSpan.FromMinutes(i * 30)).ToList();
+    public IReadOnlyList<string> WorkTimeOptions { get; } =
+        Enumerable.Range(0, 48)
+            .Select(i => TimeSpan.FromMinutes(i * 30).ToString(@"hh\:mm"))
+            .ToList();
 
     public MainViewModel(
         IExchangeService exchangeService,
@@ -255,13 +257,20 @@ public partial class MainViewModel : ObservableObject
             await _exchangeService.SetOofSettingsAsync(settings);
             CurrentStatus = targetStatus;
             IsOofEnabled = shouldBeOof;
+            // Re-raise PropertyChanged so any binding that already cached the
+            // value (e.g. after the OnIsOofEnabledChanged partial method ran
+            // and re-assigned CurrentStatus to the same OofStatus) still gets
+            // a refresh notification. Cheap and idempotent.
+            OnPropertyChanged(nameof(CurrentStatus));
+            OnPropertyChanged(nameof(IsOofEnabled));
             WorkScheduleStatus = GetWorkScheduleStatus();
-            if (showSuccessMessage)
-            {
-                StatusMessage = shouldBeOof
-                    ? "✅ Outside working hours: OOF turned on automatically"
-                    : "✅ Inside working hours: OOF turned off automatically";
-            }
+            // Always surface the auto-switch in the status bar so the user
+            // can see exactly when the schedule kicked in, not only on the
+            // “Save and Apply” / “Check Now” code path.
+            var nowLabel = DateTime.Now.ToString("HH:mm");
+            StatusMessage = shouldBeOof
+                ? $"✅ {nowLabel} · Outside working hours: OOF turned on automatically"
+                : $"✅ {nowLabel} · Inside working hours: OOF turned off automatically";
         }
         catch (Exception ex)
         {

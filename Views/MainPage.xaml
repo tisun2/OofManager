@@ -161,27 +161,19 @@
                         <TextBlock Text="Work Start Time" FontSize="12" Opacity="0.7"/>
                         <TextBlock Grid.Column="2" Text="Work End Time" FontSize="12" Opacity="0.7"/>
                         <ComboBox Grid.Row="1" Grid.Column="0"
+                                  IsEditable="True"
+                                  IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
-                                  SelectedItem="{Binding WorkStartTime, Mode=TwoWay}"
+                                  Text="{Binding WorkStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch"
-                                  Margin="0,4,0,0">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding Converter={StaticResource TimeSpanToHourMinute}}"/>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                                  Margin="0,4,0,0"/>
                         <ComboBox Grid.Row="1" Grid.Column="2"
+                                  IsEditable="True"
+                                  IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
-                                  SelectedItem="{Binding WorkEndTime, Mode=TwoWay}"
+                                  Text="{Binding WorkEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch"
-                                  Margin="0,4,0,0">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding Converter={StaticResource TimeSpanToHourMinute}}"/>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                                  Margin="0,4,0,0"/>
                     </Grid>
 
                     <Grid Margin="0,12,0,0">
