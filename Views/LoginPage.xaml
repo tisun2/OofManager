@@ -12,7 +12,7 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" VerticalAlignment="Bottom" HorizontalAlignment="Center">
-            <Image Source="/Resources/oofmanager.ico" Width="96" Height="96" HorizontalAlignment="Center"
+            <Image Source="/Resources/oofmanager-512.png" Width="96" Height="96" HorizontalAlignment="Center"
                    RenderOptions.BitmapScalingMode="HighQuality"/>
             <TextBlock Text="OOF Manager"
                        FontSize="32" FontWeight="Bold"

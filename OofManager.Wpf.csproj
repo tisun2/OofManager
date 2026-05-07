@@ -3,6 +3,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
+    <!-- Build the executable as OofManager.exe (process name shows up as
+         "OofManager" in Task Manager / tray) instead of inheriting the project
+         file name. The .csproj keeps the .Wpf suffix only for historical
+         reasons. -->
+    <AssemblyName>OofManager</AssemblyName>
+    <RootNamespace>OofManager.Wpf</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -22,6 +28,12 @@
   <!-- Embed the icon as a WPF resource so XAML Icon="..." / Image Source="..." work at runtime. -->
   <ItemGroup>
     <Resource Include="Resources\oofmanager.ico" />
+    <!-- High-resolution PNG used by the login page splash. The .ico is
+         capped at 256x256 and WPF picks a small frame from it when an Image
+         is sized larger than 64px, which produces a blurry result on HiDPI
+         displays. The dedicated 512x512 PNG lets WPF downsample from one
+         crisp source. -->
+    <Resource Include="Resources\oofmanager-512.png" />
   </ItemGroup>
 
   <ItemGroup>

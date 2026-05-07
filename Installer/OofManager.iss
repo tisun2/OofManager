@@ -3,9 +3,9 @@
 ; Output: Installer\Output\OofManagerSetup.exe
 
 #define MyAppName "OOF Manager"
-#define MyAppVersion "1.0.8"
+#define MyAppVersion "1.0.9"
 #define MyAppPublisher "OOF Manager"
-#define MyAppExeName "OofManager.Wpf.exe"
+#define MyAppExeName "OofManager.exe"
 
 [Setup]
 AppId={{A4B6F2E2-0E5C-4D6F-9A1A-OOFMGR1234}}
@@ -37,6 +37,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Bundle the entire publish output (app + ExchangeOnlineManagement module).
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+; v1.0.9 renamed the exe from OofManager.Wpf.exe to OofManager.exe. Remove the
+; legacy files on upgrade so an old autostart Run entry pointing at the old
+; name doesn't survive (StartupService.EnsureRegistrationIsFresh would
+; otherwise rewrite the entry to the still-present old exe path on first
+; launch). Safe even on fresh installs because IgnoreErrors is on by default.
+Type: files; Name: "{app}\OofManager.Wpf.exe"
+Type: files; Name: "{app}\OofManager.Wpf.exe.config"
+Type: files; Name: "{app}\OofManager.Wpf.pdb"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

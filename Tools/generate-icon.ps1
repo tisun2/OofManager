@@ -131,3 +131,15 @@ Save-IcoFromBitmaps $bitmaps $icoPath
 foreach ($b in $bitmaps) { $b.Dispose() }
 
 Write-Host "Wrote $icoPath ($((Get-Item $icoPath).Length) bytes, $($sizes.Count) sizes)"
+
+# Also write a high-resolution standalone PNG used by the login page splash.
+# WPF's Image control picks the closest-matching frame from a multi-resolution
+# .ico and then scales — that's what made the 96px login icon look blurry on
+# HiDPI displays. A dedicated 512x512 PNG lets WPF downsample from a single
+# crisp source instead.
+$splashSize = 512
+$splashBmp = New-EnvelopeBitmap $splashSize
+$splashPath = Join-Path $resourcesDir "oofmanager-512.png"
+$splashBmp.Save($splashPath, [System.Drawing.Imaging.ImageFormat]::Png)
+$splashBmp.Dispose()
+Write-Host "Wrote $splashPath ($((Get-Item $splashPath).Length) bytes, ${splashSize}x${splashSize})"
