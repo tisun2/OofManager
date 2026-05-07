@@ -10,7 +10,13 @@ public interface IDialogService
 public interface INavigationService
 {
     void NavigateToMain();
-    void NavigateToLogin();
+    /// <summary>
+    /// Navigates back to the LoginPage. When <paramref name="forceAccountPicker"/>
+    /// is true, also kicks off an interactive WAM sign-in with no UPN hint so
+    /// the user can choose a different Microsoft 365 account (used by the
+    /// Switch Account button on the main page).
+    /// </summary>
+    void NavigateToLogin(bool forceAccountPicker = false);
 }
 
 public interface IPreferencesService

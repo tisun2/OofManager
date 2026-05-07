@@ -222,9 +222,7 @@ public partial class MainViewModel : ObservableObject
             Templates.Clear();
             foreach (var t in templatesTask.Result) Templates.Add(t);
 
-            StatusMessage = oof.Status == OofStatus.Disabled
-                ? "OOF is currently off"
-                : "OOF is currently on";
+            StatusMessage = DescribeOofState(oof);
 
             _hasLoadedOnce = true;
 
@@ -618,17 +616,70 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task LogoutAsync()
+    private async Task SwitchAccountAsync()
     {
         StopAutomationLoop();
-        // Reset the load gate so a re-login refreshes data instead of showing stale state.
+        // Reset the load gate so the next sign-in refreshes data instead of
+        // showing stale state.
         _hasLoadedOnce = false;
-        // Forget the cached UPN so the next launch goes back to the manual Sign
-        // In button instead of immediately auto-connecting the account the user
-        // just chose to sign out of.
+        // Forget the cached UPN so neither the silent token-cache hit nor the
+        // Windows-account fallback will silently re-sign-in the same user. The
+        // intent here is explicitly "let me pick a different account".
         _prefs.Set("Auth.LastSignedInUpn", null);
         await _exchangeService.DisconnectAsync();
-        _navigation.NavigateToLogin();
+        // forceAccountPicker=true tells the navigation layer to immediately
+        // kick off WAM with no UPN hint, so the account picker comes up
+        // instead of dropping the user back to the Sign In button.
+        _navigation.NavigateToLogin(forceAccountPicker: true);
+    }
+
+    /// <summary>
+    /// Builds the human-readable status line shown at the top of the main
+    /// page. Three real cases the user cares about:
+    ///   - Disabled                : OOF is off entirely
+    ///   - Enabled (no schedule)   : OOF is on permanently / until manually
+    ///                               turned off — no end time set on the mailbox
+    ///   - Scheduled               : OOF will only be active inside the
+    ///                               start→end window. Further split into
+    ///                               "active now" vs. "scheduled to start later"
+    ///                               so the user can tell at a glance whether
+    ///                               replies are actually going out right now.
+    /// </summary>
+    private static string DescribeOofState(OofSettings oof)
+    {
+        switch (oof.Status)
+        {
+            case OofStatus.Disabled:
+                return "🔕 OOF is currently OFF";
+
+            case OofStatus.Enabled:
+                // No end time = "until I turn it off myself". Call that out
+                // explicitly so the user doesn't expect Exchange to disable it
+                // automatically.
+                return "🟢 OOF is ON (no schedule — stays on until manually turned off)";
+
+            case OofStatus.Scheduled:
+                var now = DateTimeOffset.Now;
+                var startStr = oof.StartTime?.LocalDateTime.ToString("ddd MM-dd HH:mm");
+                var endStr = oof.EndTime?.LocalDateTime.ToString("ddd MM-dd HH:mm");
+
+                // If both ends are present we can tell the user *which side*
+                // of the window we're currently sitting in.
+                if (oof.StartTime.HasValue && oof.EndTime.HasValue)
+                {
+                    if (now < oof.StartTime.Value)
+                        return $"🟡 OOF is scheduled — will start {startStr} and end {endStr}";
+                    if (now >= oof.EndTime.Value)
+                        return $"🔕 OOF schedule already ended ({endStr}) — currently OFF";
+                    return $"🟢 OOF is ON (scheduled until {endStr})";
+                }
+
+                // Defensive fallback: tenant returned Scheduled but no times.
+                return "🟡 OOF is scheduled";
+
+            default:
+                return string.Empty;
+        }
     }
 
     private bool IsNowInsideWorkingHours(DateTime now)
@@ -852,9 +903,9 @@ public partial class MainViewModel : ObservableObject
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                // Sleep until either the next work-hours boundary or 5 minutes
+                // Sleep until either the next work-hours boundary or 3 minutes
                 // (whichever is sooner). The boundary-aligned wake guarantees
-                // we flip OOF *exactly* at start/end times, while the 5-minute
+                // we flip OOF *exactly* at start/end times, while the 3-minute
                 // fallback self-heals against clock changes, workday config
                 // changes, and out-of-band edits to the mailbox.
                 var delay = ComputeNextCheckDelay(DateTime.Now);
@@ -883,9 +934,9 @@ public partial class MainViewModel : ObservableObject
 
     private TimeSpan ComputeNextCheckDelay(DateTime now)
     {
-        // Cap the wait to 5 minutes so we self-heal if the clock changes,
+        // Cap the wait to 3 minutes so we self-heal if the clock changes,
         // workdays change, etc.
-        var fallback = TimeSpan.FromMinutes(5);
+        var fallback = TimeSpan.FromMinutes(3);
         TimeSpan? candidate = null;
 
         // Today's boundaries (only relevant if today is itself a workday).

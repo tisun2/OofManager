@@ -45,8 +45,9 @@
                             VerticalAlignment="Center"
                             Padding="14,4"
                             Margin="0,0,8,0"/>
-                    <Button Grid.Column="2" Content="Sign Out"
-                            Command="{Binding LogoutCommand}"
+                    <Button Grid.Column="2" Content="🔄 Switch account"
+                            Command="{Binding SwitchAccountCommand}"
+                            ToolTip="Sign out and pick a different Microsoft 365 account"
                             VerticalAlignment="Center"
                             Padding="14,4"/>
 
@@ -61,10 +62,11 @@
 
             <!-- Status Message -->
             <TextBlock Text="{Binding StatusMessage}"
-                       FontSize="13"
+                       FontSize="15"
+                       FontWeight="SemiBold"
                        HorizontalAlignment="Center"
-                       Opacity="0.7"
-                       Margin="0,0,0,12"
+                       Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
+                       Margin="0,2,0,14"
                        TextWrapping="Wrap"/>
 
             <!-- Quick Toggle Card -->

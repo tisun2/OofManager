@@ -14,6 +14,7 @@ public partial class LoginViewModel : ObservableObject
     private readonly INavigationService _navigation;
     private readonly IPreferencesService _prefs;
     private readonly IWindowsAccountService _windowsAccount;
+    private readonly IDialogService _dialog;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -33,12 +34,14 @@ public partial class LoginViewModel : ObservableObject
         IExchangeService exchangeService,
         INavigationService navigation,
         IPreferencesService prefs,
-        IWindowsAccountService windowsAccount)
+        IWindowsAccountService windowsAccount,
+        IDialogService dialog)
     {
         _exchangeService = exchangeService;
         _navigation = navigation;
         _prefs = prefs;
         _windowsAccount = windowsAccount;
+        _dialog = dialog;
         // App.OnStartup already kicked off PrewarmAsync; calling it here would be
         // a no-op anyway because PrewarmAsync caches the in-flight task.
     }
@@ -122,6 +125,70 @@ public partial class LoginViewModel : ObservableObject
             IsLoggedIn = true;
             UserDisplayName = await _exchangeService.GetCurrentUserAsync();
             _prefs.Set(LastUpnPrefKey, UserDisplayName);
+            StatusMessage = $"Welcome, {UserDisplayName}!";
+            _navigation.NavigateToMain();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Sign-in failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Triggered by the main page's "Switch account" button. Asks the user
+    /// which Microsoft 365 account they want to switch to, then forwards that
+    /// UPN to Connect-ExchangeOnline. We can't simply call WAM with no UPN
+    /// here because Disconnect-ExchangeOnline does NOT clear the MSAL token
+    /// cache — WAM would silently re-issue a token for the previous account
+    /// and the user would see no "switch" actually happen. Passing the new UPN
+    /// either uses a different cached token (silent) or triggers an
+    /// interactive sign-in for a fresh account.
+    /// </summary>
+    public async Task SwitchAccountAsync()
+    {
+        // Block TryAutoLoginAsync from racing with us when LoginPage.Loaded fires;
+        // otherwise the silent re-login could win and put the user right back
+        // into the account they just asked to switch away from.
+        _autoLoginAttempted = true;
+
+        if (IsBusy) return;
+
+        var newUpn = await _dialog.PromptAsync(
+            title: "Switch account",
+            message: "Enter the email address of the Microsoft 365 account you want to switch to:",
+            accept: "Sign in",
+            cancel: "Cancel",
+            placeholder: "name@company.com");
+
+        if (string.IsNullOrWhiteSpace(newUpn))
+        {
+            // User cancelled — leave them on the login page so they can either
+            // close the window or click Sign In manually.
+            StatusMessage = "Sign in with your Microsoft 365 account";
+            return;
+        }
+
+        var trimmedUpn = newUpn!.Trim();
+        IsBusy = true;
+        StatusMessage = $"Signing in as {trimmedUpn}…";
+
+        try
+        {
+            await _exchangeService.ConnectAsync(upnHint: trimmedUpn);
+            IsLoggedIn = true;
+            // Use the canonical UPN the server reports back in case the user
+            // typed an alias or different casing.
+            UserDisplayName = await _exchangeService.GetCurrentUserAsync();
+            // Deliberately do NOT persist this UPN as LastSignedInUpn. Switch
+            // Account is treated as a one-shot override: next launch goes back
+            // to the default flow (cached UPN if any → else Windows account
+            // SSO). Without this, switching to a personal account would
+            // permanently override the Windows-account fallback for that user
+            // even after a restart, which surprised the user.
             StatusMessage = $"Welcome, {UserDisplayName}!";
             _navigation.NavigateToMain();
         }
