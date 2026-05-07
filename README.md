@@ -10,7 +10,11 @@ Built with WPF (.NET Framework 4.8), [ModernWpfUI](https://github.com/Kinnara/Mo
 - **View and edit auto-reply state** (Disabled / Scheduled / Enabled) for the signed-in mailbox
 - **Separate internal vs. external replies** with rich-text bodies
 - **Template library** — save and reuse common auto-reply messages
-- **Work-schedule automation** — pick weekdays + start/end times (in 30-minute increments) and the app will toggle OOF on/off automatically every 5 minutes
+- **Per-day work-schedule automation** — each weekday gets its own start/end time and an "Off Work" toggle; the app auto-flips OOF on/off at the boundaries
+- **Sync to Outlook (works while the app is closed)** — the next off-hours window is pushed to the mailbox as a Scheduled OOF, so Exchange itself toggles auto-replies even if OofManager isn't running
+- **Auto-sync** option pushes a fresh window on every schedule check + at sign-in, so a single launch keeps the server in step for the whole week
+- **Tray notifications** for background OOF flips and auto-syncs while the window is hidden
+- **Start with Windows** option (per-user, no admin) launches the app hidden in the tray at logon
 - **System tray support** — minimize to tray, single-click to restore, customizable close-button behavior (ask / always-exit / always-tray)
 - **Bundled `ExchangeOnlineManagement` module** — works on machines that have never installed the module from PSGallery
 - **English UI**
@@ -47,7 +51,8 @@ dotnet publish OofManager.Wpf.csproj -c Release -o publish
 | `Services/ExchangeService.cs` | In-process PowerShell runspace; talks to Exchange Online |
 | `Services/PreferencesService.cs` | Persists settings to `%LocalAppData%\OofManager\preferences.json` |
 | `Services/TemplateService.cs` | Template library (SQLite via `sqlite-net-pcl`) |
-| `Services/TrayIconService.cs` | `NotifyIcon`-based system tray support |
+| `Services/TrayIconService.cs` | `NotifyIcon`-based system tray support + balloon notifications |
+| `Services/StartupService.cs` | Per-user autostart via HKCU `Run` key (writes `--minimized` so the app launches into the tray) |
 | `Modules/ExchangeOnlineManagement/` | Bundled PowerShell module shipped with the app |
 | `Installer/OofManager.iss` | Inno Setup script |
 
