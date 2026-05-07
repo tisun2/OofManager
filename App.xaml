@@ -13,6 +13,7 @@
 
             <conv:InvertBoolConverter x:Key="InvertBool"/>
             <conv:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
+            <conv:InvertBoolToVisibilityConverter x:Key="InvertBoolToVisibility"/>
             <conv:OofStatusToTextConverter x:Key="OofStatusToText"/>
             <conv:TimeSpanToHourMinuteConverter x:Key="TimeSpanToHourMinute"/>
         </ResourceDictionary>

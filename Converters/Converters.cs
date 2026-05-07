@@ -22,6 +22,19 @@ public class BoolToVisibilityConverter : IValueConverter
         => value is Visibility v && v == Visibility.Visible;
 }
 
+/// <summary>
+/// Inverse of <see cref="BoolToVisibilityConverter"/>: false → Visible, true → Collapsed.
+/// Lets a single bool drive both "show A" and "show B" without separate properties.
+/// </summary>
+public class InvertBoolToVisibilityConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)
+        => value is bool b && !b ? Visibility.Visible : Visibility.Collapsed;
+
+    public object ConvertBack(object value, Type targetType, object? parameter, CultureInfo culture)
+        => value is Visibility v && v != Visibility.Visible;
+}
+
 public class OofStatusToTextConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object? parameter, CultureInfo culture)

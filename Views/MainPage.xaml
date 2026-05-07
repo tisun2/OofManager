@@ -85,11 +85,37 @@
                         <TextBlock Text="Out of Office" FontSize="22" FontWeight="Bold"/>
                         <TextBlock Text="{Binding CurrentStatus, Converter={StaticResource OofStatusToText}}"
                                    FontSize="18" FontWeight="SemiBold" Opacity="0.85" Margin="0,4,0,0"/>
+                        <!-- Sub-caption explains who's currently in charge of the
+                             toggle, so the user can tell at a glance whether
+                             they need to flip it themselves or whether the
+                             schedule will do it. -->
+                        <TextBlock FontSize="12" Opacity="0.65" Margin="0,4,0,0"
+                                   TextWrapping="Wrap">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="Manual control — flip the switch and click Save Now to push the change to Outlook."/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsWorkScheduleEnabled}" Value="True">
+                                            <Setter Property="Text" Value="Auto-managed by Work Schedule below. Turn that off if you want manual control."/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </StackPanel>
+
+                    <!-- Toggle: disabled (read-only state indicator) when the
+                         Work Schedule is in charge, fully interactive when it
+                         isn't. The bound value still reflects the current OOF
+                         state in both modes. -->
                     <ui:ToggleSwitch Grid.Column="1"
                                      IsOn="{Binding IsOofEnabled, Mode=TwoWay}"
+                                     IsEnabled="{Binding IsWorkScheduleEnabled, Converter={StaticResource InvertBool}}"
                                      VerticalAlignment="Center"/>
 
+                    <!-- Save Now button only appears in manual mode; in
+                         scheduled mode the auto-loop pushes the state for
+                         the user, so a manual button would just be misleading. -->
                     <Button Grid.Row="1" Grid.ColumnSpan="2"
                             Content="⚡ Save Now"
                             Command="{Binding QuickToggleCommand}"
@@ -97,7 +123,8 @@
                             Height="44"
                             HorizontalAlignment="Stretch"
                             HorizontalContentAlignment="Center"
-                            Margin="0,12,0,0"/>
+                            Margin="0,12,0,0"
+                            Visibility="{Binding IsWorkScheduleEnabled, Converter={StaticResource InvertBoolToVisibility}}"/>
                 </Grid>
             </Border>
 

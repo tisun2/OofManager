@@ -243,9 +243,24 @@ public partial class MainViewModel : ObservableObject
             await Task.WhenAll(oofTask, templatesTask);
 
             var oof = oofTask.Result;
-            CurrentStatus = oof.Status;
-            IsOofEnabled = oof.Status != OofStatus.Disabled;
+            // The toggle should reflect what Outlook is *actually doing right
+            // now*, not the raw mailbox state. A Scheduled OOF whose window is
+            // still in the future means OOF replies aren't being sent yet, so
+            // we don't want the toggle to read "On". Without this guard, the
+            // auto-sync's "next off-hours window" pre-push would flip the
+            // toggle on as soon as the user signs in, even mid-workday.
             IsScheduled = oof.Status == OofStatus.Scheduled;
+            IsOofEnabled = oof.Status == OofStatus.Enabled
+                || (oof.Status == OofStatus.Scheduled
+                    && oof.StartTime.HasValue
+                    && oof.StartTime.Value <= DateTimeOffset.Now
+                    && (!oof.EndTime.HasValue || oof.EndTime.Value > DateTimeOffset.Now));
+            // Set CurrentStatus *last* and unconditionally to the real mailbox
+            // state. The partial-method side effects of IsOofEnabled /
+            // IsScheduled assignments above flip CurrentStatus around as if
+            // the user had toggled the switch, which would otherwise lie to
+            // the status label about what Exchange actually has.
+            CurrentStatus = oof.Status;
             InternalReply = oof.InternalReply;
             ExternalReply = oof.ExternalReply;
             ExternalAudienceAll = oof.ExternalAudienceAll;
@@ -270,6 +285,12 @@ public partial class MainViewModel : ObservableObject
 
             if (IsWorkScheduleEnabled)
             {
+                // Drop the busy flag *before* triggering the schedule apply +
+                // outlook sync. ApplyWorkScheduleAsync and SyncToOutlookCoreAsync
+                // both early-return on IsBusy=true, so without this they'd
+                // silently no-op on the very first launch — Outlook wouldn't
+                // get the initial Scheduled push until the next polling tick.
+                IsBusy = false;
                 StartAutomationLoop();
                 await ApplyWorkScheduleAsync(showSuccessMessage: false);
                 if (IsAutoSyncEnabled)
@@ -425,10 +446,21 @@ public partial class MainViewModel : ObservableObject
             _lastSyncedEnd = end;
 
             // Reflect the new server state locally so the UI's "Out of Office"
-            // card matches Outlook (which is now in Scheduled mode).
-            CurrentStatus = OofStatus.Scheduled;
+            // card matches Outlook (which is now in Scheduled mode). The
+            // toggle reflects whether OOF is *actually firing right now* — a
+            // future-only Scheduled window means it isn't, so the toggle stays
+            // Off until the start time arrives. Without this guard the toggle
+            // would visually flip On the moment the user clicks Sync now mid-
+            // workday, which lies about whether senders are actually getting
+            // auto-replies.
             IsScheduled = true;
-            IsOofEnabled = true;
+            var nowOffset = DateTimeOffset.Now;
+            IsOofEnabled = start <= nowOffset && end > nowOffset;
+            // Re-assert CurrentStatus *after* the IsOofEnabled / IsScheduled
+            // setters' partial methods run, so the status label always reads
+            // the real mailbox state instead of being clobbered to Disabled
+            // when IsOofEnabled is false.
+            CurrentStatus = OofStatus.Scheduled;
 
             var startLabel = start.LocalDateTime.ToString("ddd MM-dd HH:mm");
             var endLabel = end.LocalDateTime.ToString("ddd MM-dd HH:mm");
@@ -625,6 +657,19 @@ public partial class MainViewModel : ObservableObject
         // previous implementation flipped IsOofEnabled before saving, which double-
         // toggled when the user had already moved the switch (switch ON + click =
         // server gets OFF), making it look like saves "didn't take".
+
+        // Normalize away any leftover Scheduled state from a previous auto-sync
+        // before saving. Without this, IsScheduled stays true after LoadAsync
+        // pulls a Scheduled OOF from Exchange, so Save Now would re-push the
+        // stale 17:30→09:00 window and Outlook keeps displaying it as a
+        // schedule even though the user is in manual mode.
+        if (IsScheduled)
+        {
+            IsScheduled = false;
+            // Re-derive CurrentStatus from the toggle now that IsScheduled is
+            // false (Enabled if on, Disabled if off).
+            CurrentStatus = IsOofEnabled ? OofStatus.Enabled : OofStatus.Disabled;
+        }
         await SaveOofAsync();
     }
 

@@ -230,6 +230,22 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             sb.AppendLine($"    StartTime = '{startStr}'");
             sb.AppendLine($"    EndTime = '{endStr}'");
         }
+        else
+        {
+            // Caller asked for a non-scheduled state (Enabled / Disabled).
+            // Exchange keeps StartTime / EndTime around from the last
+            // Scheduled push if we don't overwrite them, which is what makes
+            // Outlook keep displaying the stale "Send replies during this time
+            // period 17:30 → 09:00" UI even though it's no longer enforced.
+            // Collapse the window to a one-day stretch in the distant past so
+            // the schedule reads as already expired and Outlook hides it.
+            // (Exchange requires EndTime to be strictly greater than StartTime,
+            // so we space the two sentinels a day apart.)
+            var sentinelStart = new DateTime(2000, 1, 1, 0, 0, 0).ToString("yyyy-MM-ddTHH:mm:ss");
+            var sentinelEnd = new DateTime(2000, 1, 2, 0, 0, 0).ToString("yyyy-MM-ddTHH:mm:ss");
+            sb.AppendLine($"    StartTime = '{sentinelStart}'");
+            sb.AppendLine($"    EndTime = '{sentinelEnd}'");
+        }
 
         sb.AppendLine("}");
         // -ErrorAction Stop turns any non-terminating error (e.g. tenant policy
