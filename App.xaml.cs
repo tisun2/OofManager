@@ -24,6 +24,7 @@ public partial class App : Application
         services.AddSingleton<ITemplateService, TemplateService>();
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<IDialogService, DialogService>();
+        services.AddSingleton<IStartupService, StartupService>();
         // Tray icon: register once, expose under both the concrete type (so
         // OnStartup can call Attach below) and the interface (so ViewModels
         // can request HideToTray without taking a UI dependency).
@@ -60,7 +61,16 @@ public partial class App : Application
         // Attach the tray icon AFTER the window is created. Tray icon is owned
         // by DI so it lives as long as the process and gets disposed exactly
         // once on shutdown (see DisposeAsync above).
-        Services.GetRequiredService<TrayIconService>().Attach(window);
+        var tray = Services.GetRequiredService<TrayIconService>();
+        tray.Attach(window);
+
+        // Honor --minimized: when the OS launched us at user logon (HKCU\Run
+        // command line includes the switch) we hide straight to the tray so
+        // we don't steal focus from whatever the user opens first.
+        if (e.Args.Any(a => string.Equals(a, StartupService.MinimizedArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            tray.HideToTray();
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

@@ -15,8 +15,14 @@ public partial class MainViewModel : ObservableObject
     private readonly INavigationService _navigation;
     private readonly IPreferencesService _prefs;
     private readonly ITrayService _tray;
+    private readonly IStartupService _startup;
     private CancellationTokenSource? _automationCts;
     private bool _hasLoadedOnce;
+    // Last off-hours window pushed to Outlook by SyncToOutlookCoreAsync. Used to
+    // skip a redundant server round-trip when the auto-sync loop computes the
+    // same window twice in a row (the common case during a long off-hours stretch).
+    private DateTimeOffset? _lastSyncedStart;
+    private DateTimeOffset? _lastSyncedEnd;
 
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusMessage = string.Empty;
@@ -24,6 +30,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isOofEnabled;
     [ObservableProperty] private bool _isScheduled;
     [ObservableProperty] private bool _isWorkScheduleEnabled;
+    [ObservableProperty] private bool _isAutoSyncEnabled = true;
+    [ObservableProperty] private bool _isStartWithWindowsEnabled;
     [ObservableProperty] private bool _isMondayWorkday = true;
     [ObservableProperty] private bool _isTuesdayWorkday = true;
     [ObservableProperty] private bool _isWednesdayWorkday = true;
@@ -77,7 +85,8 @@ public partial class MainViewModel : ObservableObject
         IDialogService dialog,
         INavigationService navigation,
         IPreferencesService prefs,
-        ITrayService tray)
+        ITrayService tray,
+        IStartupService startup)
     {
         _exchangeService = exchangeService;
         _templateService = templateService;
@@ -85,6 +94,11 @@ public partial class MainViewModel : ObservableObject
         _navigation = navigation;
         _prefs = prefs;
         _tray = tray;
+        _startup = startup;
+        // Surface the current registry state so the bound CheckBox starts in
+        // the right position, even if the user enabled/disabled it externally
+        // (Task Manager > Startup, another machine via roaming, etc.).
+        _isStartWithWindowsEnabled = _startup.IsEnabled;
     }
 
     [RelayCommand]
@@ -114,6 +128,23 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsWorkScheduleEnabledChanged(bool value)
     {
         WorkScheduleStatus = value ? GetWorkScheduleStatus() : "Work schedule rule disabled";
+    }
+
+    partial void OnIsStartWithWindowsEnabledChanged(bool value)
+    {
+        // Two-way bind directly to the registry. We re-read after writing so a
+        // failed write (locked-down policy) flips the bound CheckBox back to
+        // its real state instead of silently lying to the user.
+        _startup.SetEnabled(value);
+        var actual = _startup.IsEnabled;
+        if (actual != value)
+        {
+            // Re-set without re-entering this handler: assigning the field
+            // directly skips the generated setter's change-detection.
+            _isStartWithWindowsEnabled = actual;
+            OnPropertyChanged(nameof(IsStartWithWindowsEnabled));
+            StatusMessage = "Could not update startup setting (policy may block it).";
+        }
     }
 
     partial void OnSelectedTemplateChanged(OofTemplate? value)
@@ -201,7 +232,16 @@ public partial class MainViewModel : ObservableObject
             {
                 StartAutomationLoop();
                 await ApplyWorkScheduleAsync(showSuccessMessage: false);
+                if (IsAutoSyncEnabled)
+                {
+                    // Push the current off-hours window straight to Outlook on
+                    // launch so the server takes over immediately, even if the
+                    // user closes the app right after sign-in.
+                    await SyncToOutlookCoreAsync(isUserInitiated: false);
+                }
             }
+
+            await MaybePromptStartWithWindowsAsync();
         }
         catch (Exception ex)
         {
@@ -238,6 +278,16 @@ public partial class MainViewModel : ObservableObject
         {
             StartAutomationLoop();
             await ApplyWorkScheduleAsync(showSuccessMessage: true);
+            if (IsAutoSyncEnabled)
+            {
+                // Schedule edits invalidate any previously-pushed Outlook
+                // window, so refresh immediately. The dedupe inside
+                // SyncToOutlookCoreAsync already skips if the new window
+                // happens to match the cached one.
+                _lastSyncedStart = null;
+                _lastSyncedEnd = null;
+                await SyncToOutlookCoreAsync(isUserInitiated: false);
+            }
         }
         else
         {
@@ -253,12 +303,166 @@ public partial class MainViewModel : ObservableObject
         await ApplyWorkScheduleAsync(showSuccessMessage: true);
     }
 
+    /// <summary>
+    /// Pushes the next "off-hours" window to Outlook as a Scheduled OOF.
+    /// Outlook's server then turns OOF on / off at the boundaries even if
+    /// this client isn't running. Solves the "I forgot to keep the app open"
+    /// problem. The window is computed from the per-day work hours:
+    ///   - If now is inside working hours: window = [today's end, next workday's start]
+    ///   - If now is outside working hours: window = [now, next workday's start]
+    /// A single Outlook Scheduled window covers a whole weekend in one push.
+    /// </summary>
+    [RelayCommand]
+    private async Task SyncToOutlookAsync()
+    {
+        if (!IsWorkScheduleEnabled)
+        {
+            StatusMessage = "Enable Work Schedule first, then sync.";
+            return;
+        }
+        await SyncToOutlookCoreAsync(isUserInitiated: true);
+    }
+
+    /// <summary>
+    /// Shared implementation behind both the user's "Sync to Outlook" button
+    /// and the background auto-sync. Auto-sync calls with isUserInitiated=false
+    /// so failures don't pop dialogs and a no-change push doesn't churn the UI.
+    /// </summary>
+    private async Task SyncToOutlookCoreAsync(bool isUserInitiated)
+    {
+        if (IsBusy) return;
+        if (!IsWorkScheduleEnabled) return;
+
+        var window = ComputeNextOffHoursWindow(DateTime.Now);
+        if (window == null)
+        {
+            if (isUserInitiated)
+            {
+                await _dialog.AlertAsync(
+                    "Cannot Sync",
+                    "There is no upcoming off-hours window in your schedule. Add at least one work day with hours that don't span the full 24 hours.");
+            }
+            return;
+        }
+        var (start, end) = window.Value;
+
+        // Dedupe: skip the server round-trip if the window we'd push is exactly
+        // the one we last pushed. The auto-sync loop fires every few minutes,
+        // so without this we'd hammer Exchange with identical Set calls all
+        // through a single off-hours stretch.
+        if (!isUserInitiated
+            && _lastSyncedStart == start
+            && _lastSyncedEnd == end)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var settings = new OofSettings
+            {
+                Status = OofStatus.Scheduled,
+                InternalReply = InternalReply,
+                ExternalReply = ExternalReply,
+                ExternalAudienceAll = ExternalAudienceAll,
+                StartTime = start,
+                EndTime = end
+            };
+
+            await _exchangeService.SetOofSettingsAsync(settings);
+
+            _lastSyncedStart = start;
+            _lastSyncedEnd = end;
+
+            // Reflect the new server state locally so the UI's "Out of Office"
+            // card matches Outlook (which is now in Scheduled mode).
+            CurrentStatus = OofStatus.Scheduled;
+            IsScheduled = true;
+            IsOofEnabled = true;
+
+            var startLabel = start.LocalDateTime.ToString("ddd MM-dd HH:mm");
+            var endLabel = end.LocalDateTime.ToString("ddd MM-dd HH:mm");
+            var msg = isUserInitiated
+                ? $"📤 Outlook will auto-OOF from {startLabel} to {endLabel}. Works without this app open."
+                : $"🔄 Auto-sync: Outlook OOF window updated to {startLabel} → {endLabel}";
+            StatusMessage = msg;
+
+            // Surface to the tray when the window is hidden so the user still
+            // sees the auto-action. The user-initiated push doesn't need a
+            // balloon (they're looking at the app and the status bar already
+            // updated).
+            if (!isUserInitiated && _tray.IsWindowHidden)
+            {
+                _tray.ShowNotification(
+                    "OOF Manager",
+                    $"Outlook auto-reply scheduled: {startLabel} → {endLabel}");
+            }
+        }
+        catch (Exception ex)
+        {
+            // Surface manual failures loudly; auto failures only update the
+            // status bar so we don't pop a dialog from a background tick.
+            StatusMessage = $"Sync to Outlook failed: {ex.Message}";
+            if (isUserInitiated)
+            {
+                await _dialog.AlertAsync("Sync Failed", ex.Message);
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Computes the next contiguous off-hours window starting at or after now,
+    /// based on the per-day work-hour configuration. Returns null if no such
+    /// window exists (e.g. every day is off-work, leaving no anchor for end).
+    /// </summary>
+    private (DateTimeOffset start, DateTimeOffset end)? ComputeNextOffHoursWindow(DateTime now)
+    {
+        // Off-hours start: today's end-of-work if currently inside working
+        // hours; otherwise right now.
+        DateTime offStart = IsNowInsideWorkingHours(now)
+            ? now.Date.Add(GetEndTimeForDay(now.DayOfWeek))
+            : now;
+
+        // Off-hours end: the very next start-of-work boundary strictly after
+        // offStart. Walk forward up to 7 days; bail if no day is a workday.
+        DateTime? offEnd = FindNextStartOfWorkAfter(offStart);
+        if (offEnd == null || offEnd.Value <= offStart) return null;
+
+        return (
+            new DateTimeOffset(offStart, TimeZoneInfo.Local.GetUtcOffset(offStart)),
+            new DateTimeOffset(offEnd.Value, TimeZoneInfo.Local.GetUtcOffset(offEnd.Value))
+        );
+    }
+
+    private DateTime? FindNextStartOfWorkAfter(DateTime t)
+    {
+        // Today first: only counts if we haven't passed today's start yet.
+        if (IsWorkday(t.DayOfWeek))
+        {
+            var startToday = t.Date.Add(GetStartTimeForDay(t.DayOfWeek));
+            if (t < startToday) return startToday;
+        }
+        for (int i = 1; i <= 7; i++)
+        {
+            var nextDate = t.Date.AddDays(i);
+            if (IsWorkday(nextDate.DayOfWeek))
+                return nextDate.Add(GetStartTimeForDay(nextDate.DayOfWeek));
+        }
+        return null;
+    }
+
     private async Task ApplyWorkScheduleAsync(bool showSuccessMessage)
     {
         if (!IsWorkScheduleEnabled || IsBusy) return;
 
         var shouldBeOof = !IsNowInsideWorkingHours(DateTime.Now);
         var targetStatus = shouldBeOof ? OofStatus.Enabled : OofStatus.Disabled;
+        var previousStatus = CurrentStatus;
 
         // We deliberately do NOT short-circuit when CurrentStatus == targetStatus.
         // The local CurrentStatus can drift from the real server state (cached
@@ -296,6 +500,18 @@ public partial class MainViewModel : ObservableObject
             StatusMessage = shouldBeOof
                 ? $"✅ {nowLabel} · Outside working hours: OOF turned on automatically"
                 : $"✅ {nowLabel} · Inside working hours: OOF turned off automatically";
+
+            // Tray notification: only fire on a *real* flip and only when the
+            // window is hidden — otherwise the status bar already tells the
+            // user, and a balloon for every 5-minute self-heal would be spam.
+            if (previousStatus != targetStatus && _tray.IsWindowHidden)
+            {
+                _tray.ShowNotification(
+                    "OOF Manager",
+                    shouldBeOof
+                        ? $"Out-of-office turned ON ({nowLabel}) — outside working hours"
+                        : $"Out-of-office turned OFF ({nowLabel}) — inside working hours");
+            }
         }
         catch (Exception ex)
         {
@@ -484,6 +700,7 @@ public partial class MainViewModel : ObservableObject
     private void LoadWorkSchedulePreferences()
     {
         IsWorkScheduleEnabled = _prefs.GetBool("WorkSchedule.Enabled", false);
+        IsAutoSyncEnabled = _prefs.GetBool("WorkSchedule.AutoSync", true);
         IsMondayWorkday = _prefs.GetBool("WorkSchedule.Monday", true);
         IsTuesdayWorkday = _prefs.GetBool("WorkSchedule.Tuesday", true);
         IsWednesdayWorkday = _prefs.GetBool("WorkSchedule.Wednesday", true);
@@ -542,6 +759,7 @@ public partial class MainViewModel : ObservableObject
         using (_prefs.BeginBatch())
         {
             _prefs.Set("WorkSchedule.Enabled", IsWorkScheduleEnabled);
+            _prefs.Set("WorkSchedule.AutoSync", IsAutoSyncEnabled);
             _prefs.Set("WorkSchedule.Monday", IsMondayWorkday);
             _prefs.Set("WorkSchedule.Tuesday", IsTuesdayWorkday);
             _prefs.Set("WorkSchedule.Wednesday", IsWednesdayWorkday);
@@ -566,6 +784,38 @@ public partial class MainViewModel : ObservableObject
             _prefs.Set("WorkSchedule.Sunday.EndMinutes", (int)SundayEndTime.TotalMinutes);
         }
         WorkScheduleStatus = GetWorkScheduleStatus();
+    }
+
+    /// <summary>
+    /// Asks the user once (per profile) whether they want OofManager to launch
+    /// at Windows logon and start hidden in the tray. Designed to fire after
+    /// the *first* successful sign-in so the user has already seen the app
+    /// works before being asked to bake it into their startup.
+    /// </summary>
+    private async Task MaybePromptStartWithWindowsAsync()
+    {
+        if (!_startup.ShouldPromptUser()) return;
+        // Re-asking on machines where the user already enabled it (e.g. via
+        // Task Manager > Startup) is pointless — skip in that case.
+        if (_startup.IsEnabled)
+        {
+            IsStartWithWindowsEnabled = true;
+            return;
+        }
+
+        var enable = await _dialog.ConfirmAsync(
+            "Start with Windows?",
+            "Would you like OofManager to launch automatically when you sign in to Windows and stay hidden in the tray?\n\n"
+            + "This lets it keep your Outlook OOF in sync without you remembering to open it.\n\n"
+            + "You can change this any time from the main page.",
+            accept: "Yes, enable",
+            cancel: "No thanks");
+
+        if (enable)
+        {
+            IsStartWithWindowsEnabled = true; // setter writes the registry
+            StatusMessage = "🚀 OofManager will start with Windows and run in the tray.";
+        }
     }
 
     private void StartAutomationLoop()
@@ -599,8 +849,18 @@ public partial class MainViewModel : ObservableObject
                 // Dispatcher.InvokeAsync(Func<Task>) returns DispatcherOperation<Task>; awaiting
                 // that only waits for the lambda to hit its first yield, not for the inner work
                 // to finish. Unwrapping forces a full wait so two iterations can never overlap.
-                var op = Application.Current.Dispatcher.InvokeAsync(
-                    () => ApplyWorkScheduleAsync(showSuccessMessage: false));
+                var op = Application.Current.Dispatcher.InvokeAsync(async () =>
+                {
+                    await ApplyWorkScheduleAsync(showSuccessMessage: false);
+                    if (IsAutoSyncEnabled)
+                    {
+                        // Auto-sync runs after the local toggle so Outlook stays
+                        // in lock-step with the client's view, and so the
+                        // *next* off-hours window is already pre-pushed before
+                        // the user's working day even ends.
+                        await SyncToOutlookCoreAsync(isUserInitiated: false);
+                    }
+                });
                 await op.Task.Unwrap();
             }
         }

@@ -31,6 +31,10 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
                     <StackPanel Margin="0">
                         <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
                         <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
@@ -45,6 +49,13 @@
                             Command="{Binding LogoutCommand}"
                             VerticalAlignment="Center"
                             Padding="14,4"/>
+
+                    <CheckBox Grid.Row="1" Grid.ColumnSpan="3"
+                              IsChecked="{Binding IsStartWithWindowsEnabled, Mode=TwoWay}"
+                              Content="🚀 Start with Windows (launch hidden in the tray)"
+                              FontSize="12"
+                              Margin="0,12,0,0"
+                              ToolTip="When on, OofManager launches automatically when you sign in to Windows and starts hidden in the system tray."/>
                 </Grid>
             </Border>
 
@@ -106,7 +117,13 @@
 
                     <TextBlock Text="Check &quot;Off Work&quot; for any day you don't work. During each working day's hours OOF is turned off; outside those hours (and on off-work days) OOF is turned on automatically. Each day can have its own start and end time."
                                FontSize="12" Opacity="0.65" TextWrapping="Wrap"
-                               Margin="0,8,0,12"/>
+                               Margin="0,8,0,8"/>
+
+                    <CheckBox IsChecked="{Binding IsAutoSyncEnabled, Mode=TwoWay}"
+                              Content="🔄 Keep Outlook in sync automatically (recommended — works even when this app is closed)"
+                              FontSize="12"
+                              Margin="0,0,0,12"
+                              ToolTip="When on, the next off-hours window is pushed to Outlook on every schedule check, so the server toggles OOF on/off even if this app isn't running."/>
 
                     <Grid>
                         <Grid.ColumnDefinitions>
@@ -266,6 +283,8 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="12"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Button Grid.Column="0"
                                 Content="Save and Apply"
@@ -276,6 +295,12 @@
                         <Button Grid.Column="2"
                                 Content="Check Now"
                                 Command="{Binding ApplyWorkScheduleCommand}"
+                                Height="40" HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"/>
+                        <Button Grid.Column="4"
+                                Content="📤 Sync to Outlook"
+                                Command="{Binding SyncToOutlookCommand}"
+                                ToolTip="Push the next off-hours window to Outlook so it auto-toggles OOF on the server side — even when this app isn't running."
                                 Height="40" HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"/>
                     </Grid>
