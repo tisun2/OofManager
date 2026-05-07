@@ -90,6 +90,17 @@ public class PreferencesService : IPreferencesService
         return defaultValue;
     }
 
+    public string? GetString(string key, string? defaultValue = null)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            if (_data.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString();
+        }
+        return defaultValue;
+    }
+
     public void Set(string key, bool value)
     {
         EnsureLoaded();
@@ -114,6 +125,28 @@ public class PreferencesService : IPreferencesService
                 && existing.TryGetInt32(out var current) && current == value)
                 return;
             _data[key] = JsonSerializer.SerializeToElement(value);
+        }
+        TrySave();
+    }
+
+    public void Set(string key, string? value)
+    {
+        EnsureLoaded();
+        lock (_lock)
+        {
+            // Treat null/empty as "remove" so callers don't accumulate dead keys
+            // (e.g. after a sign-out clearing the last UPN).
+            if (string.IsNullOrEmpty(value))
+            {
+                if (!_data.Remove(key)) return;
+            }
+            else
+            {
+                if (_data.TryGetValue(key, out var existing) && existing.ValueKind == JsonValueKind.String
+                    && string.Equals(existing.GetString(), value, StringComparison.Ordinal))
+                    return;
+                _data[key] = JsonSerializer.SerializeToElement(value);
+            }
         }
         TrySave();
     }

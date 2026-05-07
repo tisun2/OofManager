@@ -60,7 +60,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         }
     }
 
-    public async Task ConnectAsync()
+    public async Task ConnectAsync(string? upnHint = null)
     {
         // Wait for any in-flight pre-warm; if none was started, do the work now.
         if (_prewarmTask != null)
@@ -83,9 +83,16 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         // -CommandName limits which Exchange cmdlets are proxied (huge speedup: from ~10s
         // down to ~2s) since we only ever call the two AutoReplyConfiguration cmdlets.
         // Get-ConnectionInformation runs in the same script invocation to avoid an extra round-trip.
-        var script = @"
+        // -UserPrincipalName: when supplied, MSAL/WAM tries to silently reuse a
+        // cached refresh token for that account (no UI). If the cache is empty
+        // or the token is no longer valid (password change, CA policy, 90-day
+        // inactivity expiry), WAM falls back to its interactive sign-in dialog.
+        var upnLine = string.IsNullOrWhiteSpace(upnHint)
+            ? string.Empty
+            : $"    -UserPrincipalName '{EscapePowerShellSingleQuotedString(upnHint!)}' `\n";
+        var script = $@"
 Connect-ExchangeOnline `
-    -ShowBanner:$false `
+{upnLine}    -ShowBanner:$false `
     -SkipLoadingFormatData `
     -SkipLoadingCmdletHelp `
     -CommandName 'Get-MailboxAutoReplyConfiguration','Set-MailboxAutoReplyConfiguration' `

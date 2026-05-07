@@ -623,6 +623,10 @@ public partial class MainViewModel : ObservableObject
         StopAutomationLoop();
         // Reset the load gate so a re-login refreshes data instead of showing stale state.
         _hasLoadedOnce = false;
+        // Forget the cached UPN so the next launch goes back to the manual Sign
+        // In button instead of immediately auto-connecting the account the user
+        // just chose to sign out of.
+        _prefs.Set("Auth.LastSignedInUpn", null);
         await _exchangeService.DisconnectAsync();
         _navigation.NavigateToLogin();
     }

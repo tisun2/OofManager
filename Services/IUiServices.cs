@@ -17,8 +17,10 @@ public interface IPreferencesService
 {
     bool GetBool(string key, bool defaultValue);
     int GetInt(string key, int defaultValue);
+    string? GetString(string key, string? defaultValue = null);
     void Set(string key, bool value);
     void Set(string key, int value);
+    void Set(string key, string? value);
     /// <summary>
     /// Suppresses immediate disk writes from Set() calls. Call Resume() to flush
     /// once at the end. Use to batch many sets into a single write.

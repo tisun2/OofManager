@@ -11,7 +11,13 @@ public interface IExchangeService
     /// </summary>
     Task PrewarmAsync();
 
-    Task ConnectAsync();
+    /// <summary>
+    /// Connects to Exchange Online. When <paramref name="upnHint"/> is provided,
+    /// the UPN is passed to Connect-ExchangeOnline so MSAL/WAM can attempt a
+    /// silent token-cache hit (no UI) if a fresh refresh token is already
+    /// cached for that identity. When null, WAM shows its account picker.
+    /// </summary>
+    Task ConnectAsync(string? upnHint = null);
     Task DisconnectAsync();
     Task<OofSettings> GetOofSettingsAsync();
     Task SetOofSettingsAsync(OofSettings settings);
