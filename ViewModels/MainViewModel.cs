@@ -421,6 +421,68 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Builds a Power Automate "Import Package (Legacy)" .zip the user can
+    /// upload at <em>My flows &rarr; Import &rarr; Import Package</em>. This
+    /// gets the user from "I want a cloud flow" to "the flow exists" with
+    /// just an upload step instead of the 5-page manual wizard. The zip is
+    /// dropped on the desktop so the user can find it easily, and the
+    /// containing folder is opened in Explorer with the file pre-selected.
+    /// </summary>
+    [RelayCommand]
+    private async Task GenerateCloudSyncPackageAsync()
+    {
+        try
+        {
+            var snapshot = new WorkScheduleSnapshot(_prefs);
+            // Desktop is the most discoverable location for a download-style
+            // artifact. If we ever ship this on machines with redirected /
+            // OneDrive desktops, GetFolderPath returns the redirected path
+            // automatically, so this stays correct.
+            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            var outPath = System.IO.Path.Combine(desktop, "OofManager-CloudSync.zip");
+
+            var path = CloudSyncPackageGenerator.Generate(
+                snapshot,
+                userEmail: UserEmail,
+                internalReply: InternalReply,
+                externalReply: ExternalReply,
+                externalAudienceAll: ExternalAudienceAll,
+                outputPath: outPath);
+
+            // Open Explorer with the file selected so the user immediately
+            // sees the zip they just generated and can drag it into the
+            // browser. /select, requires the path to be quoted.
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch { /* best-effort */ }
+
+            // Then open the Power Automate "My flows" page in the default
+            // browser so the user has the destination open and ready.
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    "https://make.powerautomate.com/manage/environments/~default/flows")
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch { /* best-effort */ }
+
+            StatusMessage = $"📦 Cloud sync package saved to {path}. Drag it into Power Automate → Import → Import Package (Legacy).";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to generate cloud sync package: {ex.Message}";
+            await _dialog.AlertAsync("Cloud Sync Package", ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Shared implementation behind both the user's "Sync now" button and the
     /// background auto-sync. Auto-sync calls with isUserInitiated=false so
     /// failures don't pop dialogs and a no-change push doesn't churn the UI.
