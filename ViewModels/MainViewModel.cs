@@ -794,14 +794,19 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private async Task MaybePromptStartWithWindowsAsync()
     {
-        if (!_startup.ShouldPromptUser()) return;
-        // Re-asking on machines where the user already enabled it (e.g. via
-        // Task Manager > Startup) is pointless — skip in that case.
+        // Already enabled (e.g. via Task Manager > Startup, a previous session,
+        // or auto-healed from a stale Run entry)? Just sync the toggle and
+        // skip the prompt — and crucially, don't burn the "shown" flag, so
+        // that if the user later disables it externally we still get a chance
+        // to prompt on a future launch.
         if (_startup.IsEnabled)
         {
             IsStartWithWindowsEnabled = true;
             return;
         }
+
+        // Already asked once on this profile and the user said no — respect that.
+        if (_startup.HasBeenPromptedBefore()) return;
 
         var enable = await _dialog.ConfirmAsync(
             "Start with Windows?",
@@ -810,6 +815,11 @@ public partial class MainViewModel : ObservableObject
             + "You can change this any time from the main page.",
             accept: "Yes, enable",
             cancel: "No thanks");
+
+        // Only record the prompt as "shown" once it actually appeared, so a
+        // crash / early-exit before the dialog renders doesn't permanently
+        // suppress the question.
+        _startup.MarkPromptShown();
 
         if (enable)
         {

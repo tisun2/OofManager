@@ -48,6 +48,12 @@ public partial class App : Application
 
         Services = services.BuildServiceProvider();
 
+        // If the autostart Run entry exists but points at a stale exe (e.g. a
+        // previous dev build under bin\Debug, or a prior install location), heal
+        // it now so the next user logon launches the actually-installed binary.
+        // Cheap; only writes the registry when the path actually differs.
+        try { Services.GetRequiredService<IStartupService>().EnsureRegistrationIsFresh(); } catch { }
+
         // Kick off the PowerShell runspace pre-warm immediately, *before* the window
         // is shown. Opening the runspace and importing ExchangeOnlineManagement takes
         // ~1-2s; running it in parallel with WPF rendering means the user's login
