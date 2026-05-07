@@ -503,11 +503,40 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private (DateTimeOffset start, DateTimeOffset end)? ComputeNextOffHoursWindow(DateTime now)
     {
-        // Off-hours start: today's end-of-work if currently inside working
-        // hours; otherwise right now.
-        DateTime offStart = IsNowInsideWorkingHours(now)
-            ? now.Date.Add(GetEndTimeForDay(now.DayOfWeek))
-            : now;
+        // Off-hours start: anchor it to today's end-of-work whenever we're
+        // outside that work day, even if "now" is already past 17:30. Without
+        // this, opening the app at e.g. 18:14 would push a window starting at
+        // 18:14, lying about when OOF should kick in (the user expects their
+        // OOF window to begin at the end of their work day, not "whenever I
+        // happened to launch the app"). Falls back to "now" only when there's
+        // no sensible work-day boundary to anchor to (off-work day, or schedule
+        // empty for today).
+        DateTime offStart;
+        if (IsWorkday(now.DayOfWeek))
+        {
+            var endToday = now.Date.Add(GetEndTimeForDay(now.DayOfWeek));
+            var startToday = now.Date.Add(GetStartTimeForDay(now.DayOfWeek));
+            if (now < startToday)
+            {
+                // Pre-work-hours on a workday (e.g. 07:30 on a Mon with 09:00
+                // start). Off-hours window starts now and ends at today's
+                // start-of-work — a real, short window we should still push.
+                offStart = now;
+            }
+            else
+            {
+                // Inside or after today's work hours: anchor to today's end.
+                // (FindNextStartOfWorkAfter walks past today, so end == next
+                // workday's start, which is what we want.)
+                offStart = endToday;
+            }
+        }
+        else
+        {
+            // Today is off-work entirely (Sat/Sun by default). Anchor to "now"
+            // — there's no end-of-work boundary on this calendar day to use.
+            offStart = now;
+        }
 
         // Off-hours end: the very next start-of-work boundary strictly after
         // offStart. Walk forward up to 7 days; bail if no day is a workday.

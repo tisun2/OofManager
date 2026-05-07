@@ -457,18 +457,49 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="🌐 External Reply" FontSize="16" FontWeight="Bold"/>
-                        <Grid Grid.Row="1" Margin="0,4,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="Sent to contacts outside your organization" FontSize="12" Opacity="0.6" VerticalAlignment="Center"/>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                <TextBlock Text="All senders" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <StackPanel Grid.Row="1" Margin="0,4,0,8">
+                            <TextBlock Text="Sent to contacts outside your organization" FontSize="12" Opacity="0.6"/>
+                            <!-- Toggle on its own line so the dual-label
+                                 framing has room to breathe (the switch + two
+                                 labels together are too wide to share a row
+                                 with the subtitle). -->
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                                        ToolTip="Right (anyone outside): any external sender, including strangers and spammers, gets the reply.&#x0a;Left (my contacts only): only people in your Contacts get the reply, which avoids spam validation and reduces phishing exposure.">
+                                <TextBlock Text="my contacts only" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Opacity" Value="1.0"/>
+                                            <Setter Property="FontWeight" Value="SemiBold"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ExternalAudienceAll}" Value="True">
+                                                    <Setter Property="Opacity" Value="0.45"/>
+                                                    <Setter Property="FontWeight" Value="Normal"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                                 <ui:ToggleSwitch IsOn="{Binding ExternalAudienceAll, Mode=TwoWay}"
-                                                 OnContent="" OffContent=""/>
+                                                 OnContent="" OffContent=""
+                                                 MinWidth="0"
+                                                 Width="44"
+                                                 Padding="0"/>
+                                <TextBlock Text="anyone outside" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Opacity" Value="0.45"/>
+                                            <Setter Property="FontWeight" Value="Normal"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding ExternalAudienceAll}" Value="True">
+                                                    <Setter Property="Opacity" Value="1.0"/>
+                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </StackPanel>
-                        </Grid>
+                        </StackPanel>
                         <TextBox Grid.Row="2"
                                  Text="{Binding ExternalReply, UpdateSourceTrigger=PropertyChanged}"
                                  Height="180"
