@@ -394,6 +394,33 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Generates a personalised Power Automate setup guide (HTML) that the
+    /// user can follow to create a cloud flow which keeps their OOF window
+    /// in sync even when every local computer is off. Bound to the
+    /// "Generate cloud sync setup guide" button in the Work Schedule card.
+    /// </summary>
+    [RelayCommand]
+    private async Task OpenCloudSyncGuideAsync()
+    {
+        try
+        {
+            var snapshot = new WorkScheduleSnapshot(_prefs);
+            var path = CloudSyncGuideGenerator.GenerateAndOpen(
+                snapshot,
+                userEmail: UserEmail,
+                internalReply: InternalReply,
+                externalReply: ExternalReply,
+                externalAudienceAll: ExternalAudienceAll);
+            StatusMessage = $"🌐 Cloud sync setup guide opened in your browser ({System.IO.Path.GetFileName(path)})";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to generate cloud sync guide: {ex.Message}";
+            await _dialog.AlertAsync("Cloud Sync Guide", ex.Message);
+        }
+    }
+
+    /// <summary>
     /// Shared implementation behind both the user's "Sync now" button and the
     /// background auto-sync. Auto-sync calls with isUserInitiated=false so
     /// failures don't pop dialogs and a no-change push doesn't churn the UI.
