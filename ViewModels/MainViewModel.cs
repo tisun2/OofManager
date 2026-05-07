@@ -29,10 +29,25 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isWednesdayWorkday = true;
     [ObservableProperty] private bool _isThursdayWorkday = true;
     [ObservableProperty] private bool _isFridayWorkday = true;
-    [ObservableProperty] private bool _isSaturdayWorkday;
-    [ObservableProperty] private bool _isSundayWorkday;
-    [ObservableProperty] private TimeSpan _workStartTime = new(9, 0, 0);
-    [ObservableProperty] private TimeSpan _workEndTime = new(18, 0, 0);
+    [ObservableProperty] private bool _isSaturdayWorkday = true;
+    [ObservableProperty] private bool _isSundayWorkday = true;
+    // Per-day work hours. Each day has its own start/end so users can configure
+    // e.g. early Mondays and late Fridays. Defaults match the old single-window
+    // behaviour (09:00–18:00) until the user persists per-day overrides.
+    [ObservableProperty] private TimeSpan _mondayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _mondayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _tuesdayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _tuesdayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _wednesdayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _wednesdayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _thursdayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _thursdayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _fridayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _fridayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _saturdayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _saturdayEndTime = new(18, 0, 0);
+    [ObservableProperty] private TimeSpan _sundayStartTime = new(9, 0, 0);
+    [ObservableProperty] private TimeSpan _sundayEndTime = new(18, 0, 0);
     [ObservableProperty] private string _workScheduleStatus = "Work schedule rule disabled";
     [ObservableProperty] private string _internalReply = string.Empty;
     [ObservableProperty] private string _externalReply = string.Empty;
@@ -201,10 +216,20 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveWorkScheduleAsync()
     {
-        if (WorkEndTime <= WorkStartTime)
+        // Validate every enabled day individually — disabled days don't participate
+        // in the automation loop, so their time values are ignored.
+        foreach (var day in WeekDays)
         {
-            await _dialog.AlertAsync("Invalid Work Hours", "End time must be later than start time.");
-            return;
+            if (!IsWorkday(day)) continue;
+            var start = GetStartTimeForDay(day);
+            var end = GetEndTimeForDay(day);
+            if (end <= start)
+            {
+                await _dialog.AlertAsync(
+                    "Invalid Work Hours",
+                    $"{GetDayDisplayName(day)}: end time must be later than start time.");
+                return;
+            }
         }
 
         SaveWorkSchedulePreferences();
@@ -389,7 +414,9 @@ public partial class MainViewModel : ObservableObject
     private bool IsNowInsideWorkingHours(DateTime now)
     {
         if (!IsWorkday(now.DayOfWeek)) return false;
-        return now.TimeOfDay >= WorkStartTime && now.TimeOfDay < WorkEndTime;
+        var start = GetStartTimeForDay(now.DayOfWeek);
+        var end = GetEndTimeForDay(now.DayOfWeek);
+        return now.TimeOfDay >= start && now.TimeOfDay < end;
     }
 
     private bool IsWorkday(DayOfWeek day) => day switch
@@ -402,6 +429,48 @@ public partial class MainViewModel : ObservableObject
         DayOfWeek.Saturday => IsSaturdayWorkday,
         DayOfWeek.Sunday => IsSundayWorkday,
         _ => false
+    };
+
+    private TimeSpan GetStartTimeForDay(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => MondayStartTime,
+        DayOfWeek.Tuesday => TuesdayStartTime,
+        DayOfWeek.Wednesday => WednesdayStartTime,
+        DayOfWeek.Thursday => ThursdayStartTime,
+        DayOfWeek.Friday => FridayStartTime,
+        DayOfWeek.Saturday => SaturdayStartTime,
+        DayOfWeek.Sunday => SundayStartTime,
+        _ => TimeSpan.Zero
+    };
+
+    private TimeSpan GetEndTimeForDay(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => MondayEndTime,
+        DayOfWeek.Tuesday => TuesdayEndTime,
+        DayOfWeek.Wednesday => WednesdayEndTime,
+        DayOfWeek.Thursday => ThursdayEndTime,
+        DayOfWeek.Friday => FridayEndTime,
+        DayOfWeek.Saturday => SaturdayEndTime,
+        DayOfWeek.Sunday => SundayEndTime,
+        _ => TimeSpan.Zero
+    };
+
+    private static string GetDayDisplayName(DayOfWeek day) => day switch
+    {
+        DayOfWeek.Monday => "Monday",
+        DayOfWeek.Tuesday => "Tuesday",
+        DayOfWeek.Wednesday => "Wednesday",
+        DayOfWeek.Thursday => "Thursday",
+        DayOfWeek.Friday => "Friday",
+        DayOfWeek.Saturday => "Saturday",
+        DayOfWeek.Sunday => "Sunday",
+        _ => day.ToString()
+    };
+
+    private static readonly DayOfWeek[] WeekDays =
+    {
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+        DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday
     };
 
     private string GetWorkScheduleStatus()
@@ -420,14 +489,42 @@ public partial class MainViewModel : ObservableObject
         IsWednesdayWorkday = _prefs.GetBool("WorkSchedule.Wednesday", true);
         IsThursdayWorkday = _prefs.GetBool("WorkSchedule.Thursday", true);
         IsFridayWorkday = _prefs.GetBool("WorkSchedule.Friday", true);
-        IsSaturdayWorkday = _prefs.GetBool("WorkSchedule.Saturday", false);
-        IsSundayWorkday = _prefs.GetBool("WorkSchedule.Sunday", false);
+        IsSaturdayWorkday = _prefs.GetBool("WorkSchedule.Saturday", true);
+        IsSundayWorkday = _prefs.GetBool("WorkSchedule.Sunday", true);
+
+        // Backward compatibility: older builds stored a single global window in
+        // "WorkSchedule.StartMinutes" / "WorkSchedule.EndMinutes". Use it as the
+        // default for every per-day key that hasn't been written yet, so existing
+        // users see their previous schedule replicated across all days on first
+        // launch of the per-day-aware build.
+        var legacyStart = _prefs.GetInt("WorkSchedule.StartMinutes", 9 * 60);
+        var legacyEnd = _prefs.GetInt("WorkSchedule.EndMinutes", 18 * 60);
+
+        MondayStartTime = LoadDayTime("Monday", "Start", legacyStart);
+        MondayEndTime = LoadDayTime("Monday", "End", legacyEnd);
+        TuesdayStartTime = LoadDayTime("Tuesday", "Start", legacyStart);
+        TuesdayEndTime = LoadDayTime("Tuesday", "End", legacyEnd);
+        WednesdayStartTime = LoadDayTime("Wednesday", "Start", legacyStart);
+        WednesdayEndTime = LoadDayTime("Wednesday", "End", legacyEnd);
+        ThursdayStartTime = LoadDayTime("Thursday", "Start", legacyStart);
+        ThursdayEndTime = LoadDayTime("Thursday", "End", legacyEnd);
+        FridayStartTime = LoadDayTime("Friday", "Start", legacyStart);
+        FridayEndTime = LoadDayTime("Friday", "End", legacyEnd);
+        SaturdayStartTime = LoadDayTime("Saturday", "Start", legacyStart);
+        SaturdayEndTime = LoadDayTime("Saturday", "End", legacyEnd);
+        SundayStartTime = LoadDayTime("Sunday", "Start", legacyStart);
+        SundayEndTime = LoadDayTime("Sunday", "End", legacyEnd);
+
+        WorkScheduleStatus = GetWorkScheduleStatus();
+    }
+
+    private TimeSpan LoadDayTime(string day, string suffix, int legacyDefaultMinutes)
+    {
+        var minutes = _prefs.GetInt($"WorkSchedule.{day}.{suffix}Minutes", legacyDefaultMinutes);
         // Snap the persisted values to the same 30-minute grid the dropdown
         // exposes; otherwise an off-grid value (from an older build that
         // accepted free text) would make the ComboBox show blank.
-        WorkStartTime = SnapToHalfHour(TimeSpan.FromMinutes(_prefs.GetInt("WorkSchedule.StartMinutes", 9 * 60)));
-        WorkEndTime = SnapToHalfHour(TimeSpan.FromMinutes(_prefs.GetInt("WorkSchedule.EndMinutes", 18 * 60)));
-        WorkScheduleStatus = GetWorkScheduleStatus();
+        return SnapToHalfHour(TimeSpan.FromMinutes(minutes));
     }
 
     private static TimeSpan SnapToHalfHour(TimeSpan value)
@@ -452,8 +549,21 @@ public partial class MainViewModel : ObservableObject
             _prefs.Set("WorkSchedule.Friday", IsFridayWorkday);
             _prefs.Set("WorkSchedule.Saturday", IsSaturdayWorkday);
             _prefs.Set("WorkSchedule.Sunday", IsSundayWorkday);
-            _prefs.Set("WorkSchedule.StartMinutes", (int)WorkStartTime.TotalMinutes);
-            _prefs.Set("WorkSchedule.EndMinutes", (int)WorkEndTime.TotalMinutes);
+
+            _prefs.Set("WorkSchedule.Monday.StartMinutes", (int)MondayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Monday.EndMinutes", (int)MondayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Tuesday.StartMinutes", (int)TuesdayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Tuesday.EndMinutes", (int)TuesdayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Wednesday.StartMinutes", (int)WednesdayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Wednesday.EndMinutes", (int)WednesdayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Thursday.StartMinutes", (int)ThursdayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Thursday.EndMinutes", (int)ThursdayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Friday.StartMinutes", (int)FridayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Friday.EndMinutes", (int)FridayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Saturday.StartMinutes", (int)SaturdayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Saturday.EndMinutes", (int)SaturdayEndTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Sunday.StartMinutes", (int)SundayStartTime.TotalMinutes);
+            _prefs.Set("WorkSchedule.Sunday.EndMinutes", (int)SundayEndTime.TotalMinutes);
         }
         WorkScheduleStatus = GetWorkScheduleStatus();
     }
@@ -502,12 +612,32 @@ public partial class MainViewModel : ObservableObject
         // Cap the wait to 5 minutes so we self-heal if the clock changes,
         // workdays change, etc.
         var fallback = TimeSpan.FromMinutes(5);
-        var startToday = now.Date.Add(WorkStartTime);
-        var endToday = now.Date.Add(WorkEndTime);
         TimeSpan? candidate = null;
-        if (now < startToday) candidate = startToday - now;
-        else if (now < endToday) candidate = endToday - now;
-        else candidate = (now.Date.AddDays(1).Add(WorkStartTime)) - now;
+
+        // Today's boundaries (only relevant if today is itself a workday).
+        if (IsWorkday(now.DayOfWeek))
+        {
+            var startToday = now.Date.Add(GetStartTimeForDay(now.DayOfWeek));
+            var endToday = now.Date.Add(GetEndTimeForDay(now.DayOfWeek));
+            if (now < startToday) candidate = startToday - now;
+            else if (now < endToday) candidate = endToday - now;
+        }
+
+        // Past today's window (or today is not a workday) — find the next
+        // enabled workday and aim at its start time. Capped at 7 days to
+        // avoid an infinite loop if the user disables every day.
+        if (candidate == null)
+        {
+            for (int i = 1; i <= 7; i++)
+            {
+                var nextDate = now.Date.AddDays(i);
+                if (IsWorkday(nextDate.DayOfWeek))
+                {
+                    candidate = nextDate.Add(GetStartTimeForDay(nextDate.DayOfWeek)) - now;
+                    break;
+                }
+            }
+        }
 
         var delay = candidate.HasValue && candidate.Value < fallback ? candidate.Value : fallback;
         // Don't poll faster than once a minute regardless.
