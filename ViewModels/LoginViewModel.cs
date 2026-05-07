@@ -13,6 +13,7 @@ public partial class LoginViewModel : ObservableObject
     private readonly IExchangeService _exchangeService;
     private readonly INavigationService _navigation;
     private readonly IPreferencesService _prefs;
+    private readonly IWindowsAccountService _windowsAccount;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -28,38 +29,60 @@ public partial class LoginViewModel : ObservableObject
 
     private bool _autoLoginAttempted;
 
-    public LoginViewModel(IExchangeService exchangeService, INavigationService navigation, IPreferencesService prefs)
+    public LoginViewModel(
+        IExchangeService exchangeService,
+        INavigationService navigation,
+        IPreferencesService prefs,
+        IWindowsAccountService windowsAccount)
     {
         _exchangeService = exchangeService;
         _navigation = navigation;
         _prefs = prefs;
+        _windowsAccount = windowsAccount;
         // App.OnStartup already kicked off PrewarmAsync; calling it here would be
         // a no-op anyway because PrewarmAsync caches the in-flight task.
     }
 
     /// <summary>
-    /// Called when the LoginPage becomes visible. If we have a remembered UPN
-    /// from a previous successful sign-in, ask MSAL/WAM for a silent token via
-    /// Connect-ExchangeOnline -UserPrincipalName. When the token cache is warm
-    /// (typical on Windows for ~90 days after the last interactive sign-in),
-    /// this skips the LoginPage entirely. Falls back silently to the manual
-    /// Sign In button if anything goes wrong.
+    /// Called when the LoginPage becomes visible. Tries to sign the user in
+    /// without any UI:
+    ///   1. If a previous successful sign-in cached a UPN, use it.
+    ///   2. Otherwise fall back to the Windows account UPN — on an Entra-joined
+    ///      device this lets first-ever launch complete via WAM SSO with no
+    ///      account picker and no prompt.
+    /// In both cases the cached MSAL refresh token (or the device-bound PRT on
+    /// Entra-joined machines) does the heavy lifting; if there's no usable
+    /// token, WAM falls back to its interactive dialog and we bail out so the
+    /// user sees the manual Sign In button instead.
     /// </summary>
     public async Task TryAutoLoginAsync()
     {
         if (_autoLoginAttempted) return;
         _autoLoginAttempted = true;
 
-        var lastUpn = _prefs.GetString(LastUpnPrefKey);
-        if (string.IsNullOrWhiteSpace(lastUpn)) return;
+        // Prefer the UPN we explicitly remembered from a prior sign-in; this
+        // honors users who picked a non-default account in WAM. Only fall back
+        // to the Windows UPN when we have nothing better — that's the case on
+        // a brand-new install on a corporate Entra-joined device.
+        var upnHint = _prefs.GetString(LastUpnPrefKey);
+        var fromWindows = false;
+        if (string.IsNullOrWhiteSpace(upnHint))
+        {
+            upnHint = _windowsAccount.TryGetCurrentUserUpn();
+            fromWindows = !string.IsNullOrWhiteSpace(upnHint);
+        }
+
+        if (string.IsNullOrWhiteSpace(upnHint)) return;
         if (IsBusy || _exchangeService.IsConnected) return;
 
         IsBusy = true;
-        StatusMessage = $"Signing you in as {lastUpn}…";
+        StatusMessage = fromWindows
+            ? $"Signing you in as {upnHint} (Windows account)…"
+            : $"Signing you in as {upnHint}…";
 
         try
         {
-            await _exchangeService.ConnectAsync(upnHint: lastUpn);
+            await _exchangeService.ConnectAsync(upnHint: upnHint);
             IsLoggedIn = true;
             UserDisplayName = await _exchangeService.GetCurrentUserAsync();
             // Refresh the cached UPN in case the canonical form differs from
@@ -90,10 +113,11 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            // Pass the last-known UPN so WAM defaults to the same account; if
-            // the user wants to switch accounts they can still pick "Use a
-            // different account" in the WAM dialog.
-            var lastUpn = _prefs.GetString(LastUpnPrefKey);
+            // Pass the last-known UPN (or Windows UPN as fallback) so WAM
+            // defaults to the same account; the user can still pick "Use a
+            // different account" inside the WAM dialog if they want to switch.
+            var lastUpn = _prefs.GetString(LastUpnPrefKey)
+                          ?? _windowsAccount.TryGetCurrentUserUpn();
             await _exchangeService.ConnectAsync(upnHint: lastUpn);
             IsLoggedIn = true;
             UserDisplayName = await _exchangeService.GetCurrentUserAsync();

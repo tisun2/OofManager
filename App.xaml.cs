@@ -25,6 +25,7 @@ public partial class App : Application
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<IDialogService, DialogService>();
         services.AddSingleton<IStartupService, StartupService>();
+        services.AddSingleton<IWindowsAccountService, WindowsAccountService>();
         // Tray icon: register once, expose under both the concrete type (so
         // OnStartup can call Attach below) and the interface (so ViewModels
         // can request HideToTray without taking a UI dependency).
