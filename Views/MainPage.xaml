@@ -103,7 +103,12 @@
 
             <!-- Work Schedule Card -->
             <Border Style="{StaticResource CardStyle}">
-                <StackPanel Margin="0">
+                <!-- IsSharedSizeScope so the schedule grid and the button grid
+                     below it agree on Auto-column widths (Day, Off Work) and
+                     star-column widths (Start Time, End Time). Without this
+                     each grid measures independently and the Save button's
+                     right edge ends up shorter than the Start-time column. -->
+                <StackPanel Margin="0" Grid.IsSharedSizeScope="True">
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -128,10 +133,13 @@
                               ToolTip="When on, the next off-hours window is pushed to Outlook on every schedule check, so the server toggles OOF on/off even if this app isn't running."/>
 
                     <Grid>
+                        <!-- Outer 2-column 50/50 layout. Day + OffWork + Start
+                             Time live INSIDE the left half so Start Time's
+                             right edge naturally lands at the 50% midpoint;
+                             that's also where the buttons grid below splits.
+                             Result: Save button right edge == Start time right
+                             edge, Sync now left edge == End time left edge. -->
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" MinWidth="48"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="12"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="8"/>
                             <ColumnDefinition Width="*"/>
@@ -147,132 +155,196 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Header row -->
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Day" FontSize="12" Opacity="0.7" Margin="0,0,8,4"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Text="Off Work" FontSize="12" Opacity="0.7" Margin="0,0,0,4" HorizontalAlignment="Center"/>
-                        <TextBlock Grid.Row="0" Grid.Column="3" Text="Work Start Time" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
-                        <TextBlock Grid.Row="0" Grid.Column="5" Text="Work End Time" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                        <!-- ================ Header row ================ -->
+                        <Grid Grid.Row="0" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Day" FontSize="12" Opacity="0.7" Margin="0,0,8,4"/>
+                            <TextBlock Grid.Column="1" Text="Off Work" FontSize="12" Opacity="0.7" Margin="0,0,0,4" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Column="3" Text="Work Start Time" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                        </Grid>
+                        <TextBlock Grid.Row="0" Grid.Column="2" Text="Work End Time" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
 
-                        <!-- Monday -->
-                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Mon" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="1" Grid.Column="1" IsChecked="{Binding IsMondayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="1" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsMondayWorkday}"
-                                  Text="{Binding MondayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="1" Grid.Column="5"
+                        <!-- ================ Monday ================ -->
+                        <Grid Grid.Row="1" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Mon" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsMondayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsMondayWorkday}"
+                                      Text="{Binding MondayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="1" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsMondayWorkday}"
                                   Text="{Binding MondayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Tuesday -->
-                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Tue" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="2" Grid.Column="1" IsChecked="{Binding IsTuesdayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsTuesdayWorkday}"
-                                  Text="{Binding TuesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="5"
+                        <!-- ================ Tuesday ================ -->
+                        <Grid Grid.Row="2" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Tue" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsTuesdayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsTuesdayWorkday}"
+                                      Text="{Binding TuesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="2" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsTuesdayWorkday}"
                                   Text="{Binding TuesdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Wednesday -->
-                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Wed" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="3" Grid.Column="1" IsChecked="{Binding IsWednesdayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsWednesdayWorkday}"
-                                  Text="{Binding WednesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="5"
+                        <!-- ================ Wednesday ================ -->
+                        <Grid Grid.Row="3" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Wed" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsWednesdayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsWednesdayWorkday}"
+                                      Text="{Binding WednesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="3" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsWednesdayWorkday}"
                                   Text="{Binding WednesdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Thursday -->
-                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Thu" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="4" Grid.Column="1" IsChecked="{Binding IsThursdayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="4" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsThursdayWorkday}"
-                                  Text="{Binding ThursdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="4" Grid.Column="5"
+                        <!-- ================ Thursday ================ -->
+                        <Grid Grid.Row="4" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Thu" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsThursdayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsThursdayWorkday}"
+                                      Text="{Binding ThursdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="4" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsThursdayWorkday}"
                                   Text="{Binding ThursdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Friday -->
-                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Fri" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="5" Grid.Column="1" IsChecked="{Binding IsFridayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="5" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsFridayWorkday}"
-                                  Text="{Binding FridayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="5" Grid.Column="5"
+                        <!-- ================ Friday ================ -->
+                        <Grid Grid.Row="5" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Fri" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsFridayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsFridayWorkday}"
+                                      Text="{Binding FridayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="5" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsFridayWorkday}"
                                   Text="{Binding FridayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Saturday -->
-                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Sat" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="6" Grid.Column="1" IsChecked="{Binding IsSaturdayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="6" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsSaturdayWorkday}"
-                                  Text="{Binding SaturdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="6" Grid.Column="5"
+                        <!-- ================ Saturday ================ -->
+                        <Grid Grid.Row="6" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Sat" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsSaturdayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsSaturdayWorkday}"
+                                      Text="{Binding SaturdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="6" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsSaturdayWorkday}"
                                   Text="{Binding SaturdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
                                   HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
 
-                        <!-- Sunday -->
-                        <TextBlock Grid.Row="7" Grid.Column="0" Text="Sun" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <CheckBox Grid.Row="7" Grid.Column="1" IsChecked="{Binding IsSundayWorkday, Converter={StaticResource InvertBool}}"
-                                  MinWidth="0" Padding="0"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="7" Grid.Column="3"
-                                  IsEditable="True" IsTextSearchEnabled="True"
-                                  ItemsSource="{Binding WorkTimeOptions}"
-                                  IsEnabled="{Binding IsSundayWorkday}"
-                                  Text="{Binding SundayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                  HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="7" Grid.Column="5"
+                        <!-- ================ Sunday ================ -->
+                        <Grid Grid.Row="7" Grid.Column="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" MinWidth="48" SharedSizeGroup="DayCol"/>
+                                <ColumnDefinition Width="Auto" SharedSizeGroup="OffWorkCol"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="Sun" FontSize="13" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                            <CheckBox Grid.Column="1" IsChecked="{Binding IsSundayWorkday, Converter={StaticResource InvertBool}}"
+                                      MinWidth="0" Padding="0"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,4,0,0"/>
+                            <ComboBox Grid.Column="3"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      ItemsSource="{Binding WorkTimeOptions}"
+                                      IsEnabled="{Binding IsSundayWorkday}"
+                                      Text="{Binding SundayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                      HorizontalAlignment="Stretch" Margin="0,4,0,0"/>
+                        </Grid>
+                        <ComboBox Grid.Row="7" Grid.Column="2"
                                   IsEditable="True" IsTextSearchEnabled="True"
                                   ItemsSource="{Binding WorkTimeOptions}"
                                   IsEnabled="{Binding IsSundayWorkday}"
@@ -281,30 +353,42 @@
                     </Grid>
 
                     <Grid Margin="0,16,0,0">
+                        <!-- Plain 50/50 split with the same 8px gap as the
+                             schedule grid above. Save's right edge lines up
+                             with the Start time combo's right edge; Sync now's
+                             left edge lines up with the End time combo's left
+                             edge \u2014 all four are at the same midpoint. -->
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="12"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="8"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <Button Grid.Column="0"
-                                Content="Save and Apply"
                                 Command="{Binding SaveWorkScheduleCommand}"
+                                IsEnabled="{Binding HasUnsavedScheduleChanges}"
                                 Style="{StaticResource AccentButtonStyle}"
                                 Height="40" HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Center"/>
+                                HorizontalContentAlignment="Center"
+                                ToolTip="Save the schedule above and apply it immediately. The button stays disabled while there are no unsaved changes.">
+                            <TextBlock>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="✓ Saved"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasUnsavedScheduleChanges}" Value="True">
+                                                <Setter Property="Text" Value="💾 Save schedule"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Button>
                         <Button Grid.Column="2"
-                                Content="Check Now"
-                                Command="{Binding ApplyWorkScheduleCommand}"
+                                Content="🔄 Sync now"
+                                Command="{Binding SyncNowCommand}"
                                 Height="40" HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Center"/>
-                        <Button Grid.Column="4"
-                                Content="📤 Sync to Outlook"
-                                Command="{Binding SyncToOutlookCommand}"
-                                ToolTip="Push the next off-hours window to Outlook so it auto-toggles OOF on the server side — even when this app isn't running."
-                                Height="40" HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Center"/>
+                                HorizontalContentAlignment="Center"
+                                ToolTip="Re-evaluate the current state and push the next off-hours window to Outlook so the server keeps switching OOF on/off even when this app isn't running."/>
                     </Grid>
                 </StackPanel>
             </Border>

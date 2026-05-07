@@ -32,6 +32,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isWorkScheduleEnabled;
     [ObservableProperty] private bool _isAutoSyncEnabled = true;
     [ObservableProperty] private bool _isStartWithWindowsEnabled;
+    // True when any work-schedule field on the panel has been edited since the
+    // last successful Save. Drives the Save button's enabled state and label so
+    // the user can tell at a glance whether they have unpersisted changes.
+    [ObservableProperty] private bool _hasUnsavedScheduleChanges;
+    // Suppresses the dirty-flag flip while we're loading prefs from disk or
+    // applying a successful save — those property writes are not user edits.
+    private bool _suppressDirtyTracking;
     [ObservableProperty] private bool _isMondayWorkday = true;
     [ObservableProperty] private bool _isTuesdayWorkday = true;
     [ObservableProperty] private bool _isWednesdayWorkday = true;
@@ -128,6 +135,41 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsWorkScheduleEnabledChanged(bool value)
     {
         WorkScheduleStatus = value ? GetWorkScheduleStatus() : "Work schedule rule disabled";
+        MarkScheduleDirty();
+    }
+
+    partial void OnIsAutoSyncEnabledChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsMondayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsTuesdayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsWednesdayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsThursdayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsFridayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsSaturdayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnIsSundayWorkdayChanged(bool value) => MarkScheduleDirty();
+    partial void OnMondayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnMondayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnTuesdayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnTuesdayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnWednesdayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnWednesdayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnThursdayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnThursdayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnFridayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnFridayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnSaturdayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnSaturdayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnSundayStartTimeChanged(TimeSpan value) => MarkScheduleDirty();
+    partial void OnSundayEndTimeChanged(TimeSpan value) => MarkScheduleDirty();
+
+    /// <summary>
+    /// Flips HasUnsavedScheduleChanges true unless we're currently loading from
+    /// disk or applying our own post-save cleanup. The Save button binds to
+    /// this so users can tell at a glance whether their edits are persisted.
+    /// </summary>
+    private void MarkScheduleDirty()
+    {
+        if (_suppressDirtyTracking) return;
+        HasUnsavedScheduleChanges = true;
     }
 
     partial void OnIsStartWithWindowsEnabledChanged(bool value)
@@ -271,6 +313,9 @@ public partial class MainViewModel : ObservableObject
         }
 
         SaveWorkSchedulePreferences();
+        // Mark prefs as in-sync with the panel; the Save button will go grey
+        // again until the user makes another edit.
+        HasUnsavedScheduleChanges = false;
 
         if (IsWorkScheduleEnabled)
         {
@@ -295,36 +340,42 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
-    private async Task ApplyWorkScheduleAsync()
-    {
-        await ApplyWorkScheduleAsync(showSuccessMessage: true);
-    }
-
     /// <summary>
-    /// Pushes the next "off-hours" window to Outlook as a Scheduled OOF.
-    /// Outlook's server then turns OOF on / off at the boundaries even if
-    /// this client isn't running. Solves the "I forgot to keep the app open"
-    /// problem. The window is computed from the per-day work hours:
-    ///   - If now is inside working hours: window = [today's end, next workday's start]
-    ///   - If now is outside working hours: window = [now, next workday's start]
-    /// A single Outlook Scheduled window covers a whole weekend in one push.
+    /// "🔄 Sync now" button on the Work Schedule card. Combines what used to
+    /// be two separate buttons (Check Now + Sync to Outlook) into one
+    /// catch-all force-sync action:
+    ///   1. Re-evaluate "are we inside working hours?" right now and flip OOF
+    ///      to match (formerly Check Now).
+    ///   2. Push the next off-hours window to Outlook so the server keeps
+    ///      flipping OOF on its own even if this app isn't running
+    ///      (formerly Sync to Outlook).
+    /// One button covers ~99% of the cases users actually wanted either of the
+    /// old buttons for, while removing the "what's the difference?" question.
     /// </summary>
     [RelayCommand]
-    private async Task SyncToOutlookAsync()
+    private async Task SyncNowAsync()
     {
         if (!IsWorkScheduleEnabled)
         {
             StatusMessage = "Enable Work Schedule first, then sync.";
             return;
         }
+
+        // 1. Local re-check + Exchange OOF flip.
+        await ApplyWorkScheduleAsync(showSuccessMessage: false);
+
+        // 2. Force-push the next window to Outlook even if it matches the
+        //    cached one — the user explicitly asked for a fresh sync, so the
+        //    dedupe inside SyncToOutlookCoreAsync should not skip.
+        _lastSyncedStart = null;
+        _lastSyncedEnd = null;
         await SyncToOutlookCoreAsync(isUserInitiated: true);
     }
 
     /// <summary>
-    /// Shared implementation behind both the user's "Sync to Outlook" button
-    /// and the background auto-sync. Auto-sync calls with isUserInitiated=false
-    /// so failures don't pop dialogs and a no-change push doesn't churn the UI.
+    /// Shared implementation behind both the user's "Sync now" button and the
+    /// background auto-sync. Auto-sync calls with isUserInitiated=false so
+    /// failures don't pop dialogs and a no-change push doesn't churn the UI.
     /// </summary>
     private async Task SyncToOutlookCoreAsync(bool isUserInitiated)
     {
@@ -754,7 +805,10 @@ public partial class MainViewModel : ObservableObject
 
     private void LoadWorkSchedulePreferences()
     {
-        IsWorkScheduleEnabled = _prefs.GetBool("WorkSchedule.Enabled", false);
+        _suppressDirtyTracking = true;
+        try
+        {
+            IsWorkScheduleEnabled = _prefs.GetBool("WorkSchedule.Enabled", false);
         IsAutoSyncEnabled = _prefs.GetBool("WorkSchedule.AutoSync", true);
         IsMondayWorkday = _prefs.GetBool("WorkSchedule.Monday", true);
         IsTuesdayWorkday = _prefs.GetBool("WorkSchedule.Tuesday", true);
@@ -787,7 +841,13 @@ public partial class MainViewModel : ObservableObject
         SundayStartTime = LoadDayTime("Sunday", "Start", legacyStart);
         SundayEndTime = LoadDayTime("Sunday", "End", legacyEnd);
 
-        WorkScheduleStatus = GetWorkScheduleStatus();
+            WorkScheduleStatus = GetWorkScheduleStatus();
+        }
+        finally
+        {
+            _suppressDirtyTracking = false;
+            HasUnsavedScheduleChanges = false;
+        }
     }
 
     private TimeSpan LoadDayTime(string day, string suffix, int legacyDefaultMinutes)
