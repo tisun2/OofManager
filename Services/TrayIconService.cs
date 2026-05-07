@@ -8,6 +8,16 @@ public interface ITrayService
 {
     /// <summary>Hide the main window from the taskbar; the tray icon stays visible.</summary>
     void HideToTray();
+
+    /// <summary>
+    /// Show a balloon/toast notification from the tray icon. No-op if the tray
+    /// has not been initialised yet (e.g. very early during startup).
+    /// </summary>
+    void ShowNotification(string title, string message);
+
+    /// <summary>True when the main window is hidden to the tray; helps callers
+    /// decide between a status-bar message (visible) and a tray notification (hidden).</summary>
+    bool IsWindowHidden { get; }
 }
 
 /// <summary>
@@ -75,6 +85,27 @@ public sealed class TrayIconService : ITrayService, IDisposable
         // briefly flash a taskbar entry.
         _window.Hide();
         _window.ShowInTaskbar = false;
+    }
+
+    public bool IsWindowHidden => _window != null && !_window.IsVisible;
+
+    public void ShowNotification(string title, string message)
+    {
+        // No-op if Attach() hasn't been called yet (e.g. notification fired
+        // during startup before the main window's Loaded handler runs).
+        if (_icon == null) return;
+        try
+        {
+            // 5s is the OS-honoured floor on modern Windows; the actual duration
+            // is governed by the Action Center settings, but we still pass it for
+            // legacy Windows builds that respect the value.
+            _icon.ShowBalloonTip(5000, title, message, WinForms.ToolTipIcon.Info);
+        }
+        catch
+        {
+            // Some shells (citrix, locked-down kiosks) throw on balloon tips —
+            // failing to notify is never fatal.
+        }
     }
 
     private void Restore()
