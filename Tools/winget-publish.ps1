@@ -9,14 +9,20 @@
 #   .\Tools\winget-publish.ps1 -Version 1.0.9 -CreatePR
 #
 # Required for -CreatePR:
-#   * gh CLI authenticated as the user that forked microsoft/winget-pkgs
 #   * Local clone of the fork at $WingetForkPath (defaults to $HOME\winget-pkgs)
 #   * The fork has `upstream` pointing at microsoft/winget-pkgs
+#   * git is configured to push to your fork over HTTPS or SSH
 #
 # Notes:
 #   * The installer must already be built and uploaded to the matching GitHub
 #     release URL (https://github.com/<Owner>/<Repo>/releases/download/v<Version>/<InstallerName>)
 #     before -CreatePR runs; the winget bot resolves the URL during PR validation.
+#   * The script does NOT call `gh pr create` because microsoft/winget-pkgs is
+#     SAML-protected and rejects unauthorized OAuth tokens at the GraphQL layer.
+#     Instead it opens the GitHub compare URL in your browser; click "Create
+#     pull request" there. (Existing browser auth handles SAML transparently.)
+#   * The upstream fetch is shallow (`--depth=1 master --no-tags`) so the
+#     ~500 MB winget-pkgs history is not downloaded on every release.
 #   * Re-running with the same version overwrites the local manifests but
 #     does NOT touch a previously merged PR — bump the version first.
 
@@ -182,10 +188,19 @@ Copy-Item (Join-Path $manifestDir '*') $destDir -Force
 
 Push-Location $WingetForkPath
 try {
-    Write-Host "Syncing fork with upstream/master ..."
-    & git fetch upstream | Out-Null
+    # Fetch only the tip of upstream/master, with no tags and shallow depth.
+    # The default `git fetch upstream` pulls every branch in microsoft/winget-pkgs
+    # including hundreds of stale bot branches (~500 MB / 2.5M deltas) and
+    # takes minutes. The winget bot rebases our PR onto current master at
+    # validation time, so the only commit we actually need locally is the
+    # current master tip.
+    Write-Host "Fetching upstream/master tip (shallow) ..."
+    & git fetch upstream master --depth=1 --no-tags
+    if ($LASTEXITCODE -ne 0) {
+        throw "git fetch upstream master failed. Aborting."
+    }
     $branchName = "$PackageIdentifier-$Version"
-    & git checkout -B $branchName upstream/master | Out-Null
+    & git checkout -B $branchName FETCH_HEAD | Out-Null
 
     # Re-copy AFTER the branch checkout because checkout -B reset the worktree.
     New-Item -ItemType Directory -Path $destDir -Force | Out-Null
@@ -201,12 +216,14 @@ try {
         throw "git push failed. Aborting."
     }
 
-    Write-Host "Opening PR via gh ..."
-    & gh pr create `
-        --repo microsoft/winget-pkgs `
-        --base master `
-        --title "New version: $PackageIdentifier version $Version" `
-        --body "Adds $PackageIdentifier $Version. Validated locally with ``winget validate``."
+    # Use --web instead of `gh pr create` so we don't hit the GraphQL endpoint,
+    # which microsoft/winget-pkgs blocks with "Resource protected by organization
+    # SAML enforcement" for tokens that haven't been SAML-authorized for the
+    # microsoftopensource enterprise. The compare-url path doesn't need the
+    # API at all and works for any auth state the user already has in the
+    # browser.
+    Write-Host "Opening PR creation page in browser ..."
+    Start-Process "https://github.com/microsoft/winget-pkgs/compare/master...$($Owner):winget-pkgs:$branchName?expand=1&title=$([uri]::EscapeDataString("New version: $PackageIdentifier version $Version"))"
 }
 finally {
     Pop-Location
