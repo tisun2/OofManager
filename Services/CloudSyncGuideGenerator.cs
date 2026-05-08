@@ -165,6 +165,7 @@ public static class CloudSyncGuideGenerator
   th { background: var(--code-bg); }
   .hero-button { display: inline-block; background: var(--accent); color: #fff !important; padding: 12px 22px; text-decoration: none; border-radius: 6px; font-weight: 600; margin: 8px 0; }
   .hero-button:hover { background: var(--accent-dark); }
+  .hint { color: var(--muted); font-size: 12px; margin: 4px 0 6px; font-style: italic; }
   .footer { color: var(--muted); font-size: 12px; margin-top: 48px; text-align: center; }
 </style>
 </head>
@@ -287,6 +288,7 @@ public static class CloudSyncGuideGenerator
         sb.Append(@"</code>.</p>
 
     <h4>Internal reply message</h4>
+    <p class=""hint"">The Copy button puts an HTML-wrapped version on your clipboard so paragraph breaks survive when Outlook renders the reply.</p>
     <div class=""copy-row"">
       <pre id=""internal-pre"">");
         sb.Append(Escape(internalReply));
@@ -294,10 +296,11 @@ public static class CloudSyncGuideGenerator
       <button class=""copy"" data-target=""internal"">Copy</button>
     </div>
     <textarea id=""internal"" style=""display:none"">");
-        sb.Append(Escape(internalReply));
+        sb.Append(Escape(PlainTextToHtml(internalReply)));
         sb.Append(@"</textarea>
 
     <h4>External reply message</h4>
+    <p class=""hint"">The Copy button puts an HTML-wrapped version on your clipboard so paragraph breaks survive when Outlook renders the reply.</p>
     <div class=""copy-row"">
       <pre id=""external-pre"">");
         sb.Append(Escape(externalReply));
@@ -305,7 +308,7 @@ public static class CloudSyncGuideGenerator
       <button class=""copy"" data-target=""external"">Copy</button>
     </div>
     <textarea id=""external"" style=""display:none"">");
-        sb.Append(Escape(externalReply));
+        sb.Append(Escape(PlainTextToHtml(externalReply)));
         sb.Append(@"</textarea>
   </div>
 
@@ -478,4 +481,22 @@ public static class CloudSyncGuideGenerator
     }
 
     private static string Escape(string s) => string.IsNullOrEmpty(s) ? string.Empty : WebUtility.HtmlEncode(s);
+
+    /// <summary>
+    /// Wraps a plain-text reply in the same minimal HTML envelope
+    /// CloudSyncPackageGenerator emits for the package path and that
+    /// ExchangeService produces on the local PowerShell path. Without
+    /// this, the Office 365 Outlook connector accepts the value but
+    /// Outlook flattens newlines into a single paragraph because the
+    /// reply field expects HTML markup.
+    /// </summary>
+    private static string PlainTextToHtml(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var encoded = WebUtility.HtmlEncode(value.Trim());
+        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
+        return $"<html><body>{encoded}</body></html>";
+    }
 }
