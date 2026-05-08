@@ -69,11 +69,18 @@ public sealed class WorkScheduleSnapshot
         {
             var startToday = now.Date.Add(GetStart(now.DayOfWeek));
             var endToday = now.Date.Add(GetEnd(now.DayOfWeek));
-            offStart = now < startToday ? now : endToday;
+            // Pre-work: walk back to the previous workday's end-of-work.
+            // Inside/after work: anchor to today's end-of-work.
+            offStart = now < startToday
+                ? (FindMostRecentEndOfWorkAtOrBefore(now) ?? now)
+                : endToday;
         }
         else
         {
-            offStart = now;
+            // Off-work day (e.g. Saturday): anchor to the last workday's
+            // end-of-work, falling back to "now" only when no workday is
+            // configured at all.
+            offStart = FindMostRecentEndOfWorkAtOrBefore(now) ?? now;
         }
 
         var offEnd = FindNextStartOfWorkAfter(offStart);
@@ -97,6 +104,22 @@ public sealed class WorkScheduleSnapshot
             var nextDate = t.Date.AddDays(i);
             if (IsWorkday(nextDate.DayOfWeek))
                 return nextDate.Add(GetStart(nextDate.DayOfWeek));
+        }
+        return null;
+    }
+
+    private DateTime? FindMostRecentEndOfWorkAtOrBefore(DateTime t)
+    {
+        if (IsWorkday(t.DayOfWeek))
+        {
+            var endToday = t.Date.Add(GetEnd(t.DayOfWeek));
+            if (t >= endToday) return endToday;
+        }
+        for (int i = 1; i <= 7; i++)
+        {
+            var prevDate = t.Date.AddDays(-i);
+            if (IsWorkday(prevDate.DayOfWeek))
+                return prevDate.Add(GetEnd(prevDate.DayOfWeek));
         }
         return null;
     }

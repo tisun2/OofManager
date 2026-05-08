@@ -592,14 +592,12 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     private (DateTimeOffset start, DateTimeOffset end)? ComputeNextOffHoursWindow(DateTime now)
     {
-        // Off-hours start: anchor it to today's end-of-work whenever we're
-        // outside that work day, even if "now" is already past 17:30. Without
-        // this, opening the app at e.g. 18:14 would push a window starting at
-        // 18:14, lying about when OOF should kick in (the user expects their
-        // OOF window to begin at the end of their work day, not "whenever I
-        // happened to launch the app"). Falls back to "now" only when there's
-        // no sensible work-day boundary to anchor to (off-work day, or schedule
-        // empty for today).
+        // Off-hours start: anchor it to the most recent end-of-work boundary,
+        // not to "now". Without this, opening the app on Saturday morning
+        // (or pre-9am on Mon) would push a window starting at the moment of
+        // launch — but the user has been off-work since Friday 17:30, so the
+        // logical start is Friday 17:30. Walking backwards keeps the window
+        // honest about when OOF actually began.
         DateTime offStart;
         if (IsWorkday(now.DayOfWeek))
         {
@@ -608,9 +606,10 @@ public partial class MainViewModel : ObservableObject
             if (now < startToday)
             {
                 // Pre-work-hours on a workday (e.g. 07:30 on a Mon with 09:00
-                // start). Off-hours window starts now and ends at today's
-                // start-of-work — a real, short window we should still push.
-                offStart = now;
+                // start). The off-hours stretch began at the previous workday's
+                // end-of-work; only fall back to "now" if we genuinely can't
+                // find any earlier workday in the schedule.
+                offStart = FindMostRecentEndOfWorkAtOrBefore(now) ?? now;
             }
             else
             {
@@ -622,9 +621,10 @@ public partial class MainViewModel : ObservableObject
         }
         else
         {
-            // Today is off-work entirely (Sat/Sun by default). Anchor to "now"
-            // — there's no end-of-work boundary on this calendar day to use.
-            offStart = now;
+            // Today is off-work entirely (Sat/Sun by default). Anchor to the
+            // last workday's end-of-work — that's when off-hours actually
+            // started — falling back to "now" only if no workday is configured.
+            offStart = FindMostRecentEndOfWorkAtOrBefore(now) ?? now;
         }
 
         // Off-hours end: the very next start-of-work boundary strictly after
@@ -651,6 +651,23 @@ public partial class MainViewModel : ObservableObject
             var nextDate = t.Date.AddDays(i);
             if (IsWorkday(nextDate.DayOfWeek))
                 return nextDate.Add(GetStartTimeForDay(nextDate.DayOfWeek));
+        }
+        return null;
+    }
+
+    private DateTime? FindMostRecentEndOfWorkAtOrBefore(DateTime t)
+    {
+        // Today first: only counts if we've already crossed today's end.
+        if (IsWorkday(t.DayOfWeek))
+        {
+            var endToday = t.Date.Add(GetEndTimeForDay(t.DayOfWeek));
+            if (t >= endToday) return endToday;
+        }
+        for (int i = 1; i <= 7; i++)
+        {
+            var prevDate = t.Date.AddDays(-i);
+            if (IsWorkday(prevDate.DayOfWeek))
+                return prevDate.Add(GetEndTimeForDay(prevDate.DayOfWeek));
         }
         return null;
     }
@@ -685,6 +702,16 @@ public partial class MainViewModel : ObservableObject
             await _exchangeService.SetOofSettingsAsync(settings);
             CurrentStatus = targetStatus;
             IsOofEnabled = shouldBeOof;
+            // We just overwrote any Scheduled window on Exchange with a flat
+            // Enabled/Disabled state, so the dedupe cache no longer reflects
+            // server reality. Without this invalidation the auto-sync loop
+            // (ApplyWorkScheduleAsync → SyncToOutlookCoreAsync) leaves OOF
+            // sitting at Disabled all through working hours, because the
+            // computed off-hours window matches the stale cache and the
+            // follow-up push gets skipped — which is exactly why "auto-sync
+            // turns OOF off" while "manual Sync now schedules the window".
+            _lastSyncedStart = null;
+            _lastSyncedEnd = null;
             // Re-raise PropertyChanged so any binding that already cached the
             // value (e.g. after the OnIsOofEnabledChanged partial method ran
             // and re-assigned CurrentStatus to the same OofStatus) still gets
