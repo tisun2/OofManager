@@ -93,7 +93,7 @@
                                    TextWrapping="Wrap">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
-                                    <Setter Property="Text" Value="Manual control — flip the switch and click Save Now to push the change to Outlook."/>
+                                    <Setter Property="Text" Value="Manual control — flip the switch and click Save Now to push the new state and your reply messages to Outlook."/>
                                     <Style.Triggers>
                                         <DataTrigger Binding="{Binding IsWorkScheduleEnabled}" Value="True">
                                             <Setter Property="Text" Value="Auto-managed by Work Schedule below. Turn that off if you want manual control."/>
@@ -124,6 +124,7 @@
                             HorizontalAlignment="Stretch"
                             HorizontalContentAlignment="Center"
                             Margin="0,12,0,0"
+                            ToolTip="Push the current OOF on/off toggle, your reply messages, and the external-audience choice to Outlook right now."
                             Visibility="{Binding IsWorkScheduleEnabled, Converter={StaticResource InvertBoolToVisibility}}"/>
                 </Grid>
             </Border>
@@ -432,14 +433,14 @@
                                 Style="{StaticResource AccentButtonStyle}"
                                 Height="40" HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
-                                ToolTip="Save the schedule above and apply it immediately. The button stays disabled while there are no unsaved changes.">
+                                ToolTip="Save the recurring work schedule above. If Work Schedule is enabled, it is also applied right now and the next off-hours window is pushed to Outlook (so auto-sync stays consistent with the rule). Disabled while there are no unsaved changes.">
                             <TextBlock>
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="Text" Value="✓ Saved"/>
+                                        <Setter Property="Text" Value="✓ Schedule saved"/>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding HasUnsavedScheduleChanges}" Value="True">
-                                                <Setter Property="Text" Value="💾 Save schedule"/>
+                                                <Setter Property="Text" Value="💾 Save Work Schedule"/>
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
@@ -451,7 +452,7 @@
                                 Command="{Binding SyncNowCommand}"
                                 Height="40" HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
-                                ToolTip="Re-evaluate the current state and push the next off-hours window to Outlook so the server keeps switching OOF on/off even when this app isn't running."/>
+                                ToolTip="Re-evaluate the schedule right now and push the next off-hours window to Outlook — includes your latest reply messages and external-audience choice. Use this after editing a reply in Schedule mode."/>
                     </Grid>
                 </StackPanel>
             </Border>
@@ -549,21 +550,19 @@
             </Grid>
 
             <!-- Action Buttons -->
+            <!-- Templates action row. Save as Template is the only thing
+                 left here — the old "Apply to Outlook" button next to it
+                 was a duplicate of the ⚡ Save Now button on the OOF card,
+                 and in Schedule mode it could push a stale one-off window
+                 that fought with auto-sync. Drop it so each mode has one
+                 obvious push-to-Outlook button (⚡ Save Now in manual mode,
+                 🔄 Sync now on the Work Schedule card in scheduled mode). -->
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="12"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Button Grid.Column="0" Content="💾 Save Settings"
-                        Command="{Binding SaveOofCommand}"
-                        Style="{StaticResource AccentButtonStyle}"
-                        Height="48" HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Center"/>
-                <Button Grid.Column="2" Content="📋 Save as Template"
+                <Button Content="📋 Save as Template"
                         Command="{Binding SaveAsTemplateCommand}"
                         Height="48" HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Center"/>
+                        HorizontalContentAlignment="Center"
+                        ToolTip="Save the current reply messages and external-audience choice as a reusable template. Doesn't push anything to Outlook."/>
             </Grid>
 
             <!-- Templates Card -->
