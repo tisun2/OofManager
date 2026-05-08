@@ -23,6 +23,15 @@ public partial class MainViewModel : ObservableObject
     // same window twice in a row (the common case during a long off-hours stretch).
     private DateTimeOffset? _lastSyncedStart;
     private DateTimeOffset? _lastSyncedEnd;
+    // Last (start,end) we actually showed a tray balloon for. Tracked separately
+    // from the sync cache because ApplyWorkScheduleAsync invalidates the sync
+    // cache after every successful SetOofSettingsAsync (which is correct — each
+    // call wipes any Scheduled window on Exchange, so we must re-push it). If we
+    // gated the balloon on the same cache, the user would get a balloon every
+    // 3-min self-heal tick. This pair only updates when the *window itself*
+    // actually changes, so the user only sees a balloon for meaningful moves.
+    private DateTimeOffset? _lastNotifiedStart;
+    private DateTimeOffset? _lastNotifiedEnd;
 
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string _statusMessage = string.Empty;
@@ -31,6 +40,15 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isScheduled;
     [ObservableProperty] private bool _isWorkScheduleEnabled;
     [ObservableProperty] private bool _isAutoSyncEnabled = true;
+    // When generating the cloud-sync zip, decide between a managed and an
+    // unmanaged Dataverse solution. Managed is the default because Power
+    // Automate auto-activates managed flows on import; unmanaged ones land
+    // in the Off state and the user has to flip them on manually. Trade-off
+    // is that managed flows can't be edited in the cloud designer (the user
+    // has to regenerate from this app instead), which matches the
+    // "local app is the source of truth" model. Power users who want to
+    // tweak the flow online can flip this off.
+    [ObservableProperty] private bool _generateManagedCloudSolution = true;
     [ObservableProperty] private bool _isStartWithWindowsEnabled;
     // True when any work-schedule field on the panel has been edited since the
     // last successful Save. Drives the Save button's enabled state and label so
@@ -139,6 +157,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnIsAutoSyncEnabledChanged(bool value) => MarkScheduleDirty();
+    // Cloud-solution flavor toggle isn't part of the schedule, so persist
+    // it inline rather than forcing the user to click Save on the schedule
+    // card. Suppressed during initial load to avoid a no-op disk write.
+    partial void OnGenerateManagedCloudSolutionChanged(bool value)
+    {
+        if (_suppressDirtyTracking) return;
+        _prefs.Set("CloudSync.GenerateManaged", value);
+    }
     partial void OnIsMondayWorkdayChanged(bool value) => MarkScheduleDirty();
     partial void OnIsTuesdayWorkdayChanged(bool value) => MarkScheduleDirty();
     partial void OnIsWednesdayWorkdayChanged(bool value) => MarkScheduleDirty();
@@ -292,7 +318,7 @@ public partial class MainViewModel : ObservableObject
                 // get the initial Scheduled push until the next polling tick.
                 IsBusy = false;
                 StartAutomationLoop();
-                await ApplyWorkScheduleAsync(showSuccessMessage: false);
+                await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: IsAutoSyncEnabled);
                 if (IsAutoSyncEnabled)
                 {
                     // Push the current off-hours window straight to Outlook on
@@ -341,7 +367,7 @@ public partial class MainViewModel : ObservableObject
         if (IsWorkScheduleEnabled)
         {
             StartAutomationLoop();
-            await ApplyWorkScheduleAsync(showSuccessMessage: true);
+            await ApplyWorkScheduleAsync(showSuccessMessage: true, suppressTrayNotification: IsAutoSyncEnabled);
             if (IsAutoSyncEnabled)
             {
                 // Schedule edits invalidate any previously-pushed Outlook
@@ -383,7 +409,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         // 1. Local re-check + Exchange OOF flip.
-        await ApplyWorkScheduleAsync(showSuccessMessage: false);
+        await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: IsAutoSyncEnabled);
 
         // 2. Force-push the next window to Outlook even if it matches the
         //    cached one — the user explicitly asked for a fresh sync, so the
@@ -421,9 +447,9 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Builds a Power Automate "Import Package (Legacy)" .zip the user can
-    /// upload at <em>My flows &rarr; Import &rarr; Import Package</em>. This
-    /// gets the user from "I want a cloud flow" to "the flow exists" with
+    /// Builds a Power Automate Solution .zip the user can upload at
+    /// <em>Solutions &rarr; Import solution</em> in make.powerautomate.com.
+    /// This gets the user from "I want a cloud flow" to "the flow exists" with
     /// just an upload step instead of the 5-page manual wizard. The zip is
     /// dropped on the desktop so the user can find it easily, and the
     /// containing folder is opened in Explorer with the file pre-selected.
@@ -447,38 +473,32 @@ public partial class MainViewModel : ObservableObject
                 internalReply: InternalReply,
                 externalReply: ExternalReply,
                 externalAudienceAll: ExternalAudienceAll,
+                generateManaged: GenerateManagedCloudSolution,
                 outputPath: outPath);
 
-            // Open Explorer with the file selected so the user immediately
-            // sees the zip they just generated and can drag it into the
-            // browser. /select, requires the path to be quoted.
-            try
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{path}\"")
-                {
-                    UseShellExecute = true,
-                });
-            }
-            catch { /* best-effort */ }
-
-            // Then open the Power Automate "My flows" page in the default
-            // browser so the user has the destination open and ready.
+            // Open the Power Automate Solutions page. We don't pin an env
+            // GUID — there's no public way to detect the user's personal
+            // environment without pulling in MSAL or the PowerApps PS module,
+            // and ~default routes everyone to the tenant Default Environment.
+            // The plain /solutions URL lands the user wherever Power Automate
+            // last had them (top-right env picker), which is usually right;
+            // when it isn't, the user just switches env once via that picker.
             try
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                    "https://make.powerautomate.com/manage/environments/~default/flows")
+                    "https://make.powerautomate.com/solutions")
                 {
                     UseShellExecute = true,
                 });
             }
             catch { /* best-effort */ }
 
-            StatusMessage = $"📦 Cloud sync package saved to {path}. Drag it into Power Automate → Import → Import Package (Legacy).";
+            StatusMessage = $"📦 Cloud sync solution saved to {path}. In Power Automate, open Solutions → Import solution and pick this zip.";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to generate cloud sync package: {ex.Message}";
-            await _dialog.AlertAsync("Cloud Sync Package", ex.Message);
+            StatusMessage = $"Failed to generate cloud sync solution: {ex.Message}";
+            await _dialog.AlertAsync("Cloud Sync Solution", ex.Message);
         }
     }
 
@@ -561,12 +581,18 @@ public partial class MainViewModel : ObservableObject
             // Surface to the tray when the window is hidden so the user still
             // sees the auto-action. The user-initiated push doesn't need a
             // balloon (they're looking at the app and the status bar already
-            // updated).
-            if (!isUserInitiated && _tray.IsWindowHidden)
+            // updated). Also dedupe against the last *notified* window so the
+            // 3-min self-heal loop doesn't spam balloons every tick — the user
+            // only sees one when the next off-hours window actually moves.
+            if (!isUserInitiated
+                && _tray.IsWindowHidden
+                && (_lastNotifiedStart != start || _lastNotifiedEnd != end))
             {
                 _tray.ShowNotification(
                     "OOF Manager",
                     $"Outlook auto-reply scheduled: {startLabel} → {endLabel}");
+                _lastNotifiedStart = start;
+                _lastNotifiedEnd = end;
             }
         }
         catch (Exception ex)
@@ -672,7 +698,7 @@ public partial class MainViewModel : ObservableObject
         return null;
     }
 
-    private async Task ApplyWorkScheduleAsync(bool showSuccessMessage)
+    private async Task ApplyWorkScheduleAsync(bool showSuccessMessage, bool suppressTrayNotification = false)
     {
         if (!IsWorkScheduleEnabled || IsBusy) return;
 
@@ -730,7 +756,13 @@ public partial class MainViewModel : ObservableObject
             // Tray notification: only fire on a *real* flip and only when the
             // window is hidden — otherwise the status bar already tells the
             // user, and a balloon for every 5-minute self-heal would be spam.
-            if (previousStatus != targetStatus && _tray.IsWindowHidden)
+            // Also suppress when the caller will immediately push a Scheduled
+            // window via SyncToOutlookCoreAsync — that path balloons the more
+            // informative "auto-reply scheduled: <window>" message, and the
+            // intermediate "OOF turned OFF" balloon is misleading because the
+            // flat Disabled state we just pushed is about to be replaced by a
+            // Scheduled state in the same tick.
+            if (previousStatus != targetStatus && _tray.IsWindowHidden && !suppressTrayNotification)
             {
                 _tray.ShowNotification(
                     "OOF Manager",
@@ -1000,6 +1032,7 @@ public partial class MainViewModel : ObservableObject
         {
             IsWorkScheduleEnabled = _prefs.GetBool("WorkSchedule.Enabled", false);
         IsAutoSyncEnabled = _prefs.GetBool("WorkSchedule.AutoSync", true);
+        GenerateManagedCloudSolution = _prefs.GetBool("CloudSync.GenerateManaged", true);
         IsMondayWorkday = _prefs.GetBool("WorkSchedule.Monday", true);
         IsTuesdayWorkday = _prefs.GetBool("WorkSchedule.Tuesday", true);
         IsWednesdayWorkday = _prefs.GetBool("WorkSchedule.Wednesday", true);
@@ -1065,6 +1098,7 @@ public partial class MainViewModel : ObservableObject
         {
             _prefs.Set("WorkSchedule.Enabled", IsWorkScheduleEnabled);
             _prefs.Set("WorkSchedule.AutoSync", IsAutoSyncEnabled);
+            _prefs.Set("CloudSync.GenerateManaged", GenerateManagedCloudSolution);
             _prefs.Set("WorkSchedule.Monday", IsMondayWorkday);
             _prefs.Set("WorkSchedule.Tuesday", IsTuesdayWorkday);
             _prefs.Set("WorkSchedule.Wednesday", IsWednesdayWorkday);
@@ -1166,7 +1200,7 @@ public partial class MainViewModel : ObservableObject
                 // to finish. Unwrapping forces a full wait so two iterations can never overlap.
                 var op = Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
-                    await ApplyWorkScheduleAsync(showSuccessMessage: false);
+                    await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: IsAutoSyncEnabled);
                     if (IsAutoSyncEnabled)
                     {
                         // Auto-sync runs after the local toggle so Outlook stays

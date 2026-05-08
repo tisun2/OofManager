@@ -33,12 +33,15 @@ public interface IStartupService
     /// </summary>
     void EnsureRegistrationIsFresh();
 
-    /// <summary>True if the user has already been shown the autostart prompt at
-    /// least once on this profile.</summary>
+    /// <summary>True if the user has already been shown the autostart prompt
+    /// for the currently-installed version. Returns false after an upgrade so
+    /// the user gets one chance to reconsider on each new version (the older
+    /// per-profile flag silently buried this question across upgrades).</summary>
     bool HasBeenPromptedBefore();
 
-    /// <summary>Records that the autostart prompt has been shown. Should only
-    /// be called once the dialog has actually been displayed to the user.</summary>
+    /// <summary>Records that the autostart prompt has been shown for the
+    /// currently-installed version. Should only be called once the dialog has
+    /// actually been displayed to the user.</summary>
     void MarkPromptShown();
 }
 
@@ -53,7 +56,15 @@ public sealed class StartupService : IStartupService
 {
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValueName = "OofManager";
+    // Legacy boolean flag ("prompt has ever been shown") — honoured for
+    // back-compat so users who said "yes" on a previous version don't get
+    // re-asked. The per-version key below is what new code reads/writes.
     private const string PromptPrefKey = "Startup.PromptShown";
+    // Stores the app version (e.g. "1.1.0") for which we last showed the
+    // autostart prompt. After an upgrade this no longer matches the running
+    // version, so HasBeenPromptedBefore() returns false and the user gets one
+    // fresh chance to opt in.
+    private const string PromptVersionPrefKey = "Startup.PromptShownVersion";
     public const string MinimizedArg = "--minimized";
 
     private readonly IPreferencesService _prefs;
@@ -156,9 +167,52 @@ public sealed class StartupService : IStartupService
         }
     }
 
-    public bool HasBeenPromptedBefore() => _prefs.GetBool(PromptPrefKey, false);
+    public bool HasBeenPromptedBefore()
+    {
+        // If autostart is currently *enabled*, the user already opted in at
+        // some point — don't re-ask just because they upgraded.
+        if (IsEnabled) return true;
 
-    public void MarkPromptShown() => _prefs.Set(PromptPrefKey, true);
+        var current = GetCurrentAppVersion();
+        var lastPromptedVersion = _prefs.GetString(PromptVersionPrefKey, null);
+
+        // Prompt once per installed version. If we already showed the prompt
+        // for *this* version, stay quiet. After an upgrade the value no longer
+        // matches and the user gets one fresh chance to opt in.
+        return !string.IsNullOrEmpty(lastPromptedVersion)
+            && !string.IsNullOrEmpty(current)
+            && string.Equals(lastPromptedVersion, current, StringComparison.OrdinalIgnoreCase);
+        // NOTE: deliberately ignore the legacy PromptPrefKey boolean. Its old
+        // semantics ("prompt has ever been shown, ever") permanently buried
+        // the question for users who declined once on an older version, even
+        // across reinstalls and upgrades. New behaviour is per-version, and
+        // the one-time re-prompt those users get on first launch after this
+        // change is the intended fix.
+    }
+
+    public void MarkPromptShown()
+    {
+        _prefs.Set(PromptPrefKey, true);
+        var current = GetCurrentAppVersion();
+        if (!string.IsNullOrEmpty(current)) _prefs.Set(PromptVersionPrefKey, current);
+    }
+
+    private static string? GetCurrentAppVersion()
+    {
+        try
+        {
+            var path = Process.GetCurrentProcess().MainModule?.FileName;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            // FileVersionInfo.FileVersion matches the AssemblyFileVersion baked
+            // in by MSBuild and bumped by the installer pipeline, so it ticks
+            // forward on every release.
+            return FileVersionInfo.GetVersionInfo(path).FileVersion;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private static string? ExtractExePath(string command)
     {

@@ -17,6 +17,10 @@
     <Prefer32Bit>false</Prefer32Bit>
     <StartupObject>OofManager.Wpf.Program</StartupObject>
     <ApplicationIcon>Resources\oofmanager.ico</ApplicationIcon>
+    <!-- Drives FileVersion / AssemblyVersion. Bump this in lock-step with
+         Installer\OofManager.iss MyAppVersion on every release so the
+         per-version "start with Windows?" prompt re-asks on upgrade. -->
+    <Version>1.1.1</Version>
   </PropertyGroup>
 
   <!-- App.xaml is loaded as a Page so we can supply our own Main(). -->

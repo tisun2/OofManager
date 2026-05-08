@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Compression;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -65,6 +66,7 @@ public static class CloudSyncPackageGenerator
         string internalReply,
         string externalReply,
         bool externalAudienceAll,
+        bool generateManaged = true,
         string? outputPath = null)
     {
         outputPath ??= Path.Combine(Path.GetTempPath(), "OofManager-CloudSync.zip");
@@ -107,10 +109,15 @@ public static class CloudSyncPackageGenerator
             startExpr: startExpr,
             endExpr: endExpr,
             audience: externalAudienceAll ? "all" : "contactsOnly",
-            internalReply: internalReply,
-            externalReply: externalReply);
+            // Outlook renders the reply message field as HTML — plain newlines
+            // get flattened into a single paragraph in the Automatic Replies
+            // dialog. ExchangeService applies the same wrap on the local PS
+            // path; mirror it here so cloud-pushed replies preserve line
+            // breaks the same way the local sync does.
+            internalReply: PlainTextToHtml(internalReply),
+            externalReply: PlainTextToHtml(externalReply));
 
-        var solutionXml = BuildSolutionXml();
+        var solutionXml = BuildSolutionXml(generateManaged);
         var customizationsXml = BuildCustomizationsXml();
         var contentTypesXml = BuildContentTypesXml();
 
@@ -240,35 +247,21 @@ public static class CloudSyncPackageGenerator
                                 },
                                 ["parameters"] = new Dictionary<string, object?>
                                 {
-                                    // SetAutomaticRepliesSetting_V2 swagger has a single body
-                                    // parameter named "body" whose schema wraps everything in
-                                    // an "automaticRepliesSetting" object (which references
-                                    // AutomaticRepliesSettingClient_V2). Pass the body as a
-                                    // single parameter with a fully-nested object value — the
-                                    // flat slash-key forms (with or without an
-                                    // "automaticRepliesSetting/" prefix) are rejected by the
-                                    // Power Automate designer with "X is no longer present in
-                                    // the operation schema" for every key.
-                                    ["body"] = new Dictionary<string, object?>
-                                    {
-                                        ["automaticRepliesSetting"] = new Dictionary<string, object?>
-                                        {
-                                            ["status"] = "scheduled",
-                                            ["externalAudience"] = audience,
-                                            ["scheduledStartDateTime"] = new Dictionary<string, object?>
-                                            {
-                                                ["dateTime"] = startExpr,
-                                                ["timeZone"] = tzId,
-                                            },
-                                            ["scheduledEndDateTime"] = new Dictionary<string, object?>
-                                            {
-                                                ["dateTime"] = endExpr,
-                                                ["timeZone"] = tzId,
-                                            },
-                                            ["internalReplyMessage"] = internalReply ?? string.Empty,
-                                            ["externalReplyMessage"] = externalReply ?? string.Empty,
-                                        },
-                                    },
+                                    // Logic Apps splits a nested-object body into individual
+                                    // designer fields when the inputs.parameters keys use
+                                    // slash-separated paths starting with the body parameter
+                                    // name. Without the "body/" prefix the designer reports
+                                    // every key as "no longer present in operation schema";
+                                    // with a single nested "body" object the action runs but
+                                    // every value is buried in the raw Body box.
+                                    ["body/automaticRepliesSetting/status"] = "scheduled",
+                                    ["body/automaticRepliesSetting/externalAudience"] = audience,
+                                    ["body/automaticRepliesSetting/scheduledStartDateTime/dateTime"] = startExpr,
+                                    ["body/automaticRepliesSetting/scheduledStartDateTime/timeZone"] = tzId,
+                                    ["body/automaticRepliesSetting/scheduledEndDateTime/dateTime"] = endExpr,
+                                    ["body/automaticRepliesSetting/scheduledEndDateTime/timeZone"] = tzId,
+                                    ["body/automaticRepliesSetting/internalReplyMessage"] = internalReply ?? string.Empty,
+                                    ["body/automaticRepliesSetting/externalReplyMessage"] = externalReply ?? string.Empty,
                                 },
                                 ["authentication"] = "@parameters('$authentication')",
                             },
@@ -307,7 +300,7 @@ public static class CloudSyncPackageGenerator
         };
     }
 
-    private static string BuildSolutionXml()
+    private static string BuildSolutionXml(bool managed)
     {
         // Minimal solution manifest. UniqueName + Publisher prefix identify
         // the solution; the version triggers an upgrade vs. install. Component
@@ -323,7 +316,12 @@ public static class CloudSyncPackageGenerator
       <Description description=""Schedules an OOF reply window every workday so Outlook stays in sync without your local computers being on. Generated by OofManager."" languagecode=""1033"" />
     </Descriptions>
     <Version>{SolutionVersion}</Version>
-    <Managed>0</Managed>
+    <!-- Managed=1 so Power Automate honors StateCode=1/StatusCode=2 in
+         customizations.xml and activates the flow automatically once the
+         user finishes the import wizard's connection-binding step. With
+         Managed=0 the flow always lands in the Off state and the user has
+         to manually toggle it on, regardless of the StateCode values. -->
+    <Managed>{(managed ? 1 : 0)}</Managed>
     <Publisher>
       <UniqueName>{PublisherUniqueName}</UniqueName>
       <LocalizedNames>
@@ -557,6 +555,22 @@ public static class CloudSyncPackageGenerator
     }
 
     private static string XmlEscape(string s) => System.Security.SecurityElement.Escape(s) ?? string.Empty;
+
+    /// <summary>
+    /// Wraps a plain-text reply in a minimal HTML envelope, the same shape
+    /// ExchangeService produces on the local PowerShell path. Without this
+    /// the Office 365 connector accepts the value but Outlook renders the
+    /// reply as a single line because the field expects HTML markup.
+    /// </summary>
+    private static string PlainTextToHtml(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var encoded = WebUtility.HtmlEncode(value.Trim());
+        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
+        return $"<html><body>{encoded}</body></html>";
+    }
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {

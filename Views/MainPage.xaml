@@ -179,15 +179,19 @@
                                     <ColumnDefinition Width="8"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <Button Grid.Column="0" Content="📦 Download flow package"
+                                <Button Grid.Column="0" Content="📦 Generate Power Automate solution"
                                         Command="{Binding GenerateCloudSyncPackageCommand}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Generates a Power Automate import package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
+                                        ToolTip="Generates a Power Automate solution package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
                                 <Button Grid.Column="2" Content="📖 Manual setup guide"
                                         Command="{Binding OpenCloudSyncGuideCommand}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
                                         ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser."/>
                             </Grid>
+                            <CheckBox Content="Generate as managed solution (recommended; flow can't be edited in the cloud designer)"
+                                      IsChecked="{Binding GenerateManagedCloudSolution}"
+                                      Margin="0,8,0,0" FontSize="11"
+                                      ToolTip="Managed: cleaner uninstall, future regenerations stay turned on automatically, but flow can't be edited in the cloud designer (regenerate from this app to make changes). Unmanaged: editable in the cloud designer, but every regeneration requires the flow to be manually turned on again. In both cases the very first import lands the flow in the Off state — click Turn On once after the connection is bound."/>
                         </StackPanel>
                     </Border>
 
