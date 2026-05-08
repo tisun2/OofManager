@@ -33,27 +33,65 @@ namespace OofManager.Wpf.Services;
 /// </summary>
 public static class CloudSyncPackageGenerator
 {
-    // Stable publisher + solution identity. Reusing the same GUIDs across
-    // generations means a re-import upgrades the existing solution rather
-    // than creating "OofManagerCloudSync_2", "OofManagerCloudSync_3", etc.
+    // Publisher identity is shared across every OofManager-generated solution
+    // (Dataverse explicitly supports many solutions per publisher). Per-user
+    // identifiers — solution unique name, workflow id, connection-reference
+    // id — are derived from the signed-in user's mailbox alias instead, so
+    // two people in the same tenant default environment don't clobber each
+    // other's import. Same alias deterministically produces the same GUIDs
+    // across re-imports, which preserves the "re-import = upgrade, not
+    // duplicate" behavior we want for a single user.
     private const string PublisherUniqueName = "OofManagerPublisher";
     private const string PublisherDisplayName = "OofManager";
     private const string PublisherPrefix = "ofm";
     private const int PublisherCustomizationOption = 10000;
-    // Stable workflow id — the flow's identity inside the solution. Keeping
-    // this stable means re-importing produces an UPDATE to the existing
-    // flow instead of duplicating it.
-    private static readonly Guid WorkflowId = new("d2e91a8f-4b21-4d72-9c54-1a3b5c7e9f01");
-    // Stable connection reference id — keeping this fixed means a re-import
-    // upgrades the same connection reference rather than creating duplicates.
-    private static readonly Guid ConnectionReferenceId = new("5c1d8b2a-9f63-4d8a-bc7e-1f3e6a9c2d05");
-    private const string ConnectionReferenceLogicalName = "ofm_OofManagerOutlookConn";
+    // Namespaces for the deterministic v5 GUIDs. These were the previously
+    // hard-coded WorkflowId / ConnectionReferenceId; reusing them as
+    // namespaces keeps the value space disjoint from any other GUID we
+    // might mint elsewhere in the app.
+    private static readonly Guid WorkflowIdNamespace = new("d2e91a8f-4b21-4d72-9c54-1a3b5c7e9f01");
+    private static readonly Guid ConnectionReferenceIdNamespace = new("5c1d8b2a-9f63-4d8a-bc7e-1f3e6a9c2d05");
     private const string ConnectionReferenceDisplayName = "OofManager Outlook";
     private const string ConnectorId = "/providers/Microsoft.PowerApps/apis/shared_office365";
-    private const string SolutionUniqueName = "OofManagerCloudSync";
-    private const string SolutionDisplayName = "OofManager Cloud Sync";
     private const string SolutionVersion = "1.0.0.0";
-    private const string FlowDisplayName = "OofManager Cloud Sync";
+
+    /// <summary>
+    /// All per-user identifiers needed to stamp the solution package. Built
+    /// once at the top of <see cref="Generate"/> from the signed-in user's
+    /// alias and threaded into each Build* helper so the same name/GUID is
+    /// used in solution.xml, customizations.xml, and the workflow JSON.
+    /// </summary>
+    private sealed class CloudSyncIdentity
+    {
+        public string Alias { get; }
+        public string SolutionUniqueName { get; }
+        public string SolutionDisplayName { get; }
+        public string FlowDisplayName { get; }
+        public string WorkflowFileName { get; }
+        public Guid WorkflowId { get; }
+        public Guid ConnectionReferenceId { get; }
+        public string ConnectionReferenceLogicalName { get; }
+
+        public CloudSyncIdentity(
+            string alias,
+            string solutionUniqueName,
+            string solutionDisplayName,
+            string flowDisplayName,
+            string workflowFileName,
+            Guid workflowId,
+            Guid connectionReferenceId,
+            string connectionReferenceLogicalName)
+        {
+            Alias = alias;
+            SolutionUniqueName = solutionUniqueName;
+            SolutionDisplayName = solutionDisplayName;
+            FlowDisplayName = flowDisplayName;
+            WorkflowFileName = workflowFileName;
+            WorkflowId = workflowId;
+            ConnectionReferenceId = connectionReferenceId;
+            ConnectionReferenceLogicalName = connectionReferenceLogicalName;
+        }
+    }
 
     /// <summary>
     /// Builds the package and writes it to <paramref name="outputPath"/>.
@@ -70,6 +108,8 @@ public static class CloudSyncPackageGenerator
         string? outputPath = null)
     {
         outputPath ??= Path.Combine(Path.GetTempPath(), "OofManager-CloudSync.zip");
+
+        var identity = BuildIdentity(userEmail);
 
         var tzId = TimeZoneInfo.Local.Id;
         var triggerEnd = ComputeRepresentativeEnd(schedule);
@@ -101,7 +141,7 @@ public static class CloudSyncPackageGenerator
         var endExpr = $"@{{{BuildEndTimeExpression(hopDays, workStart.Hours, workStart.Minutes, tzId)}}}";
 
         var workflowJson = BuildWorkflowFileJson(
-            workflowName: FlowDisplayName,
+            identity: identity,
             tzId: tzId,
             triggerHour: triggerEnd.Hours,
             triggerMinute: triggerEnd.Minutes,
@@ -117,8 +157,8 @@ public static class CloudSyncPackageGenerator
             internalReply: PlainTextToHtml(internalReply),
             externalReply: PlainTextToHtml(externalReply));
 
-        var solutionXml = BuildSolutionXml(generateManaged);
-        var customizationsXml = BuildCustomizationsXml();
+        var solutionXml = BuildSolutionXml(generateManaged, identity);
+        var customizationsXml = BuildCustomizationsXml(identity);
         var contentTypesXml = BuildContentTypesXml();
 
         if (File.Exists(outputPath))
@@ -134,20 +174,20 @@ public static class CloudSyncPackageGenerator
             WriteEntry(zip, "[Content_Types].xml", contentTypesXml);
             WriteEntry(zip, "solution.xml", solutionXml);
             WriteEntry(zip, "customizations.xml", customizationsXml);
-            WriteEntry(zip, $"Workflows/{WorkflowFileName}", workflowJson);
-            WriteEntry(zip, "OofManager-README.txt", BuildReadme(userEmail));
+            WriteEntry(zip, $"Workflows/{identity.WorkflowFileName}", workflowJson);
+            WriteEntry(zip, "OofManager-README.txt", BuildReadme(userEmail, identity));
         }
 
         return outputPath;
     }
 
-    private static string WorkflowFileName =>
+    private static string BuildWorkflowFileName(string flowDisplayName, Guid workflowId) =>
         // Convention used by the Power Platform exporter: display name with
-        // spaces replaced by hyphens, followed by the workflow guid in braces,
-        // .json. The actual file name doesn't have to match exactly, but the
-        // <JsonFileName> reference in customizations.xml does have to point
-        // at this same name.
-        $"{FlowDisplayName.Replace(' ', '_')}-{WorkflowId.ToString("D").ToUpperInvariant()}.json";
+        // spaces replaced by underscores, followed by the workflow guid in
+        // braces, .json. The actual file name doesn't have to match exactly,
+        // but the <JsonFileName> reference in customizations.xml does have
+        // to point at this same name.
+        $"{flowDisplayName.Replace(' ', '_')}-{workflowId.ToString("D").ToUpperInvariant()}.json";
 
     private static void WriteEntry(ZipArchive zip, string name, string content)
     {
@@ -163,7 +203,7 @@ public static class CloudSyncPackageGenerator
     /// <c>definition</c>, and a flow display name.
     /// </summary>
     private static string BuildWorkflowFileJson(
-        string workflowName,
+        CloudSyncIdentity identity,
         string tzId,
         int triggerHour,
         int triggerMinute,
@@ -190,7 +230,7 @@ public static class CloudSyncPackageGenerator
                         ["runtimeSource"] = "embedded",
                         ["connection"] = new Dictionary<string, object?>
                         {
-                            ["connectionReferenceLogicalName"] = ConnectionReferenceLogicalName,
+                            ["connectionReferenceLogicalName"] = identity.ConnectionReferenceLogicalName,
                         },
                         ["api"] = new Dictionary<string, object?>
                         {
@@ -269,7 +309,7 @@ public static class CloudSyncPackageGenerator
                     },
                 },
                 ["parameters"] = new Dictionary<string, object?>(),
-                ["displayName"] = workflowName,
+                ["displayName"] = identity.FlowDisplayName,
             },
             ["schemaVersion"] = "1.0.0.0",
         };
@@ -300,7 +340,7 @@ public static class CloudSyncPackageGenerator
         };
     }
 
-    private static string BuildSolutionXml(bool managed)
+    private static string BuildSolutionXml(bool managed, CloudSyncIdentity identity)
     {
         // Minimal solution manifest. UniqueName + Publisher prefix identify
         // the solution; the version triggers an upgrade vs. install. Component
@@ -308,9 +348,9 @@ public static class CloudSyncPackageGenerator
         return $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <ImportExportXml version=""9.2.0.1234"" SolutionPackageVersion=""9.2"" languagecode=""1033"" generatedBy=""OofManager"" xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"">
   <SolutionManifest>
-    <UniqueName>{SolutionUniqueName}</UniqueName>
+    <UniqueName>{identity.SolutionUniqueName}</UniqueName>
     <LocalizedNames>
-      <LocalizedName description=""{XmlEscape(SolutionDisplayName)}"" languagecode=""1033"" />
+      <LocalizedName description=""{XmlEscape(identity.SolutionDisplayName)}"" languagecode=""1033"" />
     </LocalizedNames>
     <Descriptions>
       <Description description=""Schedules an OOF reply window every workday so Outlook stays in sync without your local computers being on. Generated by OofManager."" languagecode=""1033"" />
@@ -394,7 +434,7 @@ public static class CloudSyncPackageGenerator
       </Addresses>
     </Publisher>
     <RootComponents>
-      <RootComponent type=""29"" id=""{{{WorkflowId.ToString("D").ToLowerInvariant()}}}"" behavior=""0"" />
+      <RootComponent type=""29"" id=""{{{identity.WorkflowId.ToString("D").ToLowerInvariant()}}}"" behavior=""0"" />
     </RootComponents>
     <MissingDependencies />
   </SolutionManifest>
@@ -402,7 +442,7 @@ public static class CloudSyncPackageGenerator
 ";
     }
 
-    private static string BuildCustomizationsXml()
+    private static string BuildCustomizationsXml(CloudSyncIdentity identity)
     {
         // <Workflow> Category=5 = Modern (cloud) Flow. <JsonFileName> path
         // points at the JSON file under /Workflows/. <PrimaryEntity>none</...>
@@ -413,8 +453,8 @@ public static class CloudSyncPackageGenerator
   <Entities />
   <Roles />
   <Workflows>
-    <Workflow WorkflowId=""{{{WorkflowId.ToString("D").ToLowerInvariant()}}}"" Name=""{XmlEscape(FlowDisplayName)}"">
-      <JsonFileName>/Workflows/{XmlEscape(WorkflowFileName)}</JsonFileName>
+    <Workflow WorkflowId=""{{{identity.WorkflowId.ToString("D").ToLowerInvariant()}}}"" Name=""{XmlEscape(identity.FlowDisplayName)}"">
+      <JsonFileName>/Workflows/{XmlEscape(identity.WorkflowFileName)}</JsonFileName>
       <Type>1</Type>
       <Subprocess>0</Subprocess>
       <Category>5</Category>
@@ -435,7 +475,7 @@ public static class CloudSyncPackageGenerator
       <IsCustomProcessingStepAllowedForOtherPublishers>1</IsCustomProcessingStepAllowedForOtherPublishers>
       <PrimaryEntity>none</PrimaryEntity>
       <LocalizedNames>
-        <LocalizedName languagecode=""1033"" description=""{XmlEscape(FlowDisplayName)}"" />
+        <LocalizedName languagecode=""1033"" description=""{XmlEscape(identity.FlowDisplayName)}"" />
       </LocalizedNames>
     </Workflow>
   </Workflows>
@@ -448,7 +488,7 @@ public static class CloudSyncPackageGenerator
   <CustomControls />
   <EntityDataProviders />
   <connectionreferences>
-    <connectionreference connectionreferencelogicalname=""{ConnectionReferenceLogicalName}"">
+    <connectionreference connectionreferencelogicalname=""{identity.ConnectionReferenceLogicalName}"">
       <connectionreferencedisplayname>{XmlEscape(ConnectionReferenceDisplayName)}</connectionreferencedisplayname>
       <connectorid>{ConnectorId}</connectorid>
       <iscustomizable>1</iscustomizable>
@@ -510,7 +550,7 @@ public static class CloudSyncPackageGenerator
         return latest ?? new TimeSpan(9, 0, 0);
     }
 
-    private static string BuildReadme(string userEmail)
+    private static string BuildReadme(string userEmail, CloudSyncIdentity identity)
     {
         return string.Join("\r\n", new[]
         {
@@ -538,8 +578,8 @@ public static class CloudSyncPackageGenerator
             "   connection. Either pick an existing connection or click",
             "   '+ New connection' and authorize one. Then 'Next'.",
             "8. Click 'Import'. Wait for 'Solution imported successfully' (~30s).",
-            "9. Open the solution, click the 'OofManager Cloud Sync' flow, and",
-            "   click 'Turn on' in the toolbar (imported solution flows are off",
+            "9. Open the solution, click the '" + identity.FlowDisplayName + "' flow,",
+            "   and click 'Turn on' in the toolbar (imported solution flows are off",
             "   by default for safety).",
             "10. Click 'Test' -> 'Manually' -> 'Test' to fire it once and verify",
             "    Outlook accepts the schedule.",
@@ -547,14 +587,124 @@ public static class CloudSyncPackageGenerator
             "If anything fails",
             "-----------------",
             "Re-run 'Set up cloud sync' in OofManager — the regenerated zip uses",
-            "the same solution + workflow GUIDs, so a re-import becomes an upgrade",
-            "rather than a duplicate. If solution import is also blocked by your",
-            "tenant, switch to the manual setup guide (the other button in the",
-            "OofManager UI).",
+            "the same solution + workflow GUIDs (derived from your alias '" + identity.Alias + "'),",
+            "so a re-import becomes an upgrade rather than a duplicate. If solution",
+            "import is also blocked by your tenant, switch to the manual setup guide",
+            "(the other button in the OofManager UI).",
         });
     }
 
     private static string XmlEscape(string s) => System.Security.SecurityElement.Escape(s) ?? string.Empty;
+
+    /// <summary>
+    /// Derives all per-user identifiers from the signed-in user's email
+    /// address. Two users in the same tenant default environment will see
+    /// distinct solution names + GUIDs (so neither clobbers the other on
+    /// import), while the same user re-importing repeatedly always sees
+    /// the same identifiers (so re-import = upgrade, not duplicate).
+    /// </summary>
+    private static CloudSyncIdentity BuildIdentity(string userEmail)
+    {
+        var alias = SanitizeAlias(userEmail);
+
+        // Solution UniqueName must match [A-Za-z][A-Za-z0-9_]*. The base
+        // is ASCII-safe; alias is already sanitized to alphanumerics by
+        // SanitizeAlias, so concatenation stays valid.
+        var solutionUniqueName = $"OofManagerCloudSync_{alias}";
+        var solutionDisplayName = $"OofManager Cloud Sync ({alias})";
+        var flowDisplayName = $"OofManager Cloud Sync ({alias})";
+
+        // Connection-reference logical names must be prefixed with the
+        // publisher's customization prefix and be Dataverse-safe. Lower
+        // case the alias here because logical names are stored lower-case
+        // by Dataverse anyway.
+        var connRefLogicalName = $"{PublisherPrefix}_OofManagerOutlookConn_{alias.ToLowerInvariant()}";
+
+        var workflowId = DeterministicGuid(WorkflowIdNamespace, alias);
+        var connRefId = DeterministicGuid(ConnectionReferenceIdNamespace, alias);
+
+        var workflowFileName = BuildWorkflowFileName(flowDisplayName, workflowId);
+
+        return new CloudSyncIdentity(
+            alias: alias,
+            solutionUniqueName: solutionUniqueName,
+            solutionDisplayName: solutionDisplayName,
+            flowDisplayName: flowDisplayName,
+            workflowFileName: workflowFileName,
+            workflowId: workflowId,
+            connectionReferenceId: connRefId,
+            connectionReferenceLogicalName: connRefLogicalName);
+    }
+
+    /// <summary>
+    /// Extracts the local part of an email address and strips it down to
+    /// the characters Dataverse schema names allow (letters and digits).
+    /// Falls back to "user" so the package still builds when the caller
+    /// hasn't provided an email yet.
+    /// </summary>
+    private static string SanitizeAlias(string emailOrAlias)
+    {
+        var raw = emailOrAlias ?? string.Empty;
+        var at = raw.IndexOf('@');
+        var local = at >= 0 ? raw.Substring(0, at) : raw;
+
+        var sb = new StringBuilder(local.Length);
+        foreach (var c in local)
+        {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'))
+                sb.Append(c);
+        }
+        var cleaned = sb.ToString();
+        if (cleaned.Length == 0) return "user";
+        // Schema names must start with a letter — prepend "u" if the alias
+        // happens to start with a digit (rare but valid in some tenants).
+        if (cleaned[0] >= '0' && cleaned[0] <= '9') cleaned = "u" + cleaned;
+        return cleaned;
+    }
+
+    /// <summary>
+    /// RFC 4122 §4.3 v5 (SHA-1) namespace UUID. Same input always produces
+    /// the same GUID, so per-alias identifiers stay stable across
+    /// re-generations of the package.
+    /// </summary>
+    private static Guid DeterministicGuid(Guid namespaceId, string name)
+    {
+        var nsBytes = namespaceId.ToByteArray();
+        SwapGuidByteOrder(nsBytes);
+
+        var nameBytes = Encoding.UTF8.GetBytes(name);
+        var input = new byte[nsBytes.Length + nameBytes.Length];
+        Buffer.BlockCopy(nsBytes, 0, input, 0, nsBytes.Length);
+        Buffer.BlockCopy(nameBytes, 0, input, nsBytes.Length, nameBytes.Length);
+
+        byte[] hash;
+        using (var sha1 = System.Security.Cryptography.SHA1.Create())
+        {
+            hash = sha1.ComputeHash(input);
+        }
+
+        var newGuid = new byte[16];
+        Array.Copy(hash, newGuid, 16);
+        // Set version (5) in the high nibble of byte 6.
+        newGuid[6] = (byte)((newGuid[6] & 0x0F) | (5 << 4));
+        // Set variant (RFC 4122) in the high bits of byte 8.
+        newGuid[8] = (byte)((newGuid[8] & 0x3F) | 0x80);
+
+        SwapGuidByteOrder(newGuid);
+        return new Guid(newGuid);
+    }
+
+    private static void SwapGuidByteOrder(byte[] guid)
+    {
+        // .NET's Guid.ToByteArray serializes the first three fields in
+        // little-endian order. RFC 4122 hashing operates on the network
+        // (big-endian) layout, so we swap before hashing and after
+        // assembling the result.
+        (guid[0], guid[3]) = (guid[3], guid[0]);
+        (guid[1], guid[2]) = (guid[2], guid[1]);
+        (guid[4], guid[5]) = (guid[5], guid[4]);
+        (guid[6], guid[7]) = (guid[7], guid[6]);
+    }
 
     /// <summary>
     /// Wraps a plain-text reply in a minimal HTML envelope, the same shape
