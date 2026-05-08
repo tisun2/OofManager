@@ -69,6 +69,16 @@
     <Reference Include="System.Drawing">
       <Private>false</Private>
     </Reference>
+    <!--
+      System.IO.Compression + .FileSystem are framework assemblies on net48.
+      Used by CloudSyncPackageGenerator to build the Power Automate import zip.
+    -->
+    <Reference Include="System.IO.Compression">
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.IO.Compression.FileSystem">
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!--
