@@ -229,6 +229,29 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             var endStr = settings.EndTime?.ToString("yyyy-MM-ddTHH:mm:ss") ?? DateTime.Now.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ss");
             sb.AppendLine($"    StartTime = '{startStr}'");
             sb.AppendLine($"    EndTime = '{endStr}'");
+            // Only meaningful while Status==Scheduled. When set, Exchange
+            // auto-declines new meeting invitations falling inside the OOF
+            // window. We deliberately don't touch DeclineAllEventsForScheduledOOF
+            // (which would *cancel* meetings the user has already accepted) —
+            // that's a destructive operation users aren't expecting from a
+            // single "Decline meeting invites" checkbox.
+            if (settings.DeclineMeetings)
+            {
+                sb.AppendLine("    DeclineEventsForScheduledOOF = $true");
+                // Body Exchange uses for the auto-decline reply. Reuse the
+                // internal OOF text so the requester gets a coherent message
+                // ("I'm out from X to Y") instead of an empty decline.
+                sb.AppendLine("    DeclineMeetingMessage = $internalMessage");
+            }
+            else
+            {
+                // Explicit false so re-entering Scheduled mode without the
+                // checkbox clears any previously-set decline behaviour on the
+                // mailbox — otherwise a vacation that turned this on would
+                // keep declining invites the next time the user just runs
+                // their normal off-hours auto-sync.
+                sb.AppendLine("    DeclineEventsForScheduledOOF = $false");
+            }
         }
         else
         {

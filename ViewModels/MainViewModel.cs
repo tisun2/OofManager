@@ -82,6 +82,20 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private TimeSpan _sundayStartTime = new(9, 0, 0);
     [ObservableProperty] private TimeSpan _sundayEndTime = new(18, 0, 0);
     [ObservableProperty] private string _workScheduleStatus = "Work schedule rule disabled";
+    // Long-vacation mode. Sits "above" the weekly Work Schedule: when on, the
+    // automation loop and auto-sync stop fighting Exchange and the OOF window
+    // is the single multi-day Scheduled block we pushed in StartVacationAsync.
+    // Pre-vacation reply text is squirreled away in prefs so EndVacation can
+    // restore the user's normal reply without forcing them to re-type it.
+    [ObservableProperty] private bool _isOnLongVacation;
+    [ObservableProperty] private DateTime _vacationStartDate = DateTime.Today;
+    [ObservableProperty] private TimeSpan _vacationStartTime = new(18, 0, 0);
+    [ObservableProperty] private DateTime _vacationEndDate = DateTime.Today.AddDays(7);
+    [ObservableProperty] private TimeSpan _vacationEndTime = new(9, 0, 0);
+    [ObservableProperty] private string _vacationStatus = string.Empty;
+    // Persisted across launches; consumed by StartVacation to set
+    // DeclineEventsForScheduledOOF on the Scheduled OOF window.
+    [ObservableProperty] private bool _declineMeetingsDuringVacation;
     [ObservableProperty] private string _internalReply = string.Empty;
     [ObservableProperty] private string _externalReply = string.Empty;
     [ObservableProperty] private bool _externalAudienceAll = true;
@@ -157,6 +171,20 @@ public partial class MainViewModel : ObservableObject
     }
 
     partial void OnIsAutoSyncEnabledChanged(bool value) => MarkScheduleDirty();
+    // Vacation toggle drives both the work-schedule status caption (so the
+    // user can see "paused" right on the schedule card) and a refresh of the
+    // schedule-status string itself.
+    partial void OnIsOnLongVacationChanged(bool value)
+    {
+        WorkScheduleStatus = GetWorkScheduleStatus();
+    }
+    // Persist on change so the user's preference survives across launches —
+    // suppressed during initial load to avoid a redundant write.
+    partial void OnDeclineMeetingsDuringVacationChanged(bool value)
+    {
+        if (_suppressDirtyTracking) return;
+        _prefs.Set("Vacation.DeclineMeetings", value);
+    }
     // Cloud-solution flavor toggle isn't part of the schedule, so persist
     // it inline rather than forcing the user to click Save on the schedule
     // card. Suppressed during initial load to avoid a no-op disk write.
@@ -309,7 +337,26 @@ public partial class MainViewModel : ObservableObject
 
             _hasLoadedOnce = true;
 
-            if (IsWorkScheduleEnabled)
+            if (IsOnLongVacation)
+            {
+                // Vacation is the source of truth right now; don't let the
+                // work-schedule code path run a sync that would overwrite the
+                // long Scheduled window. Still start the automation loop so
+                // the loop's HasVacationEnded check can auto-clear at the
+                // configured end time, even if Work Schedule is off.
+                IsBusy = false;
+                StartAutomationLoop();
+
+                // Also self-heal: if the vacation end time is already in the
+                // past (machine off when vacation expired, etc.), clean up
+                // immediately so the user doesn't see a stale "On vacation"
+                // banner that won't go away until the next 3-min tick.
+                if (HasVacationEnded(DateTime.Now))
+                {
+                    await EndVacationAsync();
+                }
+            }
+            else if (IsWorkScheduleEnabled)
             {
                 // Drop the busy flag *before* triggering the schedule apply +
                 // outlook sync. ApplyWorkScheduleAsync and SyncToOutlookCoreAsync
@@ -503,6 +550,243 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Starts a long-vacation block: pushes a single multi-day Scheduled OOF
+    /// window to Exchange covering the entire vacation, stashes the user's
+    /// current reply text in prefs (so EndVacation can restore it), and pauses
+    /// the regular Work Schedule auto-toggle/auto-sync so it doesn't fight the
+    /// vacation window. To use a saved reply, the user picks one from the
+    /// Templates card first; whatever is in the Internal/External boxes at
+    /// click time is what we send.
+    /// </summary>
+    [RelayCommand]
+    private async Task StartVacationAsync()
+    {
+        if (IsBusy) return;
+        var startLocal = VacationStartDate.Date.Add(VacationStartTime);
+        var endLocal = VacationEndDate.Date.Add(VacationEndTime);
+        if (endLocal <= startLocal)
+        {
+            await _dialog.AlertAsync(
+                "Invalid Vacation Window",
+                "Vacation end must be after vacation start.");
+            return;
+        }
+        if (endLocal <= DateTime.Now)
+        {
+            await _dialog.AlertAsync(
+                "Invalid Vacation Window",
+                "Vacation end is already in the past. Pick a future end date/time.");
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            // Save state needed to restore the user's normal reply when
+            // vacation ends. Persisted (rather than in-memory) so a restart
+            // mid-vacation doesn't lose the original text.
+            using (_prefs.BeginBatch())
+            {
+                _prefs.Set("Vacation.Active", true);
+                _prefs.Set("Vacation.Start", startLocal.ToString("o"));
+                _prefs.Set("Vacation.End", endLocal.ToString("o"));
+                // Don't clobber a previously-saved restore snapshot if the
+                // user is somehow re-entering vacation while still on it
+                // (e.g. extending). Original reply only gets snapshotted on
+                // the first transition into vacation.
+                if (!IsOnLongVacation)
+                {
+                    _prefs.Set("Vacation.RestoreInternal", InternalReply);
+                    _prefs.Set("Vacation.RestoreExternal", ExternalReply);
+                    _prefs.Set("Vacation.RestoreExternalAll", ExternalAudienceAll);
+                }
+            }
+
+            var startOffset = new DateTimeOffset(startLocal, TimeZoneInfo.Local.GetUtcOffset(startLocal));
+            var endOffset = new DateTimeOffset(endLocal, TimeZoneInfo.Local.GetUtcOffset(endLocal));
+
+            var settings = new OofSettings
+            {
+                Status = OofStatus.Scheduled,
+                InternalReply = InternalReply,
+                ExternalReply = ExternalReply,
+                ExternalAudienceAll = ExternalAudienceAll,
+                StartTime = startOffset,
+                EndTime = endOffset,
+                DeclineMeetings = DeclineMeetingsDuringVacation,
+            };
+            await _exchangeService.SetOofSettingsAsync(settings);
+
+            IsOnLongVacation = true;
+            IsScheduled = true;
+            var nowOffset = DateTimeOffset.Now;
+            IsOofEnabled = startOffset <= nowOffset && endOffset > nowOffset;
+            CurrentStatus = OofStatus.Scheduled;
+
+            // Invalidate any work-schedule sync cache so when vacation ends
+            // the next normal sync re-pushes the regular off-hours window.
+            _lastSyncedStart = null;
+            _lastSyncedEnd = null;
+
+            VacationStatus = $"🏖️ On vacation until {endLocal:ddd MMM d, HH:mm}";
+            StatusMessage = $"🏖️ Vacation OOF scheduled {startLocal:ddd MMM d HH:mm} → {endLocal:ddd MMM d HH:mm}. Work schedule auto-sync paused.";
+
+            // Keep the automation loop alive even if Work Schedule is off, so
+            // the loop can auto-clear vacation when the end time arrives.
+            StartAutomationLoop();
+        }
+        catch (Exception ex)
+        {
+            // Roll back the prefs flag so a retry isn't blocked by stale state.
+            _prefs.Set("Vacation.Active", false);
+            IsOnLongVacation = false;
+            StatusMessage = $"Failed to start vacation: {ex.Message}";
+            await _dialog.AlertAsync("Start Vacation Failed", ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Ends a long-vacation block: clears the multi-day Scheduled OOF window,
+    /// restores the user's pre-vacation reply text, and resumes the regular
+    /// Work Schedule (if it was on). Called both by the user via the "End
+    /// vacation now" button and automatically by the automation loop when the
+    /// vacation end time arrives.
+    ///
+    /// We deliberately make a *single* Exchange round-trip here. Older drafts
+    /// did three (Disabled → Enabled/Disabled → Scheduled), which made Outlook
+    /// flicker through several states in quick succession and — more
+    /// importantly — left a window where prefs said "no vacation" but Exchange
+    /// still had the multi-day Scheduled block if the second call failed. The
+    /// new flow computes the final post-vacation state up-front, pushes it,
+    /// and only clears vacation prefs once Exchange acknowledges the change.
+    /// </summary>
+    [RelayCommand]
+    private async Task EndVacationAsync()
+    {
+        if (!IsOnLongVacation) return;
+        if (IsBusy) return;
+
+        var restoreInternal = _prefs.GetString("Vacation.RestoreInternal", string.Empty) ?? string.Empty;
+        var restoreExternal = _prefs.GetString("Vacation.RestoreExternal", string.Empty) ?? string.Empty;
+        var restoreAll = _prefs.GetBool("Vacation.RestoreExternalAll", true);
+
+        // Pre-compute the post-vacation target so we make exactly one Set call.
+        // ComputeNextOffHoursWindow may return null on a degenerate schedule
+        // (every day off-work etc.); in that case we collapse to plain Disabled
+        // — same fallback SyncToOutlookCoreAsync already uses.
+        OofSettings target;
+        if (IsWorkScheduleEnabled)
+        {
+            var window = ComputeNextOffHoursWindow(DateTime.Now);
+            if (window != null)
+            {
+                target = new OofSettings
+                {
+                    Status = OofStatus.Scheduled,
+                    InternalReply = restoreInternal,
+                    ExternalReply = restoreExternal,
+                    ExternalAudienceAll = restoreAll,
+                    StartTime = window.Value.start,
+                    EndTime = window.Value.end,
+                };
+            }
+            else
+            {
+                target = new OofSettings
+                {
+                    Status = OofStatus.Disabled,
+                    InternalReply = restoreInternal,
+                    ExternalReply = restoreExternal,
+                    ExternalAudienceAll = restoreAll,
+                };
+            }
+        }
+        else
+        {
+            target = new OofSettings
+            {
+                Status = OofStatus.Disabled,
+                InternalReply = restoreInternal,
+                ExternalReply = restoreExternal,
+                ExternalAudienceAll = restoreAll,
+            };
+        }
+
+        IsBusy = true;
+        try
+        {
+            await _exchangeService.SetOofSettingsAsync(target);
+        }
+        catch (Exception ex)
+        {
+            // Critical: do NOT clear vacation prefs / flip the flag here. Doing
+            // so would leave Exchange holding the multi-day Scheduled window
+            // while OofManager believed vacation was over — and HasVacationEnded
+            // wouldn't be able to recover (it reads from the prefs we'd just
+            // wiped). Surface the error and bail; the user can retry.
+            StatusMessage = $"End vacation failed: {ex.Message}";
+            IsBusy = false;
+            return;
+        }
+        IsBusy = false;
+
+        // Exchange accepted the change. Now it's safe to forget vacation.
+        using (_prefs.BeginBatch())
+        {
+            _prefs.Set("Vacation.Active", false);
+            _prefs.Set("Vacation.Start", null);
+            _prefs.Set("Vacation.End", null);
+        }
+        IsOnLongVacation = false;
+
+        InternalReply = restoreInternal;
+        ExternalReply = restoreExternal;
+        ExternalAudienceAll = restoreAll;
+
+        // Mirror the pushed state into the local UI flags. Order matches the
+        // post-Set bookkeeping in SyncToOutlookCoreAsync / ApplyWorkScheduleAsync
+        // so dedupe caches stay in step with what the server now has.
+        if (target.Status == OofStatus.Scheduled)
+        {
+            IsScheduled = true;
+            var nowOffset = DateTimeOffset.Now;
+            IsOofEnabled = target.StartTime!.Value <= nowOffset && target.EndTime!.Value > nowOffset;
+            CurrentStatus = OofStatus.Scheduled;
+            _lastSyncedStart = target.StartTime;
+            _lastSyncedEnd = target.EndTime;
+        }
+        else
+        {
+            IsScheduled = false;
+            IsOofEnabled = false;
+            CurrentStatus = OofStatus.Disabled;
+            _lastSyncedStart = null;
+            _lastSyncedEnd = null;
+        }
+
+        VacationStatus = string.Empty;
+        StatusMessage = "🛬 Vacation ended — OOF cleared.";
+
+        if (_tray.IsWindowHidden)
+        {
+            _tray.ShowNotification(
+                "OOF Manager",
+                "Vacation ended — out-of-office cleared, regular work schedule resumed.");
+        }
+
+        // If Work Schedule is off and we only kept the loop alive for vacation
+        // end-detection, shut it back down so we don't poll for nothing.
+        if (!IsWorkScheduleEnabled)
+        {
+            StopAutomationLoop();
+        }
+    }
+
+    /// <summary>
     /// Shared implementation behind both the user's "Sync now" button and the
     /// background auto-sync. Auto-sync calls with isUserInitiated=false so
     /// failures don't pop dialogs and a no-change push doesn't churn the UI.
@@ -511,6 +795,9 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsBusy) return;
         if (!IsWorkScheduleEnabled) return;
+        // Same reason as ApplyWorkScheduleAsync: don't overwrite the long
+        // vacation window with a "next off-hours" stretch.
+        if (IsOnLongVacation) return;
 
         var window = ComputeNextOffHoursWindow(DateTime.Now);
         if (window == null)
@@ -701,6 +988,10 @@ public partial class MainViewModel : ObservableObject
     private async Task ApplyWorkScheduleAsync(bool showSuccessMessage, bool suppressTrayNotification = false)
     {
         if (!IsWorkScheduleEnabled || IsBusy) return;
+        // Long-vacation mode owns the OOF window outright; the regular work
+        // schedule must not flip OOF on/off underneath it or we'd erase the
+        // multi-day Scheduled block the user explicitly created.
+        if (IsOnLongVacation) return;
 
         var shouldBeOof = !IsNowInsideWorkingHours(DateTime.Now);
         var targetStatus = shouldBeOof ? OofStatus.Enabled : OofStatus.Disabled;
@@ -1020,6 +1311,7 @@ public partial class MainViewModel : ObservableObject
     private string GetWorkScheduleStatus()
     {
         if (!IsWorkScheduleEnabled) return "Work schedule rule disabled";
+        if (IsOnLongVacation) return "🏖️ Paused — on long vacation";
         return IsNowInsideWorkingHours(DateTime.Now)
             ? "Currently inside working hours: OOF should be off"
             : "Currently outside working hours: OOF should be on";
@@ -1063,6 +1355,37 @@ public partial class MainViewModel : ObservableObject
         SaturdayEndTime = LoadDayTime("Saturday", "End", legacyEnd);
         SundayStartTime = LoadDayTime("Sunday", "Start", legacyStart);
         SundayEndTime = LoadDayTime("Sunday", "End", legacyEnd);
+
+        // Restore vacation state. We don't push anything to Exchange here —
+        // LoadAsync will see IsOnLongVacation=true and skip the regular
+        // schedule apply/sync. Auto-end (if the end time has already passed)
+        // is handled by the automation loop's HasVacationEnded check.
+        IsOnLongVacation = _prefs.GetBool("Vacation.Active", false);
+        DeclineMeetingsDuringVacation = _prefs.GetBool("Vacation.DeclineMeetings", false);
+        var vacationStartRaw = _prefs.GetString("Vacation.Start");
+        var vacationEndRaw = _prefs.GetString("Vacation.End");
+        if (DateTime.TryParse(vacationStartRaw,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var startUtc))
+        {
+            var startLocal = startUtc.ToLocalTime();
+            VacationStartDate = startLocal.Date;
+            VacationStartTime = startLocal.TimeOfDay;
+        }
+        if (DateTime.TryParse(vacationEndRaw,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var endUtc))
+        {
+            var endLocal = endUtc.ToLocalTime();
+            VacationEndDate = endLocal.Date;
+            VacationEndTime = endLocal.TimeOfDay;
+            if (IsOnLongVacation)
+            {
+                VacationStatus = $"🏖️ On vacation until {endLocal:ddd MMM d, HH:mm}";
+            }
+        }
 
             WorkScheduleStatus = GetWorkScheduleStatus();
         }
@@ -1200,6 +1523,17 @@ public partial class MainViewModel : ObservableObject
                 // to finish. Unwrapping forces a full wait so two iterations can never overlap.
                 var op = Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
+                    // Vacation owns the OOF window while it's on. The only
+                    // thing we do here is detect the end-of-vacation moment
+                    // and hand control back to the regular work schedule.
+                    if (IsOnLongVacation)
+                    {
+                        if (HasVacationEnded(DateTime.Now))
+                        {
+                            await EndVacationAsync();
+                        }
+                        return;
+                    }
                     await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: IsAutoSyncEnabled);
                     if (IsAutoSyncEnabled)
                     {
@@ -1214,6 +1548,27 @@ public partial class MainViewModel : ObservableObject
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// True when the persisted vacation end timestamp is at or before
+    /// <paramref name="now"/>. Reads from prefs (rather than the in-memory
+    /// VacationEndDate/Time pair) so that an end time written by a previous
+    /// process / a previous launch still drives auto-end correctly.
+    /// </summary>
+    private bool HasVacationEnded(DateTime now)
+    {
+        var raw = _prefs.GetString("Vacation.End");
+        if (string.IsNullOrEmpty(raw)) return true;
+        if (!DateTime.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var endUtc))
+        {
+            return true;
+        }
+        // Convert to local for comparison with DateTime.Now (which is local).
+        var endLocal = endUtc.ToLocalTime();
+        return now >= endLocal;
     }
 
     private TimeSpan ComputeNextCheckDelay(DateTime now)
