@@ -13,6 +13,25 @@
             <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"/>
             <Setter Property="Padding" Value="16"/>
         </Style>
+
+        <!-- Center the time text inside the editable time-picker ComboBoxes
+             (work schedule grid + vacation start/end). HorizontalContentAlignment
+             flows through ModernWpf's default ComboBox template to the embedded
+             PART_EditableTextBox; the ItemContainerStyle does the same for the
+             dropdown rows so the picker stays visually consistent open or closed. -->
+        <Style x:Key="TimePickerComboStyle" TargetType="ComboBox">
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <!-- Left padding offsets the right-side dropdown chevron so the
+                 visible text re-centers under the Off Work checkbox column. -->
+            <Setter Property="Padding" Value="16,5,0,7"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -191,9 +210,11 @@
                                 <TextBlock Grid.Column="0" Text="From" FontSize="12" Opacity="0.7"
                                            VerticalAlignment="Center"/>
                                 <DatePicker Grid.Column="2"
+                                            x:Name="VacationStartDatePicker"
                                             SelectedDate="{Binding VacationStartDate, Mode=TwoWay}"
                                             HorizontalAlignment="Stretch"/>
                                 <ComboBox Grid.Column="4"
+                                          Style="{StaticResource TimePickerComboStyle}"
                                           IsEditable="True" IsTextSearchEnabled="True"
                                           ItemsSource="{Binding WorkTimeOptions}"
                                           Text="{Binding VacationStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
@@ -230,9 +251,11 @@
                                 <TextBlock Grid.Column="0" Text="To" FontSize="12" Opacity="0.7"
                                            VerticalAlignment="Center"/>
                                 <DatePicker Grid.Column="2"
+                                            x:Name="VacationEndDatePicker"
                                             SelectedDate="{Binding VacationEndDate, Mode=TwoWay}"
                                             HorizontalAlignment="Stretch"/>
                                 <ComboBox Grid.Column="4"
+                                          Style="{StaticResource TimePickerComboStyle}"
                                           IsEditable="True" IsTextSearchEnabled="True"
                                           ItemsSource="{Binding WorkTimeOptions}"
                                           Text="{Binding VacationEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
@@ -392,23 +415,23 @@
 
                         <!-- Start time row -->
                         <TextBlock Grid.Row="2" Grid.Column="0" Text="Start" FontSize="12" Opacity="0.7" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="2" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsMondayWorkday}"    Text="{Binding MondayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="3" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsTuesdayWorkday}"   Text="{Binding TuesdayStartTime,   Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="4" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsWednesdayWorkday}" Text="{Binding WednesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="5" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsThursdayWorkday}"  Text="{Binding ThursdayStartTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="6" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsFridayWorkday}"    Text="{Binding FridayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="7" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSaturdayWorkday}"  Text="{Binding SaturdayStartTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="2" Grid.Column="8" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSundayWorkday}"    Text="{Binding SundayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="2" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsMondayWorkday}"    Text="{Binding MondayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="3" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsTuesdayWorkday}"   Text="{Binding TuesdayStartTime,   Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="4" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsWednesdayWorkday}" Text="{Binding WednesdayStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="5" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsThursdayWorkday}"  Text="{Binding ThursdayStartTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="6" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsFridayWorkday}"    Text="{Binding FridayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="7" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSaturdayWorkday}"  Text="{Binding SaturdayStartTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="2" Grid.Column="8" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSundayWorkday}"    Text="{Binding SundayStartTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
 
                         <!-- End time row -->
                         <TextBlock Grid.Row="3" Grid.Column="0" Text="End" FontSize="12" Opacity="0.7" VerticalAlignment="Center" Margin="0,4,0,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="2" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsMondayWorkday}"    Text="{Binding MondayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="3" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsTuesdayWorkday}"   Text="{Binding TuesdayEndTime,   Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="4" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsWednesdayWorkday}" Text="{Binding WednesdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="5" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsThursdayWorkday}"  Text="{Binding ThursdayEndTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="6" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsFridayWorkday}"    Text="{Binding FridayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="7" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSaturdayWorkday}"  Text="{Binding SaturdayEndTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
-                        <ComboBox Grid.Row="3" Grid.Column="8" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSundayWorkday}"    Text="{Binding SundayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="2" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsMondayWorkday}"    Text="{Binding MondayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="3" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsTuesdayWorkday}"   Text="{Binding TuesdayEndTime,   Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="4" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsWednesdayWorkday}" Text="{Binding WednesdayEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="5" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsThursdayWorkday}"  Text="{Binding ThursdayEndTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="6" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsFridayWorkday}"    Text="{Binding FridayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="7" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSaturdayWorkday}"  Text="{Binding SaturdayEndTime,  Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
+                        <ComboBox Grid.Row="3" Grid.Column="8" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSundayWorkday}"    Text="{Binding SundayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
                     </Grid>
 
                     <!-- Single adaptive Apply button. When the schedule grid

@@ -29,6 +29,10 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
 
     private Task? _prewarmTask;
     private bool _moduleImported;
+    // Cached background ConnectAsync. Populated by TryAutoConnectAsync from
+    // App.OnStartup so the LoginPage's auto-sign-in path can simply await the
+    // *same* connect attempt instead of kicking off a duplicate one.
+    private Task? _autoConnectTask;
 
     public Task PrewarmAsync()
     {
@@ -58,6 +62,38 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             // Pre-warm is best-effort. If it fails, ConnectAsync will surface the error.
             _moduleImported = false;
         }
+    }
+
+    public Task TryAutoConnectAsync(string upnHint)
+    {
+        // Already connected: nothing to do. The caller will observe IsConnected==true
+        // immediately when it awaits this completed task.
+        if (_isConnected) return Task.CompletedTask;
+
+        var existing = Volatile.Read(ref _autoConnectTask);
+        if (existing != null) return existing;
+
+        var t = Task.Run(async () =>
+        {
+            try
+            {
+                await ConnectAsync(upnHint);
+            }
+            catch
+            {
+                // Silent attempt: swallow. LoginViewModel inspects IsConnected after
+                // awaiting and falls back to manual sign-in when this happens.
+            }
+            finally
+            {
+                // Drop the cached task on every outcome so a subsequent manual
+                // Sign In can launch a fresh attempt without being short-circuited
+                // by a stale completed/failed task.
+                Volatile.Write(ref _autoConnectTask, null);
+            }
+        });
+        var prev = Interlocked.CompareExchange(ref _autoConnectTask, t, null);
+        return prev ?? t;
     }
 
     public async Task ConnectAsync(string? upnHint = null)

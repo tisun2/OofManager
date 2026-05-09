@@ -76,7 +76,19 @@ public partial class LoginViewModel : ObservableObject
         }
 
         if (string.IsNullOrWhiteSpace(upnHint)) return;
-        if (IsBusy || _exchangeService.IsConnected) return;
+        if (IsBusy) return;
+
+        // App.OnStartup may have already finished a silent reconnect by the
+        // time we get here. Skip the spinner entirely in that case.
+        if (_exchangeService.IsConnected)
+        {
+            IsLoggedIn = true;
+            UserDisplayName = await _exchangeService.GetCurrentUserAsync();
+            _prefs.Set(LastUpnPrefKey, UserDisplayName);
+            StatusMessage = $"Welcome back, {UserDisplayName}!";
+            _navigation.NavigateToMain();
+            return;
+        }
 
         IsBusy = true;
         StatusMessage = fromWindows
@@ -85,7 +97,18 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            await _exchangeService.ConnectAsync(upnHint: upnHint);
+            // Reuses the in-flight startup-time connect attempt if one is
+            // already running; otherwise launches a fresh background connect.
+            // Either way, this awaits the same underlying ConnectAsync.
+            await _exchangeService.TryAutoConnectAsync(upnHint!);
+            if (!_exchangeService.IsConnected)
+            {
+                // Silent auto-login failed (token expired, password change, CA
+                // policy, network blip, etc.). Drop back to the Sign In button
+                // — the user can click it and go through interactive auth as before.
+                StatusMessage = "Sign in with your Microsoft 365 account";
+                return;
+            }
             IsLoggedIn = true;
             UserDisplayName = await _exchangeService.GetCurrentUserAsync();
             // Refresh the cached UPN in case the canonical form differs from
@@ -96,9 +119,8 @@ public partial class LoginViewModel : ObservableObject
         }
         catch
         {
-            // Silent auto-login failed (token expired, password change, CA
-            // policy, network blip, etc.). Drop back to the Sign In button —
-            // the user can click it and go through interactive auth as before.
+            // TryAutoConnectAsync swallows exceptions internally; defensive in
+            // case a future refactor leaks one.
             StatusMessage = "Sign in with your Microsoft 365 account";
         }
         finally

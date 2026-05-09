@@ -18,6 +18,17 @@ public interface IExchangeService
     /// cached for that identity. When null, WAM shows its account picker.
     /// </summary>
     Task ConnectAsync(string? upnHint = null);
+
+    /// <summary>
+    /// Best-effort silent reconnect: kicks off (or reuses) a background
+    /// <see cref="ConnectAsync"/> with the given UPN hint and caches the resulting
+    /// task so concurrent callers share it. Exceptions are swallowed inside the
+    /// task; callers must inspect <see cref="IsConnected"/> after awaiting to
+    /// decide whether the silent attempt actually succeeded. Designed to be
+    /// fired during app startup so the LoginPage's auto-sign-in path observes
+    /// IsConnected==true and skips straight to MainPage in the common case.
+    /// </summary>
+    Task TryAutoConnectAsync(string upnHint);
     Task DisconnectAsync();
     Task<OofSettings> GetOofSettingsAsync();
     Task SetOofSettingsAsync(OofSettings settings);

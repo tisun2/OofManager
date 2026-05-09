@@ -59,7 +59,24 @@ public partial class App : Application
         // is shown. Opening the runspace and importing ExchangeOnlineManagement takes
         // ~1-2s; running it in parallel with WPF rendering means the user's login
         // click usually finds the module already loaded and only pays the auth time.
-        _ = Services.GetRequiredService<IExchangeService>().PrewarmAsync();
+        var exchange = Services.GetRequiredService<IExchangeService>();
+        _ = exchange.PrewarmAsync();
+
+        // If the user has signed in successfully before, fire a silent reconnect
+        // in the background while the WPF window is rendering. Connect-ExchangeOnline
+        // with a UPN hint is a no-UI silent token-cache hit when the cache is fresh
+        // (~99% of the time once a user has signed in once). By the time the
+        // LoginPage is shown, IsConnected is usually already true and the auto-login
+        // path navigates straight to MainPage — login feels instant.
+        // Only do this when there's a remembered UPN; first-ever launch keeps the
+        // explicit "click Sign In" UX so a fresh user never sees a WAM dialog they
+        // didn't ask for.
+        var lastUpn = Services.GetRequiredService<IPreferencesService>()
+            .GetString("Auth.LastSignedInUpn");
+        if (!string.IsNullOrWhiteSpace(lastUpn))
+        {
+            _ = exchange.TryAutoConnectAsync(lastUpn!);
+        }
 
         window.Initialize(Services);
         MainWindow = window;

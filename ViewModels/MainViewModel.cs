@@ -18,17 +18,17 @@ public partial class MainViewModel : ObservableObject
     private readonly IStartupService _startup;
     private CancellationTokenSource? _automationCts;
     private bool _hasLoadedOnce;
-    // Last off-hours window pushed to Outlook by SyncToOutlookCoreAsync. Used to
-    // skip a redundant server round-trip when the auto-sync loop computes the
-    // same window twice in a row (the common case during a long off-hours stretch).
-    private DateTimeOffset? _lastSyncedStart;
-    private DateTimeOffset? _lastSyncedEnd;
+    // Snapshot of the last OofSettings payload we successfully pushed. Comparing
+    // the *full* payload (status + both replies + audience + window + decline)
+    // means out-of-band edits — e.g. the user tweaks reply text in Outlook on
+    // the web — invalidate the cache and get re-asserted on the next tick.
+    private OofSettingsSnapshot? _lastSyncedSnapshot;
     // Last (start,end) we actually showed a tray balloon for. Tracked separately
     // from the sync cache because ApplyWorkScheduleAsync invalidates the sync
     // cache after every successful SetOofSettingsAsync (which is correct — each
     // call wipes any Scheduled window on Exchange, so we must re-push it). If we
     // gated the balloon on the same cache, the user would get a balloon every
-    // 3-min self-heal tick. This pair only updates when the *window itself*
+    // 5-min self-heal tick. This pair only updates when the *window itself*
     // actually changes, so the user only sees a balloon for meaningful moves.
     private DateTimeOffset? _lastNotifiedStart;
     private DateTimeOffset? _lastNotifiedEnd;
@@ -281,6 +281,26 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         StatusMessage = "Loading OOF settings...";
 
+        // MainPage may have been navigated to directly at startup (when a
+        // remembered UPN exists) before Connect-ExchangeOnline has finished.
+        // Wait for the in-flight silent reconnect; if there is no IsConnected
+        // by the time it returns, the silent attempt failed — fall back to the
+        // LoginPage so the user can sign in interactively.
+        if (!_exchangeService.IsConnected)
+        {
+            var lastUpn = _prefs.GetString("Auth.LastSignedInUpn");
+            if (!string.IsNullOrWhiteSpace(lastUpn))
+            {
+                await _exchangeService.TryAutoConnectAsync(lastUpn!);
+            }
+            if (!_exchangeService.IsConnected)
+            {
+                IsBusy = false;
+                _navigation.NavigateToLogin();
+                return;
+            }
+        }
+
         try
         {
             // Kick off the slow network fetch and the local DB read in parallel
@@ -333,7 +353,17 @@ public partial class MainViewModel : ObservableObject
             Templates.Clear();
             foreach (var t in templatesTask.Result) Templates.Add(t);
 
-            StatusMessage = DescribeOofState(oof);
+            // Only set the "OOF is currently …" caption when the schedule
+            // path *won't* immediately overwrite it. With Work Schedule
+            // enabled, ApplyWorkScheduleAsync (and SyncToOutlookCoreAsync) run
+            // a few hundred ms later and replace this with their own caption,
+            // so writing it here is a doomed property change. Skipping it
+            // makes the "what's the final caption?" rule obvious from the
+            // code instead of relying on which path happens to write last.
+            if (!IsWorkScheduleEnabled || IsOnLongVacation)
+            {
+                StatusMessage = DescribeOofState(oof);
+            }
 
             _hasLoadedOnce = true;
 
@@ -350,7 +380,7 @@ public partial class MainViewModel : ObservableObject
                 // Also self-heal: if the vacation end time is already in the
                 // past (machine off when vacation expired, etc.), clean up
                 // immediately so the user doesn't see a stale "On vacation"
-                // banner that won't go away until the next 3-min tick.
+                // banner that won't go away until the next 5-min tick.
                 if (HasVacationEnded(DateTime.Now))
                 {
                     await EndVacationAsync();
@@ -417,12 +447,9 @@ public partial class MainViewModel : ObservableObject
             await ApplyWorkScheduleAsync(showSuccessMessage: true, suppressTrayNotification: IsAutoSyncEnabled);
             if (IsAutoSyncEnabled)
             {
-                // Schedule edits invalidate any previously-pushed Outlook
-                // window, so refresh immediately. The dedupe inside
-                // SyncToOutlookCoreAsync already skips if the new window
-                // happens to match the cached one.
-                _lastSyncedStart = null;
-                _lastSyncedEnd = null;
+                // Schedule edits should feel like a hard re-sync even if the
+                // computed next window happens to match what's cached.
+                _lastSyncedSnapshot = null;
                 await SyncToOutlookCoreAsync(isUserInitiated: false);
             }
         }
@@ -461,8 +488,7 @@ public partial class MainViewModel : ObservableObject
         // 2. Force-push the next window to Outlook even if it matches the
         //    cached one — the user explicitly asked for a fresh sync, so the
         //    dedupe inside SyncToOutlookCoreAsync should not skip.
-        _lastSyncedStart = null;
-        _lastSyncedEnd = null;
+        _lastSyncedSnapshot = null;
         await SyncToOutlookCoreAsync(isUserInitiated: true);
     }
 
@@ -625,8 +651,7 @@ public partial class MainViewModel : ObservableObject
 
             // Invalidate any work-schedule sync cache so when vacation ends
             // the next normal sync re-pushes the regular off-hours window.
-            _lastSyncedStart = null;
-            _lastSyncedEnd = null;
+            _lastSyncedSnapshot = null;
 
             VacationStatus = $"🏖️ On vacation until {endLocal:ddd MMM d, HH:mm}";
             StatusMessage = $"🏖️ Vacation OOF scheduled {startLocal:ddd MMM d HH:mm} → {endLocal:ddd MMM d HH:mm}. Work schedule auto-sync paused.";
@@ -756,17 +781,14 @@ public partial class MainViewModel : ObservableObject
             var nowOffset = DateTimeOffset.Now;
             IsOofEnabled = target.StartTime!.Value <= nowOffset && target.EndTime!.Value > nowOffset;
             CurrentStatus = OofStatus.Scheduled;
-            _lastSyncedStart = target.StartTime;
-            _lastSyncedEnd = target.EndTime;
         }
         else
         {
             IsScheduled = false;
             IsOofEnabled = false;
             CurrentStatus = OofStatus.Disabled;
-            _lastSyncedStart = null;
-            _lastSyncedEnd = null;
         }
+        _lastSyncedSnapshot = OofSettingsSnapshot.From(target);
 
         VacationStatus = string.Empty;
         StatusMessage = "🛬 Vacation ended — OOF cleared.";
@@ -812,13 +834,22 @@ public partial class MainViewModel : ObservableObject
         }
         var (start, end) = window.Value;
 
-        // Dedupe: skip the server round-trip if the window we'd push is exactly
-        // the one we last pushed. The auto-sync loop fires every few minutes,
-        // so without this we'd hammer Exchange with identical Set calls all
-        // through a single off-hours stretch.
-        if (!isUserInitiated
-            && _lastSyncedStart == start
-            && _lastSyncedEnd == end)
+        var settings = new OofSettings
+        {
+            Status = OofStatus.Scheduled,
+            InternalReply = InternalReply,
+            ExternalReply = ExternalReply,
+            ExternalAudienceAll = ExternalAudienceAll,
+            StartTime = start,
+            EndTime = end
+        };
+        var snapshot = OofSettingsSnapshot.From(settings);
+
+        // Dedupe: skip the server round-trip if the *entire* payload matches
+        // the one we last pushed. The full-payload key (vs just the window)
+        // means an out-of-band edit — user changes reply text in OWA, an admin
+        // tweaks settings, etc. — produces a snapshot mismatch and we re-push.
+        if (!isUserInitiated && _lastSyncedSnapshot == snapshot)
         {
             return;
         }
@@ -826,20 +857,9 @@ public partial class MainViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            var settings = new OofSettings
-            {
-                Status = OofStatus.Scheduled,
-                InternalReply = InternalReply,
-                ExternalReply = ExternalReply,
-                ExternalAudienceAll = ExternalAudienceAll,
-                StartTime = start,
-                EndTime = end
-            };
-
             await _exchangeService.SetOofSettingsAsync(settings);
 
-            _lastSyncedStart = start;
-            _lastSyncedEnd = end;
+            _lastSyncedSnapshot = snapshot;
 
             // Reflect the new server state locally so the UI's "Out of Office"
             // card matches Outlook (which is now in Scheduled mode). The
@@ -869,7 +889,7 @@ public partial class MainViewModel : ObservableObject
             // sees the auto-action. The user-initiated push doesn't need a
             // balloon (they're looking at the app and the status bar already
             // updated). Also dedupe against the last *notified* window so the
-            // 3-min self-heal loop doesn't spam balloons every tick — the user
+            // 5-min self-heal loop doesn't spam balloons every tick — the user
             // only sees one when the next off-hours window actually moves.
             if (!isUserInitiated
                 && _tray.IsWindowHidden
@@ -1019,16 +1039,12 @@ public partial class MainViewModel : ObservableObject
             await _exchangeService.SetOofSettingsAsync(settings);
             CurrentStatus = targetStatus;
             IsOofEnabled = shouldBeOof;
-            // We just overwrote any Scheduled window on Exchange with a flat
-            // Enabled/Disabled state, so the dedupe cache no longer reflects
-            // server reality. Without this invalidation the auto-sync loop
-            // (ApplyWorkScheduleAsync → SyncToOutlookCoreAsync) leaves OOF
-            // sitting at Disabled all through working hours, because the
-            // computed off-hours window matches the stale cache and the
-            // follow-up push gets skipped — which is exactly why "auto-sync
-            // turns OOF off" while "manual Sync now schedules the window".
-            _lastSyncedStart = null;
-            _lastSyncedEnd = null;
+            // Record what we just pushed (a flat Enabled/Disabled state with
+            // no window). The follow-up SyncToOutlookCoreAsync will compute a
+            // Scheduled-window state, which differs from this snapshot, so
+            // its dedupe correctly *won't* skip — no need for the old
+            // "invalidate to null" hack to force the follow-up push through.
+            _lastSyncedSnapshot = OofSettingsSnapshot.From(settings);
             // Re-raise PropertyChanged so any binding that already cached the
             // value (e.g. after the OnIsOofEnabledChanged partial method ran
             // and re-assigned CurrentStatus to the same OofStatus) still gets
@@ -1510,9 +1526,9 @@ public partial class MainViewModel : ObservableObject
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                // Sleep until either the next work-hours boundary or 3 minutes
+                // Sleep until either the next work-hours boundary or 5 minutes
                 // (whichever is sooner). The boundary-aligned wake guarantees
-                // we flip OOF *exactly* at start/end times, while the 3-minute
+                // we flip OOF *exactly* at start/end times, while the 5-minute
                 // fallback self-heals against clock changes, workday config
                 // changes, and out-of-band edits to the mailbox.
                 var delay = ComputeNextCheckDelay(DateTime.Now);
@@ -1573,9 +1589,9 @@ public partial class MainViewModel : ObservableObject
 
     private TimeSpan ComputeNextCheckDelay(DateTime now)
     {
-        // Cap the wait to 3 minutes so we self-heal if the clock changes,
+        // Cap the wait to 5 minutes so we self-heal if the clock changes,
         // workdays change, etc.
-        var fallback = TimeSpan.FromMinutes(3);
+        var fallback = TimeSpan.FromMinutes(5);
         TimeSpan? candidate = null;
 
         // Today's boundaries (only relevant if today is itself a workday).
@@ -1606,5 +1622,28 @@ public partial class MainViewModel : ObservableObject
         var delay = candidate.HasValue && candidate.Value < fallback ? candidate.Value : fallback;
         // Don't poll faster than once a minute regardless.
         return delay < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : delay;
+    }
+
+    // Hand-rolled value-equality wrapper. We can't use a `record` here because
+    // net48 lacks System.Runtime.CompilerServices.IsExternalInit. Internally
+    // we delegate to a ValueTuple so equality / hashing are correct without
+    // having to maintain field-by-field comparisons by hand.
+    private sealed class OofSettingsSnapshot : IEquatable<OofSettingsSnapshot>
+    {
+        private readonly (OofStatus, string, string, bool, DateTimeOffset?, DateTimeOffset?, bool) _key;
+
+        private OofSettingsSnapshot(
+            (OofStatus, string, string, bool, DateTimeOffset?, DateTimeOffset?, bool) key) => _key = key;
+
+        public static OofSettingsSnapshot From(OofSettings s) => new((
+            s.Status, s.InternalReply, s.ExternalReply, s.ExternalAudienceAll,
+            s.StartTime, s.EndTime, s.DeclineMeetings));
+
+        public bool Equals(OofSettingsSnapshot? other) => other is not null && _key.Equals(other._key);
+        public override bool Equals(object? obj) => obj is OofSettingsSnapshot s && Equals(s);
+        public override int GetHashCode() => _key.GetHashCode();
+        public static bool operator ==(OofSettingsSnapshot? a, OofSettingsSnapshot? b) =>
+            ReferenceEquals(a, b) || (a is not null && a.Equals(b));
+        public static bool operator !=(OofSettingsSnapshot? a, OofSettingsSnapshot? b) => !(a == b);
     }
 }

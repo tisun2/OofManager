@@ -37,8 +37,24 @@ public partial class MainWindow : Window
         _prefs = (IPreferencesService)services.GetService(typeof(IPreferencesService))!;
         _tray = (ITrayService)services.GetService(typeof(ITrayService))!;
 
-        var loginPage = (LoginPage)services.GetService(typeof(LoginPage))!;
-        RootFrame.Navigate(loginPage);
+        // If the user has signed in successfully before, App.OnStartup has
+        // already kicked off a background silent reconnect. Boot straight into
+        // MainPage so the user sees the app shell + a normal "Loading OOF
+        // settings…" indicator while that completes — instead of a flickering
+        // Sign In page that disappears 1–2 seconds later. MainViewModel awaits
+        // the same in-flight reconnect and bounces back to LoginPage if it
+        // turns out a fresh interactive sign-in is actually needed.
+        var lastUpn = _prefs.GetString("Auth.LastSignedInUpn");
+        if (!string.IsNullOrWhiteSpace(lastUpn))
+        {
+            var mainPage = (MainPage)services.GetService(typeof(MainPage))!;
+            RootFrame.Navigate(mainPage);
+        }
+        else
+        {
+            var loginPage = (LoginPage)services.GetService(typeof(LoginPage))!;
+            RootFrame.Navigate(loginPage);
+        }
 
         Closing += MainWindow_Closing;
     }
