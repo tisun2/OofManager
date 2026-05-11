@@ -24,6 +24,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
 
     private bool _isConnected;
     private string? _userPrincipalName;
+    private string? _targetMailboxIdentity;
 
     public bool IsConnected => _isConnected;
 
@@ -126,6 +127,16 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         var upnLine = string.IsNullOrWhiteSpace(upnHint)
             ? string.Empty
             : $"    -UserPrincipalName '{EscapePowerShellSingleQuotedString(upnHint!)}' `\n";
+        // Also resolve the mailbox's PrimarySmtpAddress via the V3 REST cmdlet
+        // Get-EXOMailbox. We use that as the -Identity for all subsequent
+        // OOF reads/writes so OofManager hits the same EXO routing anchor that
+        // Outlook desktop uses — without this, signing in with an alias UPN
+        // (tisun@microsoft.com) made the mailbox locator pick a different
+        // backend replica than Outlook's primary-SMTP (Tianyue.Sun@…) read,
+        // producing the visible "OofManager says Scheduled, Outlook says
+        // Disabled" inconsistency. Best-effort: if Get-EXOMailbox fails (perm
+        // denied, REST endpoint unreachable, etc.) we fall back to the hint
+        // or the connection UPN, which is the old behaviour.
         var script = $@"
 Connect-ExchangeOnline `
 {upnLine}    -ShowBanner:$false `
@@ -133,15 +144,43 @@ Connect-ExchangeOnline `
     -SkipLoadingCmdletHelp `
     -CommandName 'Get-MailboxAutoReplyConfiguration','Set-MailboxAutoReplyConfiguration' `
     -ErrorAction Stop | Out-Null
-(Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
+$connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
+$primarySmtp = $null
+try {{
+    $primarySmtp = (Get-EXOMailbox -Identity $connUpn -Properties PrimarySmtpAddress -ErrorAction Stop).PrimarySmtpAddress
+}} catch {{
+    # Best-effort: if this user lacks Get-EXOMailbox access (e.g. delegated
+    # scenarios) keep the original UPN and let the rest of the app proceed.
+}}
+[PSCustomObject]@{{ UPN = $connUpn; PrimarySmtp = $primarySmtp }} | ConvertTo-Json -Compress
 ";
 
         var output = await InvokeAsync(script);
 
-        _userPrincipalName = output
+        var rawJson = output
             .Select(o => o?.ToString()?.Trim())
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .LastOrDefault();
+
+        string? primarySmtp = null;
+        if (!string.IsNullOrWhiteSpace(rawJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(ExtractJson(rawJson!));
+                var root = doc.RootElement;
+                if (root.TryGetProperty("UPN", out var upnEl) && upnEl.ValueKind == JsonValueKind.String)
+                    _userPrincipalName = upnEl.GetString();
+                if (root.TryGetProperty("PrimarySmtp", out var smtpEl) && smtpEl.ValueKind == JsonValueKind.String)
+                    primarySmtp = smtpEl.GetString();
+            }
+            catch
+            {
+                // Old shape (plain UPN string) — keep backward compatibility
+                // in case the cmdlet output format ever surprises us.
+                _userPrincipalName = rawJson;
+            }
+        }
 
         if (string.IsNullOrWhiteSpace(_userPrincipalName))
         {
@@ -153,6 +192,16 @@ Connect-ExchangeOnline `
             throw new Exception("Connected, but failed to read the current signed-in user.");
         }
 
+        // Anchor precedence for OOF reads/writes:
+        //   1. PrimarySmtpAddress from Get-EXOMailbox (matches Outlook desktop).
+        //   2. Explicit upnHint (user passed it via Switch Account).
+        //   3. Connection UPN from Get-ConnectionInformation.
+        if (!string.IsNullOrWhiteSpace(primarySmtp))
+            _targetMailboxIdentity = primarySmtp!.Trim();
+        else if (!string.IsNullOrWhiteSpace(upnHint))
+            _targetMailboxIdentity = upnHint!.Trim();
+        else
+            _targetMailboxIdentity = _userPrincipalName;
         _isConnected = true;
     }
 
@@ -170,6 +219,7 @@ Connect-ExchangeOnline `
         {
             _isConnected = false;
             _userPrincipalName = null;
+            _targetMailboxIdentity = null;
             _moduleImported = false;
             _prewarmTask = null;
             CloseRunspace();
@@ -181,11 +231,16 @@ Connect-ExchangeOnline `
         return Task.FromResult(_userPrincipalName ?? "Unknown");
     }
 
+    public Task<string> GetCurrentMailboxIdentityAsync()
+    {
+        return Task.FromResult(_targetMailboxIdentity ?? _userPrincipalName ?? "Unknown");
+    }
+
     public async Task<OofSettings> GetOofSettingsAsync()
     {
         EnsureConnected();
 
-        var upn = EscapePowerShellSingleQuotedString(_userPrincipalName!);
+        var upn = EscapePowerShellSingleQuotedString(_targetMailboxIdentity ?? _userPrincipalName!);
         var script = $@"
 function ConvertTo-Utf8Base64([string]$value) {{
     if ($null -eq $value) {{ return '' }}
@@ -238,17 +293,113 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     {
         EnsureConnected();
 
-        var state = settings.Status switch
+        var expectedState = settings.Status switch
         {
             OofStatus.Enabled => "Enabled",
             OofStatus.Scheduled => "Scheduled",
             _ => "Disabled"
         };
+
+        // Two-stage verification:
+        //   1. WriteOnce sends the Set, then reads back AutoReplyState *in the
+        //      same script* (same PSSession anchor) — cheap, catches tenant
+        //      policy rejection and silent no-ops.
+        //   2. After a short delay we issue a fresh Get from a separate cmdlet
+        //      invocation. The EXO mailbox locator may anchor that call to a
+        //      different backend replica than the write hit, so this is what
+        //      catches replica-lag drift (the classic "OofManager says X,
+        //      Outlook says Y" symptom).
+        //
+        // We re-read with progressive backoff (300ms → 1s → 2s) because most
+        // replicas converge in under a second; only the long-tail cases ever
+        // need the longer waits, and forcing every save to sit through several
+        // seconds of fixed delay is a noticeable UX regression on the happy
+        // path. If the reads never converge we issue one more write — replica
+        // lag is the common cause but a one-shot lost write is also possible —
+        // before giving up.
+        var readDelays = new[]
+        {
+            TimeSpan.FromMilliseconds(300),
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(2),
+        };
+        const int maxWriteAttempts = 2;
+        string? lastObservedState = null;
+        DateTimeOffset? lastObservedStart = null;
+        DateTimeOffset? lastObservedEnd = null;
+
+        for (int writeAttempt = 1; writeAttempt <= maxWriteAttempts; writeAttempt++)
+        {
+            await WriteOnceAsync(settings, expectedState);
+            SyncLogger.Write(
+                $"    WriteOnce attempt={writeAttempt} target=({_targetMailboxIdentity}) " +
+                $"state={expectedState} window={settings.StartTime:yyyy-MM-ddTHH:mm}..{settings.EndTime:yyyy-MM-ddTHH:mm}");
+
+            foreach (var delay in readDelays)
+            {
+                await Task.Delay(delay);
+                var verify = await GetOofSettingsAsync();
+                lastObservedState = verify.Status switch
+                {
+                    OofStatus.Enabled => "Enabled",
+                    OofStatus.Scheduled => "Scheduled",
+                    _ => "Disabled"
+                };
+                lastObservedStart = verify.StartTime;
+                lastObservedEnd = verify.EndTime;
+
+                var match = StateMatches(settings, verify);
+                SyncLogger.Write(
+                    $"      verify after {delay.TotalMilliseconds:0}ms -> {lastObservedState} " +
+                    $"{lastObservedStart:yyyy-MM-ddTHH:mm}..{lastObservedEnd:yyyy-MM-ddTHH:mm} match={match}");
+                if (match)
+                    return;
+            }
+        }
+
+        throw new Exception(
+            $"Save succeeded but the mailbox state did not converge after {maxWriteAttempts} write attempts " +
+            $"(expected '{expectedState}', last observed '{lastObservedState ?? "unknown"}'" +
+            (settings.Status == OofStatus.Scheduled
+                ? $", expected start {settings.StartTime:o} got {lastObservedStart:o}, expected end {settings.EndTime:o} got {lastObservedEnd:o}"
+                : "") +
+            "). This usually means Exchange replicated the change to one replica but the read still hits a stale one. " +
+            "Wait a minute and refresh; if it persists, the tenant policy may be silently overriding the value.");
+    }
+
+    private static bool StateMatches(OofSettings expected, OofSettings actual)
+    {
+        if (expected.Status != actual.Status) return false;
+        if (expected.ExternalAudienceAll != actual.ExternalAudienceAll) return false;
+
+        // Only the Scheduled mode actually persists start/end as user-visible
+        // values. Enabled/Disabled writes a sentinel window that the user
+        // never sees, so don't include it in the equality check.
+        if (expected.Status == OofStatus.Scheduled)
+        {
+            // Exchange occasionally rounds to the nearest minute; a 60-second
+            // tolerance keeps the verifier from spinning on a non-issue.
+            if (!TimesApproximatelyEqual(expected.StartTime, actual.StartTime)) return false;
+            if (!TimesApproximatelyEqual(expected.EndTime, actual.EndTime)) return false;
+        }
+        return true;
+    }
+
+    private static bool TimesApproximatelyEqual(DateTimeOffset? a, DateTimeOffset? b)
+    {
+        if (a is null && b is null) return true;
+        if (a is null || b is null) return false;
+        return Math.Abs((a.Value - b.Value).TotalSeconds) <= 60;
+    }
+
+    private async Task WriteOnceAsync(OofSettings settings, string expectedState)
+    {
         var audience = settings.ExternalAudienceAll ? "All" : "Known";
-        var upn = EscapePowerShellSingleQuotedString(_userPrincipalName!);
+        var upn = EscapePowerShellSingleQuotedString(_targetMailboxIdentity ?? _userPrincipalName!);
         var internalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(PlainTextToHtml(settings.InternalReply)));
         var externalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(PlainTextToHtml(settings.ExternalReply)));
 
+        var state = expectedState;
         var sb = new StringBuilder();
         sb.AppendLine($"$internalMessage = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{internalMsgBase64}'))");
         sb.AppendLine($"$externalMessage = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{externalMsgBase64}'))");
@@ -265,29 +416,13 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             var endStr = settings.EndTime?.ToString("yyyy-MM-ddTHH:mm:ss") ?? DateTime.Now.AddDays(1).ToString("yyyy-MM-ddTHH:mm:ss");
             sb.AppendLine($"    StartTime = '{startStr}'");
             sb.AppendLine($"    EndTime = '{endStr}'");
-            // Only meaningful while Status==Scheduled. When set, Exchange
-            // auto-declines new meeting invitations falling inside the OOF
-            // window. We deliberately don't touch DeclineAllEventsForScheduledOOF
-            // (which would *cancel* meetings the user has already accepted) —
-            // that's a destructive operation users aren't expecting from a
-            // single "Decline meeting invites" checkbox.
-            if (settings.DeclineMeetings)
-            {
-                sb.AppendLine("    DeclineEventsForScheduledOOF = $true");
-                // Body Exchange uses for the auto-decline reply. Reuse the
-                // internal OOF text so the requester gets a coherent message
-                // ("I'm out from X to Y") instead of an empty decline.
-                sb.AppendLine("    DeclineMeetingMessage = $internalMessage");
-            }
-            else
-            {
-                // Explicit false so re-entering Scheduled mode without the
-                // checkbox clears any previously-set decline behaviour on the
-                // mailbox — otherwise a vacation that turned this on would
-                // keep declining invites the next time the user just runs
-                // their normal off-hours auto-sync.
-                sb.AppendLine("    DeclineEventsForScheduledOOF = $false");
-            }
+            // Always clear DeclineEventsForScheduledOOF: the auto-decline
+            // checkbox was removed from the UI, but earlier builds let users
+            // turn it on — forcing $false here ensures the flag is cleared on
+            // the next sync for those mailboxes. We deliberately don't touch
+            // DeclineAllEventsForScheduledOOF (which would *cancel* already-
+            // accepted meetings) since that was never wired up.
+            sb.AppendLine("    DeclineEventsForScheduledOOF = $false");
         }
         else
         {

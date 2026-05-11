@@ -99,6 +99,30 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Last-chance flush: re-assert the current Scheduled OOF window before
+        // the runspace closes. If anything (Outlook desktop, OWA, mobile, admin
+        // policy) flipped the mailbox to Disabled while we were running, this
+        // is our only opportunity to leave the server in the correct state for
+        // the period after OofManager exits. Bounded wait so an EXO hiccup
+        // can't hang shutdown — 5s comfortably covers the typical 1-2s
+        // Set+Get round-trip without making exit feel stuck.
+        //
+        // Run on the thread pool (not directly Wait() on the UI thread): the
+        // flush awaits Task.Delay / PowerShell invocations that may try to
+        // post continuations back to the Dispatcher. A synchronous Wait() on
+        // the UI thread would deadlock with those continuations until the 5s
+        // timeout elapsed, making shutdown feel hung. Task.Run hops off the
+        // Dispatcher so the inner awaits resume on a threadpool thread.
+        try
+        {
+            var vm = Services.GetService<ViewModels.MainViewModel>();
+            if (vm != null)
+            {
+                Task.Run(() => vm.FlushBeforeExitAsync()).Wait(TimeSpan.FromSeconds(5));
+            }
+        }
+        catch { /* best-effort */ }
+
         // Dispose the DI container on shutdown so singletons that own native handles
         // (PowerShell runspace, SQLite connection) get a chance to flush + close cleanly.
         // Bounded wait so a hung runspace can't hang the whole exit.

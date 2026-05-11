@@ -37,24 +37,16 @@ public partial class MainWindow : Window
         _prefs = (IPreferencesService)services.GetService(typeof(IPreferencesService))!;
         _tray = (ITrayService)services.GetService(typeof(ITrayService))!;
 
-        // If the user has signed in successfully before, App.OnStartup has
-        // already kicked off a background silent reconnect. Boot straight into
-        // MainPage so the user sees the app shell + a normal "Loading OOF
-        // settings…" indicator while that completes — instead of a flickering
-        // Sign In page that disappears 1–2 seconds later. MainViewModel awaits
-        // the same in-flight reconnect and bounces back to LoginPage if it
-        // turns out a fresh interactive sign-in is actually needed.
-        var lastUpn = _prefs.GetString("Auth.LastSignedInUpn");
-        if (!string.IsNullOrWhiteSpace(lastUpn))
-        {
-            var mainPage = (MainPage)services.GetService(typeof(MainPage))!;
-            RootFrame.Navigate(mainPage);
-        }
-        else
-        {
-            var loginPage = (LoginPage)services.GetService(typeof(LoginPage))!;
-            RootFrame.Navigate(loginPage);
-        }
+        // Always boot into LoginPage. When a UPN is remembered, App.OnStartup
+        // has kicked off a silent reconnect in the background and LoginPage's
+        // TryAutoLoginAsync awaits it behind a ProgressRing — on success it
+        // navigates straight to MainPage. Going directly to MainPage when a
+        // UPN is remembered doesn't actually shave any time off the auth wait
+        // (we still block on the same Connect-ExchangeOnline call), and it
+        // leaves the user stranded with no Sign In button if the silent
+        // attempt fails (token expired, password change, network blip).
+        var loginPage = (LoginPage)services.GetService(typeof(LoginPage))!;
+        RootFrame.Navigate(loginPage);
 
         Closing += MainWindow_Closing;
     }

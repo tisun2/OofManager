@@ -15,12 +15,4 @@ public class OofSettings
     public bool ExternalAudienceAll { get; set; } = true;
     public DateTimeOffset? StartTime { get; set; }
     public DateTimeOffset? EndTime { get; set; }
-    /// <summary>
-    /// Only honoured when <see cref="Status"/> is <see cref="OofStatus.Scheduled"/>.
-    /// When true, Exchange will auto-decline new meeting invitations whose
-    /// proposed time falls inside the Scheduled OOF window. Used by the
-    /// long-vacation feature; the regular work-schedule sync leaves this
-    /// false so day-to-day OOF flips don't unexpectedly decline meetings.
-    /// </summary>
-    public bool DeclineMeetings { get; set; } = false;
 }

@@ -74,58 +74,67 @@ public static class CloudSyncGuideGenerator
         var tzId = TimeZoneInfo.Local.Id;
         var tzDisplay = TimeZoneInfo.Local.DisplayName;
 
-        // Pick a representative work-end / work-start time for the recurrence.
-        // We use the EARLIEST end and LATEST start across all configured
-        // workdays, which gives a conservative "OOF should be on" window
-        // covering the whole week. Users with significant per-day variation
-        // see a "Customize" callout in the rendered guide.
+        // Pick a representative work-end time for the recurrence trigger.
+        // We use the EARLIEST end across all configured workdays so the
+        // trigger fires no later than the first day-of-week's actual end-of-
+        // shift; days with a later end-of-shift get a future-dated OOF
+        // window via the per-dow lookup baked into startTimeExpression.
         var workEnd = ComputeRepresentativeEnd(schedule);
-        var workStart = ComputeRepresentativeStart(schedule);
 
         // Recurrence fires daily at this hour:minute (local time of the
         // signed-in M365 account, which Power Automate uses by default).
         var triggerHour = workEnd.Hours;
         var triggerMinute = workEnd.Minutes;
 
-        // The flow body needs an End time that lands at the next workday's
-        // start-of-work. For Mon-Thu that's tomorrow; for Friday it's three
-        // days later. We bake this rule into the dynamic content via a
-        // Power Automate expression that computes hours-until-next-workstart.
-        var endHour = workStart.Hours;
-        var endMinute = workStart.Minutes;
-
-        // For each weekday, decide how many days to add to "today" to land on
-        // the next configured workday. Used in the if/switch expression we
-        // emit into the End Time field.
+        // Per-day-of-week lookup tables. Power Automate's dayOfWeek returns
+        // 0=Sunday..6=Saturday, matching .NET DayOfWeek. todayEndH/M is
+        // today's actual end-of-shift (used as OOF.start so a Friday with a
+        // later shift than the trigger gets the right start time). hopDays +
+        // nextStartH/M jump to the next workday's start-of-shift (used as
+        // OOF.end). For non-workdays we leave todayEnd at zero — the
+        // trigger's weekDays filter means the action never fires there.
+        var todayEndH = new int[7];
+        var todayEndM = new int[7];
         var hopDays = new int[7];
-        for (int i = 0; i < 7; i++)
+        var nextStartH = new int[7];
+        var nextStartM = new int[7];
+        for (int dow = 0; dow < 7; dow++)
         {
-            var day = (DayOfWeek)i;
-            // From this day, walk forward until we hit a workday.
+            var day = (DayOfWeek)dow;
+            if (schedule.IsWorkday(day))
+            {
+                var end = schedule.GetEnd(day);
+                todayEndH[dow] = end.Hours;
+                todayEndM[dow] = end.Minutes;
+            }
             for (int hop = 1; hop <= 7; hop++)
             {
-                var candidate = (DayOfWeek)(((int)day + hop) % 7);
+                var candidate = (DayOfWeek)((dow + hop) % 7);
                 if (schedule.IsWorkday(candidate))
                 {
-                    hopDays[i] = hop;
+                    hopDays[dow] = hop;
+                    var start = schedule.GetStart(candidate);
+                    nextStartH[dow] = start.Hours;
+                    nextStartM[dow] = start.Minutes;
                     break;
                 }
             }
         }
 
-        // The Power Automate expression switches on dayOfWeek(utcNow())
-        // (Sun=0..Sat=6) and adds the right number of days to today's start,
-        // then offsets to the work-start hour:minute. Wrapping in
-        // formatDateTime keeps the field happy as an ISO string.
-        var endTimeExpression = BuildEndTimeExpression(hopDays, endHour, endMinute, tzId);
-        var startTimeExpression = BuildStartTimeExpression(tzId);
+        // Both expressions share the same shape:
+        //   addDays(localToday, hop[dow]) + hour[dow] + minute[dow]
+        // Start uses hop=0 (today) + today's end-of-shift; End uses hopDays
+        // + the next workday's start-of-shift. The action's Time Zone field
+        // is set to tzId so Power Automate sends the right absolute moment.
+        var hopZero = new int[7];
+        var startTimeExpression = BuildPerDowTimestampExpression(hopZero, todayEndH, todayEndM, tzId);
+        var endTimeExpression = BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId);
 
         var internalEsc = Escape(internalReply);
         var externalEsc = Escape(externalReply);
         var userEsc = Escape(userEmail);
         var audienceLabel = externalAudienceAll ? "All" : "Known (contacts only)";
         var weeklySummary = BuildWeeklyScheduleSummary(schedule);
-        var hasPerDayVariation = HasPerDayVariation(schedule);
 
         var sb = new StringBuilder(8192);
         sb.Append(@"<!DOCTYPE html>
@@ -193,17 +202,7 @@ public static class CloudSyncGuideGenerator
     <div class=""field""><span class=""label"">Weekly schedule</span><span class=""value"">");
         sb.Append(weeklySummary);
         sb.Append(@"</span></div>
-  </div>");
-
-        if (hasPerDayVariation)
-        {
-            sb.Append(@"
-  <div class=""callout"">
-    <strong>Heads up:</strong> Your work hours vary by day. The default flow uses your earliest end-of-work time as the trigger and your latest start-of-work time as the resume time, which gives a conservative window that covers every workday. If you want exact per-day boundaries, see the <em>Customize per day</em> section near the bottom of this page.
-  </div>");
-        }
-
-        sb.Append(@"
+  </div>
 
   <h2>Step-by-step</h2>
 
@@ -326,21 +325,6 @@ public static class CloudSyncGuideGenerator
     <p>You can keep using OofManager as before. The local app and the cloud flow update the same Outlook auto-reply settings, so whoever runs last wins &mdash; and they all compute the same window from the same schedule, so the result is consistent.</p>
   </div>
 
-  <h2>Customize per day (optional)</h2>
-  <div class=""card"">
-    <p>If your work hours vary significantly across days, you can replace the End Time expression with a per-day version. The expression below is what OofManager generated for your current schedule &mdash; the numbers in the <code>switch</code> are how many days from each weekday until the next configured workday.</p>
-    <div class=""copy-row"">
-      <pre>");
-        sb.Append(Escape(endTimeExpression));
-        sb.Append(@"</pre>
-      <button class=""copy"" data-target=""custom"">Copy</button>
-    </div>
-    <textarea id=""custom"" style=""display:none"">");
-        sb.Append(Escape(endTimeExpression));
-        sb.Append(@"</textarea>
-    <p style=""margin-top:12px""><em>To regenerate this expression after editing your schedule in OofManager, click <strong>Generate cloud sync setup guide</strong> again in the app.</em></p>
-  </div>
-
   <div class=""footer"">Generated ");
         sb.Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
         sb.Append(@" by OofManager. This file is regenerated every time you click the button &mdash; it's safe to delete after setup.</div>
@@ -380,57 +364,37 @@ public static class CloudSyncGuideGenerator
         return earliest ?? new TimeSpan(17, 30, 0);
     }
 
-    private static TimeSpan ComputeRepresentativeStart(WorkScheduleSnapshot s)
+    /// <summary>
+    /// Power Automate's <c>dayOfWeek</c> returns 0..6 with Sunday=0 (matching
+    /// .NET <see cref="DayOfWeek"/>). We emit nested-if chains that look up
+    /// <paramref name="hopByDow"/>, <paramref name="hourByDow"/>, and
+    /// <paramref name="minuteByDow"/> by today's local-tz day-of-week, then
+    /// build <c>addDays + addHours + addMinutes</c> on top of local midnight
+    /// and serialise as ISO. Used for both the OOF Start (hop=0, today's
+    /// end-of-shift) and OOF End (hop+next-workday's start-of-shift) fields,
+    /// so per-day variation in either start or end is honored.
+    /// </summary>
+    private static string BuildPerDowTimestampExpression(int[] hopByDow, int[] hourByDow, int[] minuteByDow, string tzId)
     {
-        TimeSpan? latest = null;
-        foreach (var d in WeekDays)
-        {
-            if (!s.IsWorkday(d)) continue;
-            var v = s.GetStart(d);
-            if (latest == null || v > latest.Value) latest = v;
-        }
-        return latest ?? new TimeSpan(9, 0, 0);
+        // Use the local-tz timestamp for dayOfWeek so the lookup index is
+        // correct around midnight in negative-offset zones.
+        var localDow = $"dayOfWeek(convertFromUtc(utcNow(), '{tzId}'))";
+        var localToday = $"startOfDay(convertFromUtc(utcNow(), '{tzId}'))";
+        var hopExpr = BuildPerDowLookup(hopByDow, localDow);
+        var hourExpr = BuildPerDowLookup(hourByDow, localDow);
+        var minuteExpr = BuildPerDowLookup(minuteByDow, localDow);
+        return $"formatDateTime(addMinutes(addHours(addDays({localToday}, {hopExpr}), {hourExpr}), {minuteExpr}), 'yyyy-MM-ddTHH:mm:ss')";
     }
 
-    /// <summary>
-    /// Power Automate's <c>dayOfWeek</c> returns 0..6 with Sunday=0. We emit a
-    /// nested <c>if</c> chain that maps each weekday to the right number of
-    /// days to skip ahead to the next configured workday, then offsets to the
-    /// work-start hour and serialises as ISO. The result is correct for the
-    /// user's per-day workday config (e.g. Fri jumps 3 days to Monday for a
-    /// classic Mon–Fri schedule).
-    /// </summary>
-    private static string BuildEndTimeExpression(int[] hopDays, int hour, int minute, string tzId)
+    private static string BuildPerDowLookup(int[] table, string dowExpr)
     {
-        // Build: if(equals(dow,0), 1, if(equals(dow,1), 1, if(... )))
-        // where each number is hopDays[i] for that day-of-week index.
+        // Nested-if chain: if(dow=0, table[0], if(dow=1, table[1], ... table[6]))
         var sb = new StringBuilder();
         for (int i = 0; i < 6; i++)
-        {
-            sb.Append("if(equals(dayOfWeek(utcNow()),").Append(i).Append("),").Append(hopDays[i]).Append(',');
-        }
-        sb.Append(hopDays[6]);
+            sb.Append("if(equals(").Append(dowExpr).Append(',').Append(i).Append("),").Append(table[i]).Append(',');
+        sb.Append(table[6]);
         for (int i = 0; i < 6; i++) sb.Append(')');
-
-        var hopExpression = sb.ToString();
-
-        // convertFromUtc(utcNow(), 'TZ') gives "now" in the user's local wall
-        // clock; startOfDay anchors at local midnight. Add hopDays to land on
-        // the next configured workday, then offset to the work-start hour.
-        // The action's Time Zone field is set to the same TZ so Power Automate
-        // sends the right absolute moment to Graph / Outlook.
-        var localToday = $"startOfDay(convertFromUtc(utcNow(), '{tzId}'))";
-        var full = $"formatDateTime(addMinutes(addHours(addDays({localToday}, {hopExpression}), {hour}), {minute}), 'yyyy-MM-ddTHH:mm:ss')";
-        return full;
-    }
-
-    /// <summary>
-    /// Start-time expression: "now" expressed in the user's local TZ so the
-    /// action's Time Zone field interprets it as the same wall-clock instant.
-    /// </summary>
-    private static string BuildStartTimeExpression(string tzId)
-    {
-        return $"formatDateTime(convertFromUtc(utcNow(), '{tzId}'), 'yyyy-MM-ddTHH:mm:ss')";
+        return sb.ToString();
     }
 
     private static string BuildWeeklyScheduleSummary(WorkScheduleSnapshot s)
@@ -467,18 +431,6 @@ public static class CloudSyncGuideGenerator
         DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
         DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
     };
-
-    private static bool HasPerDayVariation(WorkScheduleSnapshot s)
-    {
-        TimeSpan? start = null, end = null;
-        foreach (var d in WeekDays)
-        {
-            if (!s.IsWorkday(d)) continue;
-            if (start == null) { start = s.GetStart(d); end = s.GetEnd(d); continue; }
-            if (s.GetStart(d) != start.Value || s.GetEnd(d) != end!.Value) return true;
-        }
-        return false;
-    }
 
     private static string Escape(string s) => string.IsNullOrEmpty(s) ? string.Empty : WebUtility.HtmlEncode(s);
 

@@ -1,10 +1,18 @@
 namespace OofManager.Wpf.Services;
 
+public enum DialogChoice
+{
+    Primary,
+    Secondary,
+    Cancel,
+}
+
 public interface IDialogService
 {
     Task<bool> ConfirmAsync(string title, string message, string accept = "OK", string cancel = "Cancel");
     Task AlertAsync(string title, string message, string close = "OK");
     Task<string?> PromptAsync(string title, string message, string accept = "OK", string cancel = "Cancel", string? placeholder = null);
+    Task<DialogChoice> ChoiceAsync(string title, string message, string primary, string secondary, string cancel);
 }
 
 public interface INavigationService

@@ -102,49 +102,44 @@
 
                     <StackPanel Margin="0">
                         <TextBlock Text="Out of Office" FontSize="22" FontWeight="Bold"/>
-                        <TextBlock Text="{Binding CurrentStatus, Converter={StaticResource OofStatusToText}}"
-                                   FontSize="18" FontWeight="SemiBold" Opacity="0.85" Margin="0,4,0,0"/>
-                        <!-- Sub-caption explains who's currently in charge of the
-                             toggle, so the user can tell at a glance whether
-                             they need to flip it themselves or whether the
-                             schedule will do it. -->
-                        <TextBlock FontSize="12" Opacity="0.65" Margin="0,4,0,0"
-                                   TextWrapping="Wrap">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Text" Value="Manual control — flip the switch and click Save Now to push the new state and your reply messages to Outlook."/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsWorkScheduleEnabled}" Value="True">
-                                            <Setter Property="Text" Value="Auto-managed by Work Schedule below. Turn that off if you want manual control."/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
+                        <!-- Sub-caption is the single source of "what mode am
+                             I in / what will my action do?" The bold status
+                             line that used to live here ("Disabled / Enabled
+                             / Scheduled") was redundant with the switch on
+                             the right, so it's been folded into this caption
+                             which already says everything users actually need. -->
+                        <TextBlock Text="{Binding OofCardSubtitle}"
+                                   FontSize="12" Opacity="0.65" Margin="0,6,0,0"
+                                   TextWrapping="Wrap"/>
                     </StackPanel>
 
                     <!-- Toggle: disabled (read-only state indicator) when the
-                         Work Schedule is in charge, fully interactive when it
-                         isn't. The bound value still reflects the current OOF
-                         state in both modes. -->
+                         Work Schedule is in charge AND Auto-sync is on. When
+                         Auto-sync is off the user is in manual control even
+                         if the schedule rule is technically enabled, so the
+                         toggle becomes interactive again. -->
                     <ui:ToggleSwitch Grid.Column="1"
                                      IsOn="{Binding IsOofEnabled, Mode=TwoWay}"
-                                     IsEnabled="{Binding IsWorkScheduleEnabled, Converter={StaticResource InvertBool}}"
+                                     IsEnabled="{Binding IsOofAutoManaged, Converter={StaticResource InvertBool}}"
                                      VerticalAlignment="Center"/>
 
-                    <!-- Save Now button only appears in manual mode; in
-                         scheduled mode the auto-loop pushes the state for
-                         the user, so a manual button would just be misleading. -->
+                    <!-- "Update reply messages" appears only when (a) the
+                         user is in manual mode AND (b) they've edited the
+                         reply text since the last commit. The OOF on/off
+                         toggle to the right of this card now auto-commits
+                         the moment the user flips it, so this button no
+                         longer carries the state-flip role — its only job
+                         is to push edited reply bodies up to Exchange. -->
                     <Button Grid.Row="1" Grid.ColumnSpan="2"
-                            Content="⚡ Save Now"
+                            Content="💾 Update reply messages"
                             Command="{Binding QuickToggleCommand}"
                             Style="{StaticResource AccentButtonStyle}"
                             Height="44"
                             HorizontalAlignment="Stretch"
                             HorizontalContentAlignment="Center"
                             Margin="0,12,0,0"
-                            ToolTip="Push the current OOF on/off toggle, your reply messages, and the external-audience choice to Outlook right now."
-                            Visibility="{Binding IsWorkScheduleEnabled, Converter={StaticResource InvertBoolToVisibility}}"/>
+                            ToolTip="Push your edited reply messages (and the external-audience choice) to Outlook. The on/off toggle commits on its own as soon as you flip it."
+                            Visibility="{Binding CanShowSaveNow, Converter={StaticResource BoolToVisibility}}"/>
                 </Grid>
             </Border>
 
@@ -263,12 +258,6 @@
                             </Grid>
                         </Grid>
 
-                        <CheckBox IsChecked="{Binding DeclineMeetingsDuringVacation, Mode=TwoWay}"
-                                  Content="📅 Auto-decline new meeting invitations during this vacation"
-                                  FontSize="12"
-                                  Margin="0,12,0,0"
-                                  ToolTip="When on, Exchange auto-declines any new meeting invitations whose proposed time falls inside the vacation window. Meetings already on your calendar are NOT cancelled — only new invites that arrive while you're away."/>
-
                         <!-- Cloud-sync interaction warning. The Power Automate
                              flow runs independently of this app, so it will
                              keep overwriting our long vacation window with
@@ -315,30 +304,58 @@
                         <StackPanel Margin="0">
                             <TextBlock Text="🗓️ Work Schedule" FontSize="16" FontWeight="Bold"/>
                             <TextBlock Text="{Binding WorkScheduleStatus}" FontSize="12" Opacity="0.65" Margin="0,4,0,0"/>
+                            <!-- One-line explainer for the toggle: doubles as the "what does this
+                                 switch actually do?" answer, since flipping it now both saves the
+                                 grid and pushes the result straight to Outlook. -->
+                            <TextBlock FontSize="12" Opacity="0.65" Margin="0,4,0,0"
+                                       TextWrapping="Wrap"
+                                       Text="Flip on to enable auto-managed mode. The schedule is pushed to Outlook only when you click ⚡ Sync now, enable Auto-refresh, or save grid edits. Flip off and OOF Manager finalizes the mailbox once: inside work hours → OOF off; outside work hours → OOF stays on indefinitely until you turn it off in Outlook."/>
+                            <!-- Sub-row: Auto-refresh checkbox + manual sync button side-by-side.
+                                 The checkbox gates the 5-min background ticker (off by default, so
+                                 nothing mutates the mailbox without an explicit gesture). The
+                                 button is the explicit gesture for users who don't want the ticker
+                                 but still need today's off-hours window pushed to Outlook. Hidden
+                                 as a unit when Work Schedule is off — they only matter under the
+                                 auto-managed gate. -->
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="{Binding IsWorkScheduleEnabled, Converter={StaticResource BoolToVisibility}}"/>
+                                    </Style>
+                                </StackPanel.Style>
+                                <CheckBox FontSize="12" VerticalAlignment="Center"
+                                          IsChecked="{Binding IsAutoRefreshEnabled, Mode=TwoWay}"
+                                          Content="🔄 Auto-refresh every 5 minutes (rolls the window forward day-by-day)"
+                                          ToolTip="When checked, OOF Manager re-pushes the next off-hours window to Outlook on every 5-minute tick so the schedule rolls forward indefinitely. When unchecked, the schedule is applied only when you click ⚡ Sync now or save grid edits."/>
+                                <Button Margin="12,0,0,0" Padding="10,4" FontSize="12"
+                                        Content="⚡ Sync now"
+                                        Command="{Binding SyncNowCommand}"
+                                        VerticalAlignment="Center"
+                                        ToolTip="Push the current schedule grid to Outlook right now — pre-loads the next off-hours window so the mailbox auto-flips at the boundary even without Auto-refresh."/>
+                            </StackPanel>
                         </StackPanel>
                         <ui:ToggleSwitch Grid.Column="1"
-                                         IsOn="{Binding IsWorkScheduleEnabled, Mode=TwoWay}"/>
+                                         IsOn="{Binding IsWorkScheduleEnabled, Mode=TwoWay}"
+                                         VerticalAlignment="Center"/>
                     </Grid>
 
-                    <CheckBox IsChecked="{Binding IsAutoSyncEnabled, Mode=TwoWay}"
-                              Content="🔄 Keep Outlook in sync automatically (recommended — works even when this app is closed)"
-                              FontSize="12"
-                              Margin="0,8,0,12"
-                              ToolTip="When on, the next off-hours window is pushed to Outlook on every schedule check, so the server toggles OOF on/off even if this app isn't running."/>
-
-                    <!-- Cloud sync setup. The local auto-sync above only works when this PC is on
+                    <!-- Cloud sync setup. The local auto-toggle above only works when this PC is on
                          (with the app or its background scheduled task running). For users who want
                          their OOF window to keep advancing even when ALL their computers are off,
                          the buttons below set up a Power Automate flow inside their M365 account.
                          "Download package" creates a one-click .zip the user uploads to Power
                          Automate; "Manual setup" generates a step-by-step HTML guide as a fallback
                          for tenants where legacy package import is disabled.
-                         Wrapped in an Expander (collapsed by default) so users who don't need
-                         cloud sync don't see the buttons every time. -->
-                    <Expander Header="☁️ Always-on cloud schedule (Power Automate)"
-                              IsExpanded="False"
-                              Margin="0,0,0,12">
-                        <StackPanel Margin="0,8,0,0">
+                         Shown inline (not in an Expander) because this is the only feature that
+                         keeps OOF rolling forward with every device powered down — burying it
+                         behind a collapsed header made users miss it. -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0"
+                            Margin="0,0,0,12">
+                        <StackPanel Margin="0">
+                            <TextBlock Text="☁️ Always-on cloud schedule (Power Automate)"
+                                       FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
                             <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
                                        FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
                             <!-- Primary CTA: generate the package. Manual
@@ -355,12 +372,8 @@
                                     package import blocked? open manual setup guide
                                 </Hyperlink>
                             </TextBlock>
-                            <CheckBox Content="Generate as managed solution (recommended; flow can't be edited in the cloud designer)"
-                                      IsChecked="{Binding GenerateManagedCloudSolution}"
-                                      Margin="0,8,0,0" FontSize="11"
-                                      ToolTip="Managed: cleaner uninstall, future regenerations stay turned on automatically, but flow can't be edited in the cloud designer (regenerate from this app to make changes). Unmanaged: editable in the cloud designer, but every regeneration requires the flow to be manually turned on again. In both cases the very first import lands the flow in the Off state — click Turn On once after the connection is bound."/>
                         </StackPanel>
-                    </Expander>
+                    </Border>
 
                     <!-- Weekly hours editor laid out horizontally: 1 label
                          column + 7 day columns × 4 rows (day name, Off Work
@@ -434,46 +447,32 @@
                         <ComboBox Grid.Row="3" Grid.Column="8" Style="{StaticResource TimePickerComboStyle}" IsEditable="True" IsTextSearchEnabled="True" ItemsSource="{Binding WorkTimeOptions}" IsEnabled="{Binding IsSundayWorkday}"    Text="{Binding SundayEndTime,    Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" HorizontalAlignment="Stretch" Margin="2,4,2,0"/>
                     </Grid>
 
-                    <!-- Single adaptive Apply button. When the schedule grid
-                         has been edited it acts as Save (which already pushes
-                         to Outlook); when nothing is unsaved it re-pushes the
-                         current schedule with the latest reply text. The old
-                         two-button Save / Sync row was a 50/50 split where the
-                         Sync side was only useful for "I changed reply text
-                         only" — same UX in one button, fewer choices to make. -->
-                    <Button Margin="0,16,0,0"
-                            Height="40" HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center">
+                    <!-- Small \"Save changes\" button. Only surfaces after the user edits the
+                         grid (workday checkboxes, start/end times). The Work Schedule toggle
+                         above auto-commits on flip, so it covers the on/off path; this button
+                         exists solely to push pending grid edits without forcing the user to
+                         toggle off-and-on. Hidden when nothing's pending so the card stays
+                         visually quiet during normal use. -->
+                    <Button Margin="0,12,0,0"
+                            Padding="14,6"
+                            HorizontalAlignment="Right"
+                            Content="💾 Save changes"
+                            Command="{Binding SaveWorkScheduleCommand}"
+                            ToolTip="Save the edited work schedule and immediately push the next off-hours window to Outlook so the rule reflects your latest grid edits.">
                         <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
-                                <Setter Property="Command" Value="{Binding SyncNowCommand}"/>
-                                <Setter Property="ToolTip" Value="Re-evaluate the schedule right now and push the next off-hours window to Outlook — includes your latest reply messages and external-audience choice. Use this after editing a reply in Schedule mode."/>
-                                <!-- Only relevant when the Work Schedule rule is
-                                     actually running. In manual mode the OOF
-                                     card's Save Now button already covers the
-                                     push, so duplicating it here would just
-                                     compete for attention. -->
-                                <Setter Property="Visibility" Value="{Binding IsWorkScheduleEnabled, Converter={StaticResource BoolToVisibility}}"/>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Setter Property="Visibility" Value="Collapsed"/>
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding HasUnsavedScheduleChanges}" Value="True">
-                                        <Setter Property="Command" Value="{Binding SaveWorkScheduleCommand}"/>
-                                        <Setter Property="ToolTip" Value="Save the recurring work schedule above and immediately push the next off-hours window to Outlook so auto-sync stays consistent with the new rule."/>
-                                    </DataTrigger>
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding HasUnsavedScheduleChanges}" Value="True"/>
+                                            <Condition Binding="{Binding IsWorkScheduleEnabled}" Value="True"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </MultiDataTrigger>
                                 </Style.Triggers>
                             </Style>
                         </Button.Style>
-                        <TextBlock>
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Setter Property="Text" Value="⚡ Apply to Outlook"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding HasUnsavedScheduleChanges}" Value="True">
-                                            <Setter Property="Text" Value="💾 Save &amp; Apply"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
                     </Button>
                 </StackPanel>
             </Border>
@@ -515,49 +514,8 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
                         <TextBlock Grid.Row="0" Text="🌐 External Reply" FontSize="16" FontWeight="Bold"/>
-                        <StackPanel Grid.Row="1" Margin="0,4,0,8">
-                            <TextBlock Text="Sent to contacts outside your organization" FontSize="12" Opacity="0.6"/>
-                            <!-- Toggle on its own line so the dual-label
-                                 framing has room to breathe (the switch + two
-                                 labels together are too wide to share a row
-                                 with the subtitle). -->
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
-                                        ToolTip="Right (anyone outside): any external sender, including strangers and spammers, gets the reply.&#x0a;Left (my contacts only): only people in your Contacts get the reply, which avoids spam validation and reduces phishing exposure.">
-                                <TextBlock Text="my contacts only" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Opacity" Value="1.0"/>
-                                            <Setter Property="FontWeight" Value="SemiBold"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ExternalAudienceAll}" Value="True">
-                                                    <Setter Property="Opacity" Value="0.45"/>
-                                                    <Setter Property="FontWeight" Value="Normal"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <ui:ToggleSwitch IsOn="{Binding ExternalAudienceAll, Mode=TwoWay}"
-                                                 OnContent="" OffContent=""
-                                                 MinWidth="0"
-                                                 Width="44"
-                                                 Padding="0"/>
-                                <TextBlock Text="anyone outside" FontSize="12" VerticalAlignment="Center" Margin="8,0,0,0">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Opacity" Value="0.45"/>
-                                            <Setter Property="FontWeight" Value="Normal"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding ExternalAudienceAll}" Value="True">
-                                                    <Setter Property="Opacity" Value="1.0"/>
-                                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </StackPanel>
-                        </StackPanel>
+                        <TextBlock Grid.Row="1" Text="Sent to anyone outside your organization" FontSize="12" Opacity="0.6"
+                                   VerticalAlignment="Center" Margin="0,4,0,8"/>
                         <TextBox Grid.Row="2"
                                  Text="{Binding ExternalReply, UpdateSourceTrigger=PropertyChanged}"
                                  Height="180"

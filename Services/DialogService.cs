@@ -30,6 +30,26 @@ public class DialogService : IDialogService
         await dlg.ShowAsync();
     }
 
+    public async Task<DialogChoice> ChoiceAsync(string title, string message, string primary, string secondary, string cancel)
+    {
+        var dlg = new ContentDialog
+        {
+            Title = title,
+            Content = message,
+            PrimaryButtonText = primary,
+            SecondaryButtonText = secondary,
+            CloseButtonText = cancel,
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        var result = await dlg.ShowAsync();
+        return result switch
+        {
+            ContentDialogResult.Primary => DialogChoice.Primary,
+            ContentDialogResult.Secondary => DialogChoice.Secondary,
+            _ => DialogChoice.Cancel,
+        };
+    }
+
     public async Task<string?> PromptAsync(string title, string message, string accept = "OK", string cancel = "Cancel", string? placeholder = null)
     {
         var stack = new System.Windows.Controls.StackPanel();

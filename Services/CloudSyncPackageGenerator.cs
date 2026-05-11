@@ -112,8 +112,11 @@ public static class CloudSyncPackageGenerator
         var identity = BuildIdentity(userEmail);
 
         var tzId = TimeZoneInfo.Local.Id;
+        // Trigger fires at the earliest end-of-shift across all workdays.
+        // Days with a later end (e.g. Fri 18:00 on a Mon-Thu 17:30 / Fri 18:00
+        // schedule) get a future-dated OOF window that activates at their
+        // actual end-of-shift, computed in the action body via per-dow lookup.
         var triggerEnd = ComputeRepresentativeEnd(schedule);
-        var workStart = ComputeRepresentativeStart(schedule);
 
         var weekDays = new[]
         {
@@ -124,21 +127,51 @@ public static class CloudSyncPackageGenerator
             .Select(d => d.ToString())
             .ToArray();
 
-        // Per-day-of-week hop count (today → next configured workday).
-        // Used by the End-time expression so e.g. Friday OOF runs through
-        // Monday morning on a Mon–Fri schedule.
+        // Per-day-of-week lookup tables, indexed by Power Automate's
+        // dayOfWeek (0=Sunday..6=Saturday — same as .NET DayOfWeek).
+        // Today's actual end-of-shift hour:minute (used as OOF.start so days
+        // with a later end-of-shift than the trigger get the correct start
+        // timestamp), plus the hop-count and start-time of the next workday
+        // (used as OOF.end so a Friday OOF runs through Monday morning even
+        // when Mon's start-of-shift differs from Tue's).
+        var todayEndH = new int[7];
+        var todayEndM = new int[7];
         var hopDays = new int[7];
-        for (int i = 0; i < 7; i++)
+        var nextStartH = new int[7];
+        var nextStartM = new int[7];
+        for (int dow = 0; dow < 7; dow++)
         {
+            var day = (DayOfWeek)dow;
+            if (schedule.IsWorkday(day))
+            {
+                var end = schedule.GetEnd(day);
+                todayEndH[dow] = end.Hours;
+                todayEndM[dow] = end.Minutes;
+            }
+            // Non-workdays leave todayEnd at 0; the trigger's weekDays filter
+            // means the action never fires on them anyway.
             for (int hop = 1; hop <= 7; hop++)
             {
-                var candidate = (DayOfWeek)(((int)(DayOfWeek)i + hop) % 7);
-                if (schedule.IsWorkday(candidate)) { hopDays[i] = hop; break; }
+                var candidate = (DayOfWeek)((dow + hop) % 7);
+                if (schedule.IsWorkday(candidate))
+                {
+                    hopDays[dow] = hop;
+                    var start = schedule.GetStart(candidate);
+                    nextStartH[dow] = start.Hours;
+                    nextStartM[dow] = start.Minutes;
+                    break;
+                }
             }
         }
 
-        var startExpr = $"@{{formatDateTime(convertFromUtc(utcNow(), '{tzId}'), 'yyyy-MM-ddTHH:mm:ss')}}";
-        var endExpr = $"@{{{BuildEndTimeExpression(hopDays, workStart.Hours, workStart.Minutes, tzId)}}}";
+        // Both expressions use the same shape:
+        //   addDays(localToday, hopDays[dow]) + hour[dow] + minute[dow]
+        // For start, hopDays is all-zeros (= today). For end, hopDays jumps
+        // ahead to the next configured workday and we pick up that day's
+        // start-of-shift.
+        var hopZero = new int[7];
+        var startExpr = $"@{{{BuildPerDowTimestampExpression(hopZero, todayEndH, todayEndM, tzId)}}}";
+        var endExpr = $"@{{{BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId)}}}";
 
         var workflowJson = BuildWorkflowFileJson(
             identity: identity,
@@ -513,17 +546,29 @@ public static class CloudSyncPackageGenerator
 ";
     }
 
-    private static string BuildEndTimeExpression(int[] hopDays, int hour, int minute, string tzId)
+    private static string BuildPerDowTimestampExpression(int[] hopByDow, int[] hourByDow, int[] minuteByDow, string tzId)
     {
+        // dayOfWeek operates on a string timestamp; feeding it the local-tz
+        // string (vs. utcNow()) keeps the index correct around midnight in
+        // negative-offset zones, and matches the day boundary the recurrence
+        // trigger itself uses.
+        var localDow = $"dayOfWeek(convertFromUtc(utcNow(), '{tzId}'))";
+        var localToday = $"startOfDay(convertFromUtc(utcNow(), '{tzId}'))";
+        var hopExpr = BuildPerDowLookup(hopByDow, localDow);
+        var hourExpr = BuildPerDowLookup(hourByDow, localDow);
+        var minuteExpr = BuildPerDowLookup(minuteByDow, localDow);
+        return $"formatDateTime(addMinutes(addHours(addDays({localToday}, {hopExpr}), {hourExpr}), {minuteExpr}), 'yyyy-MM-ddTHH:mm:ss')";
+    }
+
+    private static string BuildPerDowLookup(int[] table, string dowExpr)
+    {
+        // Nested-if chain: if(dow=0, table[0], if(dow=1, table[1], ... table[6]))
         var sb = new StringBuilder();
         for (int i = 0; i < 6; i++)
-            sb.Append("if(equals(dayOfWeek(utcNow()),").Append(i).Append("),").Append(hopDays[i]).Append(',');
-        sb.Append(hopDays[6]);
+            sb.Append("if(equals(").Append(dowExpr).Append(',').Append(i).Append("),").Append(table[i]).Append(',');
+        sb.Append(table[6]);
         for (int i = 0; i < 6; i++) sb.Append(')');
-        var hop = sb.ToString();
-
-        var localToday = $"startOfDay(convertFromUtc(utcNow(), '{tzId}'))";
-        return $"formatDateTime(addMinutes(addHours(addDays({localToday}, {hop}), {hour}), {minute}), 'yyyy-MM-ddTHH:mm:ss')";
+        return sb.ToString();
     }
 
     private static TimeSpan ComputeRepresentativeEnd(WorkScheduleSnapshot s)
@@ -536,18 +581,6 @@ public static class CloudSyncPackageGenerator
             if (earliest == null || e < earliest.Value) earliest = e;
         }
         return earliest ?? new TimeSpan(17, 30, 0);
-    }
-
-    private static TimeSpan ComputeRepresentativeStart(WorkScheduleSnapshot s)
-    {
-        TimeSpan? latest = null;
-        foreach (DayOfWeek d in Enum.GetValues(typeof(DayOfWeek)))
-        {
-            if (!s.IsWorkday(d)) continue;
-            var v = s.GetStart(d);
-            if (latest == null || v > latest.Value) latest = v;
-        }
-        return latest ?? new TimeSpan(9, 0, 0);
     }
 
     private static string BuildReadme(string userEmail, CloudSyncIdentity identity)
