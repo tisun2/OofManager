@@ -34,9 +34,15 @@ public partial class MainViewModel : ObservableObject
     private string _committedExternalReply = string.Empty;
     // Last OOF status pushed to / loaded from the server, kept in lock-step
     // with _committedInternalReply / _committedExternalReply. Drives the
-    // "Save Now" button's visibility — we only surface it when there's a
+    // "Update reply messages" button's visibility — we only surface it when there's a
     // pending change the user actually needs to push.
     private OofStatus _committedStatus = OofStatus.Disabled;
+    // Server-confirmed OOF state for the persistent top status bar. The
+    // Manual-mode toggle can now diverge locally until Sync now / Auto-sync
+    // pushes it, so the top line must not be derived from IsOofEnabled.
+    private OofStatus _confirmedOofStatus = OofStatus.Disabled;
+    private DateTimeOffset? _confirmedOofStartTime;
+    private DateTimeOffset? _confirmedOofEndTime;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -45,7 +51,13 @@ public partial class MainViewModel : ObservableObject
     private bool _suppressOofToggleCommit;
 
     [ObservableProperty] private bool _isBusy;
+    // Operation/status feedback for button-driven work (Sync now, package
+    // generation, save failures, etc.). This is shown inside the OOF Sync
+    // card, not in the persistent top status bar.
     [ObservableProperty] private string _statusMessage = string.Empty;
+    // Persistent top status bar: always describes the real/current OOF state
+    // plus the next known OOF window, never transient button progress.
+    [ObservableProperty] private string _oofStatusBarMessage = "Loading OOF status...";
     [ObservableProperty] private OofStatus _currentStatus = OofStatus.Disabled;
     [ObservableProperty] private bool _isOofEnabled;
     [ObservableProperty] private bool _isScheduled;
@@ -65,12 +77,32 @@ public partial class MainViewModel : ObservableObject
     /// <summary>
     /// True when OOF Manager is currently allowed to drive the OOF state for
     /// the user (the Work Schedule rule is on). When false, the OOF on/off
-    /// toggle and the Save Now button on the OOF card are interactive again
+    /// toggle and the reply-update button on the OOF card are interactive again
     /// because the user is in manual control. Kept as a separate property so
     /// the XAML doesn't have to bind directly to <see cref="IsWorkScheduleEnabled"/>
     /// — the two names communicate intent at different cards.
     /// </summary>
     public bool IsOofAutoManaged => IsWorkScheduleEnabled;
+
+    /// <summary>
+    /// Mode selector for the segmented control on the Sync card. The two
+    /// proxies are kept symmetric so each RadioButton can two-way bind to
+    /// its own property without fighting the GroupName mechanism. Both
+    /// route through <see cref="IsWorkScheduleEnabled"/> so persistence,
+    /// auto-managed gating, and the existing partial-changed handler keep
+    /// a single source of truth.
+    /// </summary>
+    public bool IsScheduleMode
+    {
+        get => IsWorkScheduleEnabled;
+        set { if (value != IsWorkScheduleEnabled) IsWorkScheduleEnabled = value; }
+    }
+    public bool IsManualMode
+    {
+        get => !IsWorkScheduleEnabled;
+        set { if (value && IsWorkScheduleEnabled) IsWorkScheduleEnabled = false; }
+    }
+
     // Set to true around any programmatic mutation of IsWorkScheduleEnabled
     // (initial prefs load, error rollback) so the partial setter's auto-
     // commit path doesn't kick a fresh Apply against Exchange when we're
@@ -79,36 +111,60 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// True when the user has edited a reply message since the last successful
-    /// Save. The toggle itself auto-commits the moment the user flips it, so
-    /// switch state no longer needs to participate in the dirty calculation —
-    /// only reply-text edits do, which is the one thing the Save Now button
-    /// still exists for.
+    /// save. The OOF switch is intentionally deferred to Sync now / Auto-sync,
+    /// so this dirty flag remains reply-text-only for the separate
+    /// "Update reply messages" button.
     /// </summary>
     public bool HasUnsavedOofChanges => HasUnsavedReplyChanges();
 
     /// <summary>
-    /// Final gate for the "Save Now" button: we only show it in manual mode
+    /// Final gate for the "Update reply messages" button: we only show it in manual mode
     /// AND only when there's a pending change. In auto-managed mode (Work
     /// Schedule + Auto-sync both on) the automation loop owns OOF state, so
-    /// a manual Save Now button would create a fight-with-itself UX.
+    /// a manual reply-update button would create a fight-with-itself UX.
     /// </summary>
     public bool CanShowSaveNow => !IsOofAutoManaged && HasUnsavedOofChanges;
+
+    public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
+
+    /// <summary>
+    /// The vacation checkbox can only be turned on while OOF itself is on.
+    /// Keep it enabled for already-planned/already-active vacations so the
+    /// user can still uncheck and sync to clear them.
+    /// </summary>
+    public bool CanToggleVacationWindow => IsOofEnabled || IsVacationWindowActive || IsOnLongVacation;
 
     /// <summary>
     /// Caption shown under the OOF card title. Replaces the old
     /// "Enabled / Disabled / Scheduled" subtitle (which duplicated the
     /// switch on its right) with a single contextual hint that tells the
-    /// user what the switch — and Save Now — will actually do right now.
+    /// user what the switch and sync controls will actually do right now.
     /// </summary>
     public string OofCardSubtitle
     {
         get
         {
             if (IsOofAutoManaged)
-                return "Auto-managed by Work Schedule below. Turn it off if you want manual control.";
+                return "Auto-managed by Schedule mode below. Switch to Manual mode if you want to flip OOF yourself.";
             if (CurrentStatus == OofStatus.Scheduled)
-                return "Currently in a scheduled window. Flip the switch to override with a manual on/off, then click Save Now.";
-            return "Manual control — flip the switch and click Save Now to push the new state and your reply messages to Outlook.";
+                return "Currently in a scheduled window. Flip the switch to choose a manual on/off state, then click ⚡ Sync now or enable Auto-sync to push it.";
+            return "Manual control — flip the switch locally, then click ⚡ Sync now or enable Auto-sync to push the new state to Outlook.";
+        }
+    }
+
+    /// <summary>
+    /// Caption shown under the Sync card title. Tells the user what the
+    /// shared Auto-sync checkbox and ⚡ Sync now button will actually do in
+    /// the currently-selected mode, so they don't have to guess whether
+    /// "sync" means "push the schedule" or "push my manual state".
+    /// </summary>
+    public string SyncCardSubtitle
+    {
+        get
+        {
+            if (IsScheduleMode)
+                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. Auto-sync re-pushes the next off-hours window on every 5-minute tick; ⚡ Sync now force-pushes it immediately.";
+            return "Manual mode: you flip OOF on/off yourself above. Auto-sync re-asserts your current state on Outlook every 5 minutes (corrects drift from other clients); ⚡ Sync now re-pushes it immediately.";
         }
     }
     [ObservableProperty] private bool _isStartWithWindowsEnabled;
@@ -150,6 +206,13 @@ public partial class MainViewModel : ObservableObject
     // Pre-vacation reply text is squirreled away in prefs so EndVacation can
     // restore the user's normal reply without forcing them to re-type it.
     [ObservableProperty] private bool _isOnLongVacation;
+    // User-intent counterpart to IsOnLongVacation. The checkbox in the Manual
+    // mode card toggles this; the actual push to Exchange happens later, when
+    // the user clicks ⚡ Sync now or the 5-minute auto-sync tick reconciles
+    // (see ReassertManualStateAsync). The two stay separate because vacation
+    // is a deferred-commit field — flipping the box must not touch the
+    // mailbox on its own.
+    [ObservableProperty] private bool _isVacationWindowActive;
     [ObservableProperty] private DateTime _vacationStartDate = DateTime.Today;
     [ObservableProperty] private TimeSpan _vacationStartTime = new(18, 0, 0);
     [ObservableProperty] private DateTime _vacationEndDate = DateTime.Today.AddDays(7);
@@ -202,78 +265,45 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void HideToTray() => _tray.HideToTray();
 
+    partial void OnStatusMessageChanged(string value)
+        => OnPropertyChanged(nameof(HasStatusMessage));
+
     partial void OnIsOofEnabledChanged(bool value)
     {
         if (!value)
         {
             CurrentStatus = OofStatus.Disabled;
             IsScheduled = false;
+            if (IsVacationWindowActive)
+            {
+                IsVacationWindowActive = false;
+            }
         }
         else
         {
             CurrentStatus = IsScheduled ? OofStatus.Scheduled : OofStatus.Enabled;
         }
 
-        // User-initiated flips on the OOF toggle commit straight to Exchange.
-        // Programmatic sets (LoadAsync, vacation start/end, the auto-sync
-        // push, etc.) wrap their writes in _suppressOofToggleCommit so they
-        // don't echo back to the server. The other guards exclude states
-        // where the toggle isn't actually under the user's control:
-        //   • IsOofAutoManaged: Work Schedule owns it, toggle is disabled
-        //   • IsOnLongVacation: a multi-day Scheduled block is in force
-        //   • !_hasLoadedOnce: still hydrating on signin
-        //   • IsBusy: another Set is already in flight
+        OnPropertyChanged(nameof(CanToggleVacationWindow));
+        RefreshOofStatusBar();
+
+        // User-initiated flips are deferred: the switch records local intent
+        // only. Exchange is updated by ⚡ Sync now or the 5-minute Auto-sync
+        // path (ReassertManualStateAsync). Programmatic sets wrap their
+        // writes in _suppressOofToggleCommit so they don't show a pending
+        // action note.
         if (_suppressOofToggleCommit) return;
-        if (IsOofAutoManaged || IsOnLongVacation || !_hasLoadedOnce || IsBusy) return;
-        _ = CommitToggleFlipAsync(value);
-    }
-
-    /// <summary>
-    /// Pushes the user's just-flipped on/off choice to Exchange immediately
-    /// (no "Save Now" round-trip). On success the local committed snapshot
-    /// is updated so the reply-text dirty tracker stays accurate; on failure
-    /// the toggle is reverted so the UI doesn't lie about server state.
-    /// </summary>
-    private async Task CommitToggleFlipAsync(bool turnOn)
-    {
-        IsBusy = true;
-        StatusMessage = turnOn ? "📤 Turning OOF on..." : "📤 Turning OOF off...";
-        try
+        if (IsOofAutoManaged || !_hasLoadedOnce || IsBusy) return;
+        if (IsOnLongVacation)
         {
-            // If the mailbox is currently in a Scheduled state (left over
-            // from a previous auto-sync session, or set in Outlook/OWA) the
-            // user just chose to override it with a manual on/off — collapse
-            // IsScheduled before pushing so we don't re-send a stale window.
-            if (IsScheduled)
-            {
-                _suppressOofToggleCommit = true;
-                try { IsScheduled = false; } finally { _suppressOofToggleCommit = false; }
-            }
-
-            var target = turnOn ? OofStatus.Enabled : OofStatus.Disabled;
-            var settings = new OofSettings
-            {
-                Status = target,
-                InternalReply = InternalReply,
-                ExternalReply = ExternalReply,
-            };
-            await _exchangeService.SetOofSettingsAsync(settings);
-            MarkOofClean(target);
-            CurrentStatus = target;
-            StatusMessage = turnOn ? "✅ OOF turned on" : "✅ OOF turned off";
+            StatusMessage = value
+                ? "Long Vacation / Holiday remains selected in Outlook. Click ⚡ Sync now or enable Auto-sync to re-assert it."
+                : "Long Vacation / Holiday cleared locally. Click ⚡ Sync now or enable Auto-sync to clear the vacation OOF in Outlook.";
+            return;
         }
-        catch (Exception ex)
-        {
-            // Revert the toggle so it tells the truth. The revert itself
-            // must not re-trigger commit, hence the suppress flag.
-            _suppressOofToggleCommit = true;
-            try { IsOofEnabled = !turnOn; } finally { _suppressOofToggleCommit = false; }
-            StatusMessage = $"Save failed: {ex.Message}";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        StatusMessage = value
+            ? "OOF switch set to ON locally. Click ⚡ Sync now or enable Auto-sync to push it to Outlook."
+            : "OOF switch set to OFF locally. Click ⚡ Sync now or enable Auto-sync to push it to Outlook.";
     }
 
     partial void OnIsScheduledChanged(bool value)
@@ -282,6 +312,7 @@ public partial class MainViewModel : ObservableObject
         {
             CurrentStatus = value ? OofStatus.Scheduled : OofStatus.Enabled;
         }
+        RefreshOofStatusBar();
     }
 
     partial void OnIsWorkScheduleEnabledChanged(bool value)
@@ -292,8 +323,12 @@ public partial class MainViewModel : ObservableObject
         // only mode immediately.
         WorkScheduleStatus = value ? GetWorkScheduleStatus() : "Work schedule rule disabled";
         OnPropertyChanged(nameof(IsOofAutoManaged));
+        OnPropertyChanged(nameof(IsScheduleMode));
+        OnPropertyChanged(nameof(IsManualMode));
         OnPropertyChanged(nameof(OofCardSubtitle));
+        OnPropertyChanged(nameof(SyncCardSubtitle));
         OnPropertyChanged(nameof(CanShowSaveNow));
+        RefreshOofStatusBar();
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
         // pass through the same setter; we only commit for genuine user
@@ -311,6 +346,16 @@ public partial class MainViewModel : ObservableObject
         // takes effect on the very next tick without restarting the loop.
         if (_suppressDirtyTracking) return;
         _prefs.Set("WorkSchedule.AutoRefresh", value);
+        OnPropertyChanged(nameof(SyncCardSubtitle));
+
+        // Manual mode + Auto-sync ON needs the loop running for periodic
+        // reconcile against Exchange. StartAutomationLoop is idempotent
+        // (no-ops when the loop is already running), so calling it here
+        // unconditionally on ON-flips is safe regardless of mode.
+        if (value && _hasLoadedOnce && !IsOnLongVacation)
+        {
+            StartAutomationLoop();
+        }
     }
 
     partial void OnCurrentStatusChanged(OofStatus value)
@@ -318,6 +363,7 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(HasUnsavedOofChanges));
         OnPropertyChanged(nameof(CanShowSaveNow));
         OnPropertyChanged(nameof(OofCardSubtitle));
+        RefreshOofStatusBar();
     }
 
     partial void OnInternalReplyChanged(string value)
@@ -337,7 +383,47 @@ public partial class MainViewModel : ObservableObject
     partial void OnIsOnLongVacationChanged(bool value)
     {
         WorkScheduleStatus = GetWorkScheduleStatus();
+        OnPropertyChanged(nameof(CanToggleVacationWindow));
+        if (value) EnsureVacationShowsManualOofOn();
+        RefreshOofStatusBar();
     }
+
+    // Persist the checkbox state so a restart doesn't lose a planned
+    // vacation that hasn't been synced yet. The actual push to Exchange is
+    // deferred until the user clicks ⚡ Sync now or the 5-minute auto-sync
+    // tick reconciles via ReassertManualStateAsync.
+    partial void OnIsVacationWindowActiveChanged(bool value)
+    {
+        if (value && !IsOofEnabled && !IsOnLongVacation)
+        {
+            IsVacationWindowActive = false;
+            return;
+        }
+
+        if (value) EnsureVacationShowsManualOofOn();
+
+        OnPropertyChanged(nameof(CanToggleVacationWindow));
+        RefreshOofStatusBar();
+
+        if (_suppressDirtyTracking) return;
+        _prefs.Set("Vacation.WindowActive", value);
+    }
+    partial void OnStartDateChanged(DateTime value) => RefreshOofStatusBar();
+    partial void OnStartTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+    partial void OnEndDateChanged(DateTime value) => RefreshOofStatusBar();
+    partial void OnEndTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+    partial void OnVacationStartDateChanged(DateTime value) => RefreshOofStatusBar();
+    partial void OnVacationStartTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+    partial void OnVacationEndDateChanged(DateTime value) => RefreshOofStatusBar();
+    partial void OnVacationEndTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+
+    private void EnsureVacationShowsManualOofOn()
+    {
+        if ((!IsVacationWindowActive && !IsOnLongVacation) || IsOofEnabled) return;
+        _suppressOofToggleCommit = true;
+        try { IsOofEnabled = true; } finally { _suppressOofToggleCommit = false; }
+    }
+
     partial void OnIsMondayWorkdayChanged(bool value) => MarkScheduleDirty();
     partial void OnIsTuesdayWorkdayChanged(bool value) => MarkScheduleDirty();
     partial void OnIsWednesdayWorkdayChanged(bool value) => MarkScheduleDirty();
@@ -369,6 +455,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (_suppressDirtyTracking) return;
         HasUnsavedScheduleChanges = true;
+        RefreshOofStatusBar();
     }
 
     partial void OnIsStartWithWindowsEnabledChanged(bool value)
@@ -496,6 +583,7 @@ public partial class MainViewModel : ObservableObject
             InternalReply = oof.InternalReply;
             ExternalReply = oof.ExternalReply;
             MarkOofClean(oof.Status);
+            RememberConfirmedOofState(oof);
 
             if (oof.StartTime.HasValue)
             {
@@ -507,23 +595,14 @@ public partial class MainViewModel : ObservableObject
                 EndDate = oof.EndTime.Value.LocalDateTime.Date;
                 EndTime = oof.EndTime.Value.LocalDateTime.TimeOfDay;
             }
+            EnsureVacationShowsManualOofOn();
 
             Templates.Clear();
             foreach (var t in templatesTask.Result) Templates.Add(t);
 
-            // Always replace the "Loading OOF settings..." placeholder with
-            // the real state caption. The work-schedule path used to skip
-            // this on the theory that ApplyWorkScheduleAsync would overwrite
-            // it within a few hundred ms anyway, but that's not true:
-            // ApplyWorkScheduleAsync short-circuits when IsAutoSyncEnabled,
-            // and SyncToOutlookCoreAsync early-returns when the server already
-            // matches the desired window — neither path writes a status, so
-            // the stale "Loading..." stuck around. Writing the real caption
-            // here is cheap and the schedule paths still overwrite it when
-            // they actually do something (auto-flip, sync push).
-            StatusMessage = DescribeOofState(oof);
-
             _hasLoadedOnce = true;
+            RefreshOofStatusBar();
+            StatusMessage = string.Empty;
 
             if (IsOnLongVacation)
             {
@@ -556,9 +635,17 @@ public partial class MainViewModel : ObservableObject
                 StartAutomationLoop();
                 await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: true);
             }
+            else if (IsAutoRefreshEnabled)
+            {
+                // Manual mode + Auto-sync persisted as ON: spin up the loop so
+                // the 5-min reconcile against Exchange resumes after restart.
+                IsBusy = false;
+                StartAutomationLoop();
+            }
         }
         catch (Exception ex)
         {
+            OofStatusBarMessage = "OOF status unavailable";
             StatusMessage = $"Load failed: {ex.Message}";
         }
         finally
@@ -607,74 +694,32 @@ public partial class MainViewModel : ObservableObject
             // ON is a "gate" flip — it enables auto-managed mode but does
             // not by itself push anything to Outlook. The user opts in to
             // pushing either by clicking ⚡ Sync now, by enabling Auto-
-            // refresh (the 5-min ticker will push on its next boundary), or
+            // sync (the 5-min ticker will push on its next boundary), or
             // by editing the grid and clicking 💾 Save changes. Status hints
             // at all three so the next step is obvious.
             StatusMessage = IsAutoRefreshEnabled
-                ? "✅ Work schedule on. Auto-refresh will push the schedule to Outlook on the next tick."
-                : "✅ Work schedule on. Click ⚡ Sync now to push the schedule to Outlook, or enable Auto-refresh.";
+                ? "✅ Schedule mode on. Auto-sync will push the schedule to Outlook on the next tick."
+                : "✅ Schedule mode on. Click ⚡ Sync now to push the schedule to Outlook, or enable Auto-sync.";
             await Task.CompletedTask;
         }
         else
         {
-            StopAutomationLoop();
+            // Keep the loop alive when Auto-sync is on — Manual mode also
+            // needs the 5-min ticker for periodic reconcile against Exchange.
+            // Otherwise the loop is idle work, so shut it down.
+            if (!IsAutoRefreshEnabled)
+            {
+                StopAutomationLoop();
+            }
             WorkScheduleStatus = "Work schedule rule disabled";
 
-            // Vacation owns the OOF window outright — never let the
-            // toggle-off path overwrite a long Scheduled block the user
-            // explicitly set for vacation.
-            if (IsOnLongVacation)
-            {
-                StatusMessage = "Work schedule rule off — vacation OOF still active. OofManager will resume managing the schedule when you turn this back on.";
-                return;
-            }
-
-            // Final-state semantic: when the user turns off the rule,
-            // collapse the lingering Scheduled window into the state that
-            // matches *right now* and then stop touching the mailbox.
-            //   • Currently inside working hours → OOF off (you're at work,
-            //     don't keep auto-replying to people).
-            //   • Currently outside working hours → OOF on indefinitely
-            //     (you're off, leave the reply on until you manually turn
-            //     it off in Outlook or re-enable the rule).
-            // Otherwise the previously-pushed Scheduled window would expire
-            // sometime later and silently strand OOF in a half-managed state.
-            var insideWork = IsNowInsideWorkingHours(DateTime.Now);
-            var target = insideWork ? OofStatus.Disabled : OofStatus.Enabled;
-            try
-            {
-                StatusMessage = insideWork
-                    ? "📤 Turning OOF off (you're inside work hours)..."
-                    : "📤 Setting OOF on indefinitely (you're outside work hours)...";
-                var settings = new OofSettings
-                {
-                    Status = target,
-                    InternalReply = InternalReply,
-                    ExternalReply = ExternalReply,
-                };
-                await _exchangeService.SetOofSettingsAsync(settings);
-
-                // Local mirrors. Suppress the OOF-card auto-commit path
-                // because we're already pushing the new state right here —
-                // the partial setter shouldn't kick a second Set.
-                _suppressOofToggleCommit = true;
-                try
-                {
-                    IsScheduled = false;
-                    IsOofEnabled = target == OofStatus.Enabled;
-                }
-                finally { _suppressOofToggleCommit = false; }
-                CurrentStatus = target;
-                MarkOofClean(target);
-
-                StatusMessage = insideWork
-                    ? "✅ Work schedule off — OOF turned off. OofManager won't change your OOF state until you turn the schedule back on."
-                    : "✅ Work schedule off — OOF left on indefinitely. Turn it off in Outlook (or re-enable the schedule) when you want it to stop.";
-            }
-            catch (Exception ex)
-            {
-                StatusMessage = $"Could not finalize OOF state after disabling schedule: {ex.Message}. Outlook may still have the previous scheduled window — fix in Outlook if needed.";
-            }
+            // Switching to Manual mode is now a local mode change only. Do
+            // not collapse an existing Scheduled window to flat Enabled /
+            // Disabled here; that was the path that made the top status jump
+            // to "OOF is ON — no end time" before the user clicked Sync now.
+            StatusMessage = IsAutoRefreshEnabled
+                ? "Manual mode selected. Outlook was not changed yet; Auto-sync will push the current manual state on the next tick."
+                : "Manual mode selected. Outlook was not changed. Use the switch, then click ⚡ Sync now to push it.";
         }
     }
 
@@ -710,40 +755,158 @@ public partial class MainViewModel : ObservableObject
         }
         else
         {
-            StopAutomationLoop();
+            // Same loop-lifetime rule as the toggle path: keep the ticker
+            // alive for Manual-mode reconcile when Auto-sync is on.
+            if (!IsAutoRefreshEnabled)
+            {
+                StopAutomationLoop();
+            }
             StatusMessage = "Work schedule rule saved but not enabled";
             WorkScheduleStatus = "Work schedule rule disabled";
         }
     }
 
     /// <summary>
-    /// "🔄 Sync now" button on the Work Schedule card. Combines what used to
-    /// be two separate buttons (Check Now + Sync to Outlook) into one
-    /// catch-all force-sync action:
-    ///   1. Re-evaluate "are we inside working hours?" right now and flip OOF
-    ///      to match (formerly Check Now).
-    ///   2. Push the next off-hours window to Outlook so the server keeps
-    ///      flipping OOF on its own even if this app isn't running
-    ///      (formerly Sync to Outlook).
-    /// One button covers ~99% of the cases users actually wanted either of the
-    /// old buttons for, while removing the "what's the difference?" question.
+    /// "⚡ Sync now" button. The semantics depend on the current sync mode:
+    ///
+    ///   • Schedule mode: re-evaluates "are we inside working hours?" and
+    ///     force-pushes the next off-hours window to Outlook (formerly the
+    ///     only behaviour of this button).
+    ///   • Manual mode: re-asserts the user's current on/off + reply text
+    ///     to Exchange immediately, collapsing any leftover Scheduled state
+    ///     from a previous schedule-mode session. Useful when another
+    ///     client (Outlook desktop, OWA, an admin) drifted the mailbox
+    ///     away from what this app shows.
     /// </summary>
     [RelayCommand]
     private async Task SyncNowAsync()
     {
-        if (!IsWorkScheduleEnabled)
+        if (IsScheduleMode)
         {
-            StatusMessage = "Enable Work Schedule first, then sync.";
+            if (IsOnLongVacation)
+            {
+                StatusMessage = "Clearing Long Vacation / Holiday override and syncing the schedule...";
+                await EndVacationAsync();
+                if (IsOnLongVacation) return;
+                StatusMessage = "Schedule mode synced. Long Vacation / Holiday override cleared.";
+                return;
+            }
+
+            if (IsVacationWindowActive)
+            {
+                IsVacationWindowActive = false;
+                VacationStatus = string.Empty;
+            }
+
+            // 1. Local re-check + Exchange OOF flip.
+            await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: true);
+
+            // 2. Force-push the next window to Outlook. SyncToOutlookCoreAsync
+            //    skips its server-state dedupe when isUserInitiated=true, so
+            //    this always re-asserts the desired state.
+            await SyncToOutlookCoreAsync(isUserInitiated: true);
             return;
         }
 
-        // 1. Local re-check + Exchange OOF flip.
-        await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: true);
+        // Manual mode: re-push current local state straight to Exchange.
+        await ReassertManualStateAsync(isUserInitiated: true);
+    }
 
-        // 2. Force-push the next window to Outlook. SyncToOutlookCoreAsync
-        //    skips its server-state dedupe when isUserInitiated=true, so
-        //    this always re-asserts the desired state.
-        await SyncToOutlookCoreAsync(isUserInitiated: true);
+    /// <summary>
+    /// Pushes the current Manual-mode "desired state" (the OOF on/off toggle
+    /// + reply text) to Exchange. Shared by the user-pressed ⚡ Sync now
+    /// button and the 5-minute background auto-sync; the latter sets
+    /// <paramref name="isUserInitiated"/>=false so the call reads server
+    /// state first and skips the Set when nothing actually drifted.
+    /// </summary>
+    private async Task ReassertManualStateAsync(bool isUserInitiated)
+    {
+        if (IsBusy) return;
+
+        // Vacation reconciliation runs first — the checkbox is a deferred-
+        // commit field, so a divergence between IsVacationWindowActive and
+        // IsOnLongVacation means this sync should push the start/end. After
+        // either branch fires we return: StartVacationAsync/EndVacationAsync
+        // both end up writing to Exchange themselves, and OOF on/off must
+        // not run on top.
+        if (IsVacationWindowActive && !IsOnLongVacation)
+        {
+            await StartVacationAsync();
+            return;
+        }
+        if (!IsVacationWindowActive && IsOnLongVacation)
+        {
+            await EndVacationAsync();
+            return;
+        }
+        // Vacation owns the OOF window outright; never let manual reassert
+        // overwrite the multi-day Scheduled block.
+        if (IsOnLongVacation) return;
+
+        var desired = new OofSettings
+        {
+            Status = IsOofEnabled ? OofStatus.Enabled : OofStatus.Disabled,
+            InternalReply = InternalReply,
+            ExternalReply = ExternalReply,
+        };
+
+        // Auto path: read live server state and skip the Set when the
+        // mailbox already matches. The user path always re-asserts.
+        if (!isUserInitiated)
+        {
+            try
+            {
+                var current = await _exchangeService.GetOofSettingsAsync();
+                if (current.Status == desired.Status
+                    && string.Equals(current.InternalReply ?? string.Empty, desired.InternalReply ?? string.Empty, StringComparison.Ordinal)
+                    && string.Equals(current.ExternalReply ?? string.Empty, desired.ExternalReply ?? string.Empty, StringComparison.Ordinal))
+                {
+                    RememberConfirmedOofState(current);
+                    return;
+                }
+            }
+            catch
+            {
+                // Couldn't verify (network blip etc.) — fall through and Set.
+                // SetOofSettingsAsync verifies on its own, so we still won't
+                // silently succeed on a real failure.
+            }
+        }
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = isUserInitiated
+                ? "📤 Re-asserting OOF state to Outlook..."
+                : "🔄 Auto-syncing OOF state...";
+            await _exchangeService.SetOofSettingsAsync(desired);
+            RememberConfirmedOofState(desired);
+
+            // Collapse any lingering Scheduled flag so the UI matches what
+            // we just pushed (flat Enabled or Disabled).
+            _suppressOofToggleCommit = true;
+            try { IsScheduled = false; } finally { _suppressOofToggleCommit = false; }
+            CurrentStatus = desired.Status;
+            MarkOofClean(desired.Status);
+
+            if (isUserInitiated)
+            {
+                StatusMessage = desired.Status == OofStatus.Enabled
+                    ? "✅ OOF re-asserted as ON in Outlook."
+                    : "✅ OOF re-asserted as OFF in Outlook.";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (isUserInitiated)
+            {
+                StatusMessage = $"Sync failed: {ex.Message}";
+            }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     /// <summary>
@@ -835,7 +998,7 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Guards the cloud-sync zip / guide generators against shipping reply
-    /// text the user typed but never confirmed (no Save Now click, no auto-
+    /// text the user typed but never confirmed (no reply update, no auto-
     /// sync tick). If the live <see cref="InternalReply"/> / <see cref="ExternalReply"/>
     /// match what's currently on Exchange, returns true straight through. If
     /// not, prompts the user with Save-first / use-draft / cancel so the
@@ -889,7 +1052,7 @@ public partial class MainViewModel : ObservableObject
     /// Snapshots the current OOF state (status + reply bodies) as the
     /// committed baseline, then raises PropertyChanged for the dirty-tracker
     /// observables. Call this after any successful Set against Exchange so
-    /// the Save Now button collapses back to "nothing to commit".
+    /// the Update reply messages button collapses back to "nothing to commit".
     /// </summary>
     private void MarkOofClean(OofStatus committedStatus)
     {
@@ -964,14 +1127,23 @@ public partial class MainViewModel : ObservableObject
                 EndTime = endOffset,
             };
             await _exchangeService.SetOofSettingsAsync(settings);
+            RememberConfirmedOofState(settings);
 
             IsOnLongVacation = true;
+            // Make sure the checkbox visual matches the just-pushed state
+            // even if start was triggered programmatically (e.g. the user
+            // pressed ⚡ Sync now with the box already checked and a
+            // pre-existing pref).
+            IsVacationWindowActive = true;
             _suppressOofToggleCommit = true;
             try
             {
                 IsScheduled = true;
-                var nowOffset = DateTimeOffset.Now;
-                IsOofEnabled = startOffset <= nowOffset && endOffset > nowOffset;
+                // Long Vacation is a manual OOF intent even when the
+                // Scheduled window starts in the future, so the Manual card's
+                // switch should read On while the vacation is selected. The
+                // top status bar still derives from confirmed Outlook times.
+                IsOofEnabled = true;
             }
             finally
             {
@@ -1067,6 +1239,7 @@ public partial class MainViewModel : ObservableObject
         try
         {
             await _exchangeService.SetOofSettingsAsync(target);
+            RememberConfirmedOofState(target);
         }
         catch (Exception ex)
         {
@@ -1089,6 +1262,9 @@ public partial class MainViewModel : ObservableObject
             _prefs.Set("Vacation.End", null);
         }
         IsOnLongVacation = false;
+        // Clear the checkbox too — covers the automation-driven end-of-
+        // vacation path where the user never touched the box themselves.
+        IsVacationWindowActive = false;
 
         InternalReply = restoreInternal;
         ExternalReply = restoreExternal;
@@ -1102,8 +1278,12 @@ public partial class MainViewModel : ObservableObject
             if (target.Status == OofStatus.Scheduled)
             {
                 IsScheduled = true;
+                StartDate = target.StartTime!.Value.LocalDateTime.Date;
+                StartTime = target.StartTime.Value.LocalDateTime.TimeOfDay;
+                EndDate = target.EndTime!.Value.LocalDateTime.Date;
+                EndTime = target.EndTime.Value.LocalDateTime.TimeOfDay;
                 var nowOffset = DateTimeOffset.Now;
-                IsOofEnabled = target.StartTime!.Value <= nowOffset && target.EndTime!.Value > nowOffset;
+                IsOofEnabled = target.StartTime.Value <= nowOffset && target.EndTime.Value > nowOffset;
                 CurrentStatus = OofStatus.Scheduled;
             }
             else
@@ -1119,7 +1299,9 @@ public partial class MainViewModel : ObservableObject
         }
 
         VacationStatus = string.Empty;
-        StatusMessage = "🛬 Vacation ended — OOF cleared.";
+        StatusMessage = target.Status == OofStatus.Scheduled && target.StartTime.HasValue && target.EndTime.HasValue
+            ? $"🛬 Vacation ended — schedule resumed ({target.StartTime.Value.LocalDateTime:ddd MM-dd HH:mm} → {target.EndTime.Value.LocalDateTime:ddd MM-dd HH:mm})."
+            : "🛬 Vacation ended — OOF cleared.";
 
         if (_tray.IsWindowHidden)
         {
@@ -1129,8 +1311,9 @@ public partial class MainViewModel : ObservableObject
         }
 
         // If Work Schedule is off and we only kept the loop alive for vacation
-        // end-detection, shut it back down so we don't poll for nothing.
-        if (!IsWorkScheduleEnabled)
+        // end-detection, shut it back down so we don't poll for nothing —
+        // unless Manual mode + Auto-sync still need it for periodic reconcile.
+        if (!IsWorkScheduleEnabled && !IsAutoRefreshEnabled)
         {
             StopAutomationLoop();
         }
@@ -1212,6 +1395,7 @@ public partial class MainViewModel : ObservableObject
                 if (ServerMatchesDesired(current, settings))
                 {
                     SyncLogger.Write("  server already matches desired; no-op");
+                    RememberConfirmedOofState(current);
                     return;
                 }
             }
@@ -1237,6 +1421,7 @@ public partial class MainViewModel : ObservableObject
                 : "🔄 Auto-syncing OOF state...";
             await _exchangeService.SetOofSettingsAsync(settings);
             SyncLogger.Write("  Set + read-back verification succeeded");
+            RememberConfirmedOofState(settings);
 
             MarkOofClean(OofStatus.Scheduled);
 
@@ -1264,6 +1449,10 @@ public partial class MainViewModel : ObservableObject
             // the real mailbox state instead of being clobbered to Disabled
             // when IsOofEnabled is false.
             CurrentStatus = OofStatus.Scheduled;
+            StartDate = start.LocalDateTime.Date;
+            StartTime = start.LocalDateTime.TimeOfDay;
+            EndDate = end.LocalDateTime.Date;
+            EndTime = end.LocalDateTime.TimeOfDay;
 
             var startLabel = start.LocalDateTime.ToString("ddd MM-dd HH:mm");
             var endLabel = end.LocalDateTime.ToString("ddd MM-dd HH:mm");
@@ -1325,14 +1514,23 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     public async Task FlushBeforeExitAsync()
     {
-        // Only meaningful in AutoSync work-schedule mode. In manual mode the
-        // user owns the OOF state and we shouldn't reassert anything on exit;
-        // on vacation, the multi-day Scheduled window already covers shutdown.
-        if (!IsWorkScheduleEnabled || IsOnLongVacation) return;
-        // Match the rest of the new semantic: no auto-refresh → no
-        // background mutation, including this last-chance push.
+        // On vacation, the multi-day Scheduled window already covers shutdown;
+        // never reassert anything that could overwrite it.
+        if (IsOnLongVacation) return;
+        // Auto-sync gates background mutation in both modes. Off → no
+        // last-chance push on exit (the user has explicitly opted out of
+        // OofManager writing to Exchange in the background).
         if (!IsAutoRefreshEnabled) return;
         if (!_exchangeService.IsConnected) return;
+
+        if (IsManualMode)
+        {
+            // Manual mode: re-assert current toggle state + reply text. The
+            // helper short-circuits when the server already matches, so this
+            // is cheap when nothing drifted.
+            try { await ReassertManualStateAsync(isUserInitiated: false); } catch { }
+            return;
+        }
 
         var window = ComputeNextOffHoursWindow(DateTime.Now);
         if (window == null) return;
@@ -1475,6 +1673,7 @@ public partial class MainViewModel : ObservableObject
         if (IsOnLongVacation) return Task.CompletedTask;
 
         WorkScheduleStatus = GetWorkScheduleStatus();
+        RefreshOofStatusBar();
         return Task.CompletedTask;
     }
 
@@ -1483,32 +1682,23 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsBusy) return;
         IsBusy = true;
-        StatusMessage = "Saving OOF settings...";
+        StatusMessage = "Saving reply messages...";
 
         try
         {
             var settings = new OofSettings
             {
-                Status = CurrentStatus,
+                Status = _confirmedOofStatus,
                 InternalReply = InternalReply,
                 ExternalReply = ExternalReply,
+                StartTime = _confirmedOofStartTime,
+                EndTime = _confirmedOofEndTime,
             };
 
-            if (CurrentStatus == OofStatus.Scheduled)
-            {
-                // Compute the UTC offset *at the scheduled instant*, not at save-time.
-                // Otherwise a window that straddles DST would be off by one hour.
-                var startLocal = StartDate.Add(StartTime);
-                var endLocal = EndDate.Add(EndTime);
-                settings.StartTime = new DateTimeOffset(startLocal, TimeZoneInfo.Local.GetUtcOffset(startLocal));
-                settings.EndTime = new DateTimeOffset(endLocal, TimeZoneInfo.Local.GetUtcOffset(endLocal));
-            }
-
             await _exchangeService.SetOofSettingsAsync(settings);
-            MarkOofClean(CurrentStatus);
-            StatusMessage = CurrentStatus == OofStatus.Disabled
-                ? "✅ OOF turned off"
-                : "✅ OOF saved and enabled";
+            MarkOofClean(settings.Status);
+            RememberConfirmedOofState(settings);
+            StatusMessage = "✅ Reply messages updated in Outlook.";
         }
         catch (Exception ex)
         {
@@ -1523,24 +1713,9 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task QuickToggleAsync()
     {
-        // The Out-of-Office card already has a ToggleSwitch bound to IsOofEnabled,
-        // so this button only needs to *persist* whatever the user picked. The
-        // previous implementation flipped IsOofEnabled before saving, which double-
-        // toggled when the user had already moved the switch (switch ON + click =
-        // server gets OFF), making it look like saves "didn't take".
-
-        // Normalize away any leftover Scheduled state from a previous auto-sync
-        // before saving. Without this, IsScheduled stays true after LoadAsync
-        // pulls a Scheduled OOF from Exchange, so Save Now would re-push the
-        // stale 17:30→09:00 window and Outlook keeps displaying it as a
-        // schedule even though the user is in manual mode.
-        if (IsScheduled)
-        {
-            IsScheduled = false;
-            // Re-derive CurrentStatus from the toggle now that IsScheduled is
-            // false (Enabled if on, Disabled if off).
-            CurrentStatus = IsOofEnabled ? OofStatus.Enabled : OofStatus.Disabled;
-        }
+        // Only persist reply-body edits. The Manual OOF switch is deferred
+        // and is pushed by ⚡ Sync now or Auto-sync, so this button must not
+        // accidentally ship a pending local on/off change.
         await SaveOofAsync();
     }
 
@@ -1599,54 +1774,83 @@ public partial class MainViewModel : ObservableObject
         _navigation.NavigateToLogin(forceAccountPicker: true);
     }
 
-    /// <summary>
-    /// Builds the human-readable status line shown at the top of the main
-    /// page. Three real cases the user cares about:
-    ///   - Disabled                : OOF is off entirely
-    ///   - Enabled (no schedule)   : OOF is on permanently / until manually
-    ///                               turned off — no end time set on the mailbox
-    ///   - Scheduled               : OOF will only be active inside the
-    ///                               start→end window. Further split into
-    ///                               "active now" vs. "scheduled to start later"
-    ///                               so the user can tell at a glance whether
-    ///                               replies are actually going out right now.
-    /// </summary>
-    private static string DescribeOofState(OofSettings oof)
+    private void RefreshOofStatusBar()
     {
-        switch (oof.Status)
+        if (!_hasLoadedOnce && IsBusy)
         {
-            case OofStatus.Disabled:
-                return "🔕 OOF is currently OFF";
-
-            case OofStatus.Enabled:
-                // No end time = "until I turn it off myself". Call that out
-                // explicitly so the user doesn't expect Exchange to disable it
-                // automatically.
-                return "🟢 OOF is ON (no schedule — stays on until manually turned off)";
-
-            case OofStatus.Scheduled:
-                var now = DateTimeOffset.Now;
-                var startStr = oof.StartTime?.LocalDateTime.ToString("ddd MM-dd HH:mm");
-                var endStr = oof.EndTime?.LocalDateTime.ToString("ddd MM-dd HH:mm");
-
-                // If both ends are present we can tell the user *which side*
-                // of the window we're currently sitting in.
-                if (oof.StartTime.HasValue && oof.EndTime.HasValue)
-                {
-                    if (now < oof.StartTime.Value)
-                        return $"🟡 OOF is scheduled — will start {startStr} and end {endStr}";
-                    if (now >= oof.EndTime.Value)
-                        return $"🔕 OOF schedule already ended ({endStr}) — currently OFF";
-                    return $"🟢 OOF is ON (scheduled until {endStr})";
-                }
-
-                // Defensive fallback: tenant returned Scheduled but no times.
-                return "🟡 OOF is scheduled";
-
-            default:
-                return string.Empty;
+            OofStatusBarMessage = "Loading OOF status...";
+            return;
         }
+
+        OofStatusBarMessage = BuildOofStatusBarMessage();
     }
+
+    private string BuildOofStatusBarMessage()
+    {
+        var now = DateTimeOffset.Now;
+
+        if (IsConfirmedOofActive(now))
+        {
+            var end = GetCurrentOofEndTime(now);
+            return end.HasValue
+                ? $"✅ OOF is ON until {FormatStatusDateTime(end.Value)}"
+                : "✅ OOF is ON — no end time";
+        }
+
+        var nextWindow = GetNextOofWindowForStatusBar(now);
+        return nextWindow.HasValue
+            ? $"☑️ OOF is OFF — next on {FormatStatusDateTime(nextWindow.Value.start)} to {FormatStatusDateTime(nextWindow.Value.end)}"
+            : "☑️ OOF is OFF — no upcoming automatic OOF";
+    }
+
+    private DateTimeOffset? GetCurrentOofEndTime(DateTimeOffset now)
+    {
+        return _confirmedOofStatus == OofStatus.Scheduled
+            && _confirmedOofEndTime.HasValue
+            && _confirmedOofEndTime.Value > now
+                ? _confirmedOofEndTime
+                : null;
+    }
+
+    private (DateTimeOffset start, DateTimeOffset end)? GetNextOofWindowForStatusBar(DateTimeOffset now)
+    {
+        // The top status bar is confirmed Outlook state only. Do not preview
+        // the local weekly schedule here; otherwise simply switching from
+        // Manual mode to Schedule mode changes the status line before the
+        // user clicks Sync now or Auto-sync actually writes anything.
+        if (_confirmedOofStatus == OofStatus.Scheduled
+            && _confirmedOofStartTime.HasValue
+            && _confirmedOofEndTime.HasValue
+            && _confirmedOofEndTime.Value > now)
+        {
+            return (_confirmedOofStartTime.Value, _confirmedOofEndTime.Value);
+        }
+
+        return null;
+    }
+
+    private bool IsConfirmedOofActive(DateTimeOffset now)
+    {
+        if (_confirmedOofStatus == OofStatus.Enabled) return true;
+        if (_confirmedOofStatus != OofStatus.Scheduled) return false;
+        return _confirmedOofStartTime.HasValue
+            && _confirmedOofStartTime.Value <= now
+            && (!_confirmedOofEndTime.HasValue || _confirmedOofEndTime.Value > now);
+    }
+
+    private void RememberConfirmedOofState(OofSettings settings)
+        => RememberConfirmedOofState(settings.Status, settings.StartTime, settings.EndTime);
+
+    private void RememberConfirmedOofState(OofStatus status, DateTimeOffset? start = null, DateTimeOffset? end = null)
+    {
+        _confirmedOofStatus = status;
+        _confirmedOofStartTime = start;
+        _confirmedOofEndTime = end;
+        RefreshOofStatusBar();
+    }
+
+    private static string FormatStatusDateTime(DateTimeOffset value)
+        => value.LocalDateTime.ToString("ddd MM-dd HH:mm");
 
     private bool IsNowInsideWorkingHours(DateTime now)
     {
@@ -1724,68 +1928,75 @@ public partial class MainViewModel : ObservableObject
         _suppressDirtyTracking = true;
         try
         {
-            IsWorkScheduleEnabled = _prefs.GetBool("WorkSchedule.Enabled", false);
-        IsAutoRefreshEnabled = _prefs.GetBool("WorkSchedule.AutoRefresh", false);
-        IsMondayWorkday = _prefs.GetBool("WorkSchedule.Monday", true);
-        IsTuesdayWorkday = _prefs.GetBool("WorkSchedule.Tuesday", true);
-        IsWednesdayWorkday = _prefs.GetBool("WorkSchedule.Wednesday", true);
-        IsThursdayWorkday = _prefs.GetBool("WorkSchedule.Thursday", true);
-        IsFridayWorkday = _prefs.GetBool("WorkSchedule.Friday", true);
-        IsSaturdayWorkday = _prefs.GetBool("WorkSchedule.Saturday", true);
-        IsSundayWorkday = _prefs.GetBool("WorkSchedule.Sunday", true);
+            // Always start in Schedule mode. Users can switch to Manual mode
+            // for the current session, but the next app launch should return
+            // to the schedule-first workflow.
+            IsWorkScheduleEnabled = true;
+            IsAutoRefreshEnabled = _prefs.GetBool("WorkSchedule.AutoRefresh", false);
+            IsMondayWorkday = _prefs.GetBool("WorkSchedule.Monday", true);
+            IsTuesdayWorkday = _prefs.GetBool("WorkSchedule.Tuesday", true);
+            IsWednesdayWorkday = _prefs.GetBool("WorkSchedule.Wednesday", true);
+            IsThursdayWorkday = _prefs.GetBool("WorkSchedule.Thursday", true);
+            IsFridayWorkday = _prefs.GetBool("WorkSchedule.Friday", true);
+            IsSaturdayWorkday = _prefs.GetBool("WorkSchedule.Saturday", true);
+            IsSundayWorkday = _prefs.GetBool("WorkSchedule.Sunday", true);
 
-        // Backward compatibility: older builds stored a single global window in
-        // "WorkSchedule.StartMinutes" / "WorkSchedule.EndMinutes". Use it as the
-        // default for every per-day key that hasn't been written yet, so existing
-        // users see their previous schedule replicated across all days on first
-        // launch of the per-day-aware build.
-        var legacyStart = _prefs.GetInt("WorkSchedule.StartMinutes", 9 * 60);
-        var legacyEnd = _prefs.GetInt("WorkSchedule.EndMinutes", 18 * 60);
+            // Backward compatibility: older builds stored a single global window in
+            // "WorkSchedule.StartMinutes" / "WorkSchedule.EndMinutes". Use it as the
+            // default for every per-day key that hasn't been written yet, so existing
+            // users see their previous schedule replicated across all days on first
+            // launch of the per-day-aware build.
+            var legacyStart = _prefs.GetInt("WorkSchedule.StartMinutes", 9 * 60);
+            var legacyEnd = _prefs.GetInt("WorkSchedule.EndMinutes", 18 * 60);
 
-        MondayStartTime = LoadDayTime("Monday", "Start", legacyStart);
-        MondayEndTime = LoadDayTime("Monday", "End", legacyEnd);
-        TuesdayStartTime = LoadDayTime("Tuesday", "Start", legacyStart);
-        TuesdayEndTime = LoadDayTime("Tuesday", "End", legacyEnd);
-        WednesdayStartTime = LoadDayTime("Wednesday", "Start", legacyStart);
-        WednesdayEndTime = LoadDayTime("Wednesday", "End", legacyEnd);
-        ThursdayStartTime = LoadDayTime("Thursday", "Start", legacyStart);
-        ThursdayEndTime = LoadDayTime("Thursday", "End", legacyEnd);
-        FridayStartTime = LoadDayTime("Friday", "Start", legacyStart);
-        FridayEndTime = LoadDayTime("Friday", "End", legacyEnd);
-        SaturdayStartTime = LoadDayTime("Saturday", "Start", legacyStart);
-        SaturdayEndTime = LoadDayTime("Saturday", "End", legacyEnd);
-        SundayStartTime = LoadDayTime("Sunday", "Start", legacyStart);
-        SundayEndTime = LoadDayTime("Sunday", "End", legacyEnd);
+            MondayStartTime = LoadDayTime("Monday", "Start", legacyStart);
+            MondayEndTime = LoadDayTime("Monday", "End", legacyEnd);
+            TuesdayStartTime = LoadDayTime("Tuesday", "Start", legacyStart);
+            TuesdayEndTime = LoadDayTime("Tuesday", "End", legacyEnd);
+            WednesdayStartTime = LoadDayTime("Wednesday", "Start", legacyStart);
+            WednesdayEndTime = LoadDayTime("Wednesday", "End", legacyEnd);
+            ThursdayStartTime = LoadDayTime("Thursday", "Start", legacyStart);
+            ThursdayEndTime = LoadDayTime("Thursday", "End", legacyEnd);
+            FridayStartTime = LoadDayTime("Friday", "Start", legacyStart);
+            FridayEndTime = LoadDayTime("Friday", "End", legacyEnd);
+            SaturdayStartTime = LoadDayTime("Saturday", "Start", legacyStart);
+            SaturdayEndTime = LoadDayTime("Saturday", "End", legacyEnd);
+            SundayStartTime = LoadDayTime("Sunday", "Start", legacyStart);
+            SundayEndTime = LoadDayTime("Sunday", "End", legacyEnd);
 
-        // Restore vacation state. We don't push anything to Exchange here —
-        // LoadAsync will see IsOnLongVacation=true and skip the regular
-        // schedule apply/sync. Auto-end (if the end time has already passed)
-        // is handled by the automation loop's HasVacationEnded check.
-        IsOnLongVacation = _prefs.GetBool("Vacation.Active", false);
-        var vacationStartRaw = _prefs.GetString("Vacation.Start");
-        var vacationEndRaw = _prefs.GetString("Vacation.End");
-        if (DateTime.TryParse(vacationStartRaw,
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-            out var startUtc))
-        {
-            var startLocal = startUtc.ToLocalTime();
-            VacationStartDate = startLocal.Date;
-            VacationStartTime = startLocal.TimeOfDay;
-        }
-        if (DateTime.TryParse(vacationEndRaw,
-            System.Globalization.CultureInfo.InvariantCulture,
-            System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-            out var endUtc))
-        {
-            var endLocal = endUtc.ToLocalTime();
-            VacationEndDate = endLocal.Date;
-            VacationEndTime = endLocal.TimeOfDay;
-            if (IsOnLongVacation)
+            // Restore vacation state. We don't push anything to Exchange here —
+            // LoadAsync will see IsOnLongVacation=true and skip the regular
+            // schedule apply/sync. Auto-end (if the end time has already passed)
+            // is handled by the automation loop's HasVacationEnded check.
+            IsOnLongVacation = _prefs.GetBool("Vacation.Active", false);
+            // The checkbox state persists separately so a planned-but-not-yet-
+            // synced vacation survives a restart. Falls back to IsOnLongVacation
+            // for users whose prefs predate this key.
+            IsVacationWindowActive = _prefs.GetBool("Vacation.WindowActive", IsOnLongVacation);
+            var vacationStartRaw = _prefs.GetString("Vacation.Start");
+            var vacationEndRaw = _prefs.GetString("Vacation.End");
+            if (DateTime.TryParse(vacationStartRaw,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var startUtc))
             {
-                VacationStatus = $"🏖️ On vacation until {endLocal:ddd MMM d, HH:mm}";
+                var startLocal = startUtc.ToLocalTime();
+                VacationStartDate = startLocal.Date;
+                VacationStartTime = startLocal.TimeOfDay;
             }
-        }
+            if (DateTime.TryParse(vacationEndRaw,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                out var endUtc))
+            {
+                var endLocal = endUtc.ToLocalTime();
+                VacationEndDate = endLocal.Date;
+                VacationEndTime = endLocal.TimeOfDay;
+                if (IsOnLongVacation)
+                {
+                    VacationStatus = $"🏖️ On vacation until {endLocal:ddd MMM d, HH:mm}";
+                }
+            }
 
             WorkScheduleStatus = GetWorkScheduleStatus();
         }
@@ -1880,27 +2091,44 @@ public partial class MainViewModel : ObservableObject
                 // to finish. Unwrapping forces a full wait so two iterations can never overlap.
                 var op = Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
-                    // Vacation owns the OOF window while it's on. The only
-                    // thing we do here is detect the end-of-vacation moment
-                    // and hand control back to the regular work schedule.
-                    if (IsOnLongVacation)
+                    // Time-based vacation end runs unconditionally — losing
+                    // this tick would leave Exchange holding stale OOF after
+                    // the user is back. (User-intent end, i.e. unchecking the
+                    // box, is folded into the Manual reassert path below so
+                    // it respects the auto-sync gate.)
+                    if (IsOnLongVacation && HasVacationEnded(DateTime.Now))
                     {
-                        if (HasVacationEnded(DateTime.Now))
-                        {
-                            await EndVacationAsync();
-                        }
+                        await EndVacationAsync();
                         return;
                     }
-                    // Auto-refresh off → the periodic loop is for vacation-end
+                    // Auto-sync off → the periodic loop is for vacation-end
                     // detection only. We don't touch the mailbox until the user
-                    // takes another explicit action (toggle / save changes).
+                    // takes another explicit action (toggle / save changes /
+                    // ⚡ Sync now).
                     if (!IsAutoRefreshEnabled) return;
-                    await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: true);
-                    // Auto-sync runs after the local toggle so Outlook stays
-                    // in lock-step with the client's view, and so the
-                    // *next* off-hours window is already pre-pushed before
-                    // the user's working day even ends.
-                    await SyncToOutlookCoreAsync(isUserInitiated: false);
+
+                    if (IsScheduleMode)
+                    {
+                        // Vacation block owns OOF; never overwrite it with a
+                        // weekly-schedule push.
+                        if (IsOnLongVacation) return;
+                        await ApplyWorkScheduleAsync(showSuccessMessage: false, suppressTrayNotification: true);
+                        // Auto-sync runs after the local toggle so Outlook stays
+                        // in lock-step with the client's view, and so the
+                        // *next* off-hours window is already pre-pushed before
+                        // the user's working day even ends.
+                        await SyncToOutlookCoreAsync(isUserInitiated: false);
+                    }
+                    else
+                    {
+                        // Manual mode + auto-sync: reconcile current local
+                        // state against what the server holds, correcting
+                        // drift from other clients (Outlook desktop, OWA,
+                        // an admin, Power Automate flows). Also pushes
+                        // pending vacation start/end transitions when the
+                        // checkbox diverges from IsOnLongVacation.
+                        await ReassertManualStateAsync(isUserInitiated: false);
+                    }
                 });
                 await op.Task.Unwrap();
             }

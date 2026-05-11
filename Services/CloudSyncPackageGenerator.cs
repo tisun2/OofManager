@@ -129,27 +129,29 @@ public static class CloudSyncPackageGenerator
 
         // Per-day-of-week lookup tables, indexed by Power Automate's
         // dayOfWeek (0=Sunday..6=Saturday — same as .NET DayOfWeek).
-        // Today's actual end-of-shift hour:minute (used as OOF.start so days
-        // with a later end-of-shift than the trigger get the correct start
-        // timestamp), plus the hop-count and start-time of the next workday
-        // (used as OOF.end so a Friday OOF runs through Monday morning even
-        // when Mon's start-of-shift differs from Tue's).
-        var todayEndH = new int[7];
-        var todayEndM = new int[7];
+        // Start is anchored to the most recent configured workday's end-of-
+        // shift (Sat/Sun point back to Friday for a normal Mon-Fri schedule),
+        // and end jumps forward to the next workday's start-of-shift.
+        var startHopDays = new int[7];
+        var startH = new int[7];
+        var startM = new int[7];
         var hopDays = new int[7];
         var nextStartH = new int[7];
         var nextStartM = new int[7];
         for (int dow = 0; dow < 7; dow++)
         {
-            var day = (DayOfWeek)dow;
-            if (schedule.IsWorkday(day))
+            for (int back = 0; back <= 6; back++)
             {
-                var end = schedule.GetEnd(day);
-                todayEndH[dow] = end.Hours;
-                todayEndM[dow] = end.Minutes;
+                var candidate = (DayOfWeek)((dow - back + 7) % 7);
+                if (schedule.IsWorkday(candidate))
+                {
+                    startHopDays[dow] = -back;
+                    var end = schedule.GetEnd(candidate);
+                    startH[dow] = end.Hours;
+                    startM[dow] = end.Minutes;
+                    break;
+                }
             }
-            // Non-workdays leave todayEnd at 0; the trigger's weekDays filter
-            // means the action never fires on them anyway.
             for (int hop = 1; hop <= 7; hop++)
             {
                 var candidate = (DayOfWeek)((dow + hop) % 7);
@@ -166,11 +168,10 @@ public static class CloudSyncPackageGenerator
 
         // Both expressions use the same shape:
         //   addDays(localToday, hopDays[dow]) + hour[dow] + minute[dow]
-        // For start, hopDays is all-zeros (= today). For end, hopDays jumps
-        // ahead to the next configured workday and we pick up that day's
-        // start-of-shift.
-        var hopZero = new int[7];
-        var startExpr = $"@{{{BuildPerDowTimestampExpression(hopZero, todayEndH, todayEndM, tzId)}}}";
+        // For start, hopDays points to the most recent workday end. For end,
+        // hopDays jumps ahead to the next configured workday and we pick up
+        // that day's start-of-shift.
+        var startExpr = $"@{{{BuildPerDowTimestampExpression(startHopDays, startH, startM, tzId)}}}";
         var endExpr = $"@{{{BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId)}}}";
 
         var workflowJson = BuildWorkflowFileJson(

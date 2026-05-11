@@ -87,25 +87,30 @@ public static class CloudSyncGuideGenerator
         var triggerMinute = workEnd.Minutes;
 
         // Per-day-of-week lookup tables. Power Automate's dayOfWeek returns
-        // 0=Sunday..6=Saturday, matching .NET DayOfWeek. todayEndH/M is
-        // today's actual end-of-shift (used as OOF.start so a Friday with a
-        // later shift than the trigger gets the right start time). hopDays +
-        // nextStartH/M jump to the next workday's start-of-shift (used as
-        // OOF.end). For non-workdays we leave todayEnd at zero — the
-        // trigger's weekDays filter means the action never fires there.
-        var todayEndH = new int[7];
-        var todayEndM = new int[7];
+        // 0=Sunday..6=Saturday, matching .NET DayOfWeek. Start is anchored to
+        // the most recent configured workday's end-of-shift: on workdays that
+        // is today, while non-workdays (for example Sat/Sun) point back to
+        // Friday's end instead of inventing a midnight start. End jumps
+        // forward to the next configured workday's start-of-shift.
+        var startHopDays = new int[7];
+        var startH = new int[7];
+        var startM = new int[7];
         var hopDays = new int[7];
         var nextStartH = new int[7];
         var nextStartM = new int[7];
         for (int dow = 0; dow < 7; dow++)
         {
-            var day = (DayOfWeek)dow;
-            if (schedule.IsWorkday(day))
+          for (int back = 0; back <= 6; back++)
             {
-                var end = schedule.GetEnd(day);
-                todayEndH[dow] = end.Hours;
-                todayEndM[dow] = end.Minutes;
+            var candidate = (DayOfWeek)((dow - back + 7) % 7);
+            if (schedule.IsWorkday(candidate))
+            {
+              startHopDays[dow] = -back;
+              var end = schedule.GetEnd(candidate);
+              startH[dow] = end.Hours;
+              startM[dow] = end.Minutes;
+              break;
+            }
             }
             for (int hop = 1; hop <= 7; hop++)
             {
@@ -123,11 +128,10 @@ public static class CloudSyncGuideGenerator
 
         // Both expressions share the same shape:
         //   addDays(localToday, hop[dow]) + hour[dow] + minute[dow]
-        // Start uses hop=0 (today) + today's end-of-shift; End uses hopDays
-        // + the next workday's start-of-shift. The action's Time Zone field
-        // is set to tzId so Power Automate sends the right absolute moment.
-        var hopZero = new int[7];
-        var startTimeExpression = BuildPerDowTimestampExpression(hopZero, todayEndH, todayEndM, tzId);
+        // Start uses the most recent workday's end-of-shift; End uses the
+        // next workday's start-of-shift. The action's Time Zone field is set
+        // to tzId so Power Automate sends the right absolute moment.
+        var startTimeExpression = BuildPerDowTimestampExpression(startHopDays, startH, startM, tzId);
         var endTimeExpression = BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId);
 
         var internalEsc = Escape(internalReply);

@@ -62,15 +62,15 @@
                         <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
                         <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
                     </StackPanel>
-                    <Button Grid.Column="1" Content="📥 Hide to Tray"
-                            Command="{Binding HideToTrayCommand}"
-                            ToolTip="Hide window to system tray; the app keeps running in the background"
+                        <Button Grid.Column="1" Content="🔄 Switch account"
+                            Command="{Binding SwitchAccountCommand}"
+                            ToolTip="Sign out and pick a different Microsoft 365 account"
                             VerticalAlignment="Center"
                             Padding="14,4"
                             Margin="0,0,8,0"/>
-                    <Button Grid.Column="2" Content="🔄 Switch account"
-                            Command="{Binding SwitchAccountCommand}"
-                            ToolTip="Sign out and pick a different Microsoft 365 account"
+                        <Button Grid.Column="2" Content="📥 Hide to Tray"
+                            Command="{Binding HideToTrayCommand}"
+                            ToolTip="Hide window to system tray; the app keeps running in the background"
                             VerticalAlignment="Center"
                             Padding="14,4"/>
 
@@ -84,7 +84,7 @@
             </Border>
 
             <!-- Status Message -->
-            <TextBlock Text="{Binding StatusMessage}"
+            <TextBlock Text="{Binding OofStatusBarMessage}"
                        FontSize="15"
                        FontWeight="SemiBold"
                        HorizontalAlignment="Center"
@@ -92,17 +92,87 @@
                        Margin="0,2,0,14"
                        TextWrapping="Wrap"/>
 
-            <!-- Quick Toggle Card. Holds the OOF on/off toggle plus the
-                 Long Vacation / Holiday override as a sub-section: both
-                 directly mutate the same Exchange OOF window, so grouping
-                 them under one "Out of Office" header keeps the user from
-                 hunting across two visually identical cards. -->
+            <!-- OOF Sync mode picker. Sits directly under the status
+                 message; the selected mode controls which card appears
+                 below (Manual mode or Schedule mode). The Auto-sync
+                 checkbox and ⚡ Sync now button apply to both modes; the
+                 SyncCardSubtitle text explains what each does in the
+                 currently-selected mode. -->
             <Border Style="{StaticResource CardStyle}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <StackPanel Margin="0">
+                    <TextBlock Text="🔄 OOF Sync" FontSize="16" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding SyncCardSubtitle}"
+                               FontSize="12" Opacity="0.65"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0"/>
+
+                    <!-- Mode picker. Two RadioButtons in a single group act
+                         as a segmented Manual / Schedule control. Both bind
+                         to their own proxy property (IsManualMode /
+                         IsScheduleMode) which forward to IsWorkScheduleEnabled
+                         internally so the existing auto-managed gating,
+                         persistence, and side effects keep working without
+                         a second source of truth. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <RadioButton GroupName="OofSyncMode"
+                                     IsChecked="{Binding IsScheduleMode, Mode=TwoWay}"
+                                     Content="🗓️ Schedule mode"
+                                     FontSize="13"
+                                     ToolTip="OofManager auto-flips OOF based on the weekly work-hours grid in the Schedule mode card below. The OOF toggle becomes read-only."/>
+                        <RadioButton GroupName="OofSyncMode"
+                                     IsChecked="{Binding IsManualMode, Mode=TwoWay}"
+                                     Content="✋ Manual mode"
+                                     FontSize="13"
+                                     Margin="20,0,0,0"
+                                     ToolTip="You flip OOF on/off yourself in the Manual mode card below. OofManager only writes to Exchange when you click ⚡ Sync now or have Auto-sync enabled (to correct drift from other clients)."/>
+                    </StackPanel>
+
+                    <!-- Shared controls: Auto-sync + ⚡ Sync now. Both modes
+                         use these — Schedule mode pushes the next off-hours
+                         window, Manual mode re-asserts the current toggle
+                         state + reply text. The Sync now tooltip is
+                         mode-agnostic for the same reason. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <CheckBox FontSize="12" VerticalAlignment="Center"
+                                  IsChecked="{Binding IsAutoRefreshEnabled, Mode=TwoWay}"
+                                  Content="🔄 Auto-sync every 5 minutes"
+                                  ToolTip="When checked, OofManager runs a background reconcile every 5 minutes. In Schedule mode it re-pushes the next off-hours window so the schedule rolls forward indefinitely. In Manual mode it re-asserts your current on/off state + reply text on Exchange, correcting drift from Outlook desktop / OWA / admins / Power Automate flows."/>
+                        <Button Margin="12,0,0,0" Padding="10,4" FontSize="12"
+                                Content="⚡ Sync now"
+                                Command="{Binding SyncNowCommand}"
+                                VerticalAlignment="Center"
+                                ToolTip="Force-push to Outlook right now. Schedule mode pushes the next off-hours window; Manual mode re-asserts the current OOF on/off state + reply text."/>
+                    </StackPanel>
+
+                        <TextBlock Text="{Binding StatusMessage}"
+                               Visibility="{Binding HasStatusMessage, Converter={StaticResource BoolToVisibility}}"
+                               FontSize="12"
+                               Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,10,0,0"/>
+
+                    <!-- Divider between the shared OOF Sync header and the
+                         mode-specific lower half. Used to be three stacked
+                         cards (OOF Sync + Manual mode + Schedule mode);
+                         folded into one card so the mode picker and the
+                         content it drives read as a single visual unit. -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0" Margin="0,16,0,0"/>
+
+                    <!-- Lower half — Manual mode subsection. Holds the OOF
+                         on/off toggle (user-controlled in this mode), the
+                         cloud-sync reminder banner, the Update reply
+                         messages button, and the Long Vacation / Holiday
+                         override sub-section. The section title used to be
+                         "✋ Manual mode" but the radio button above already
+                         says that, so it's been dropped — the dynamic
+                         OofCardSubtitle below is the only header we need. -->
+                    <Grid Margin="0,16,0,0"
+                          Visibility="{Binding IsManualMode, Converter={StaticResource BoolToVisibility}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -110,7 +180,6 @@
                     </Grid.RowDefinitions>
 
                     <StackPanel Margin="0">
-                        <TextBlock Text="Out of Office" FontSize="22" FontWeight="Bold"/>
                         <!-- Sub-caption is the single source of "what mode am
                              I in / what will my action do?" The bold status
                              line that used to live here ("Disabled / Enabled
@@ -118,7 +187,7 @@
                              the right, so it's been folded into this caption
                              which already says everything users actually need. -->
                         <TextBlock Text="{Binding OofCardSubtitle}"
-                                   FontSize="12" Opacity="0.65" Margin="0,6,0,0"
+                                   FontSize="12" Opacity="0.65"
                                    TextWrapping="Wrap"/>
 
                         <!-- Manual-control reminder. When the user turns
@@ -151,11 +220,10 @@
 
                     <!-- "Update reply messages" appears only when (a) the
                          user is in manual mode AND (b) they've edited the
-                         reply text since the last commit. The OOF on/off
-                         toggle to the right of this card now auto-commits
-                         the moment the user flips it, so this button no
-                         longer carries the state-flip role — its only job
-                         is to push edited reply bodies up to Exchange. -->
+                        reply text since the last commit. The OOF on/off
+                        toggle is deferred to ⚡ Sync now / Auto-sync, so
+                        this button only pushes edited reply bodies while
+                        preserving Outlook's current on/off/window state. -->
                     <Button Grid.Row="1" Grid.ColumnSpan="2"
                             Content="💾 Update reply messages"
                             Command="{Binding QuickToggleCommand}"
@@ -164,7 +232,7 @@
                             HorizontalAlignment="Stretch"
                             HorizontalContentAlignment="Center"
                             Margin="0,12,0,0"
-                            ToolTip="Push your edited reply messages (and the external-audience choice) to Outlook. The on/off toggle commits on its own as soon as you flip it."
+                            ToolTip="Push edited reply messages to Outlook. The on/off switch is pushed by ⚡ Sync now or Auto-sync."
                             Visibility="{Binding CanShowSaveNow, Converter={StaticResource BoolToVisibility}}"/>
 
                     <!-- Long Vacation / Holiday sub-section. Used to be its
@@ -182,37 +250,56 @@
                             Padding="0,12,0,0"
                             Margin="0,16,0,0">
                         <StackPanel Margin="0" Grid.IsSharedSizeScope="True">
-                            <TextBlock Text="🏖️ Long Vacation / Holiday"
-                                       FontSize="14" FontWeight="SemiBold"/>
+                            <!-- Section header doubles as the on/off control:
+                                 unchecked collapses the From/To pickers and
+                                 helper text below. Checking the box does NOT
+                                 push to Outlook on its own — the vacation
+                                 window is committed on the next ⚡ Sync now
+                                 click or 5-min auto-sync tick (matches the
+                                 deferred-sync model the rest of Manual mode
+                                 already uses). -->
+                            <CheckBox Content="🏖️ Long Vacation / Holiday"
+                                      IsChecked="{Binding IsVacationWindowActive, Mode=TwoWay}"
+                                      IsEnabled="{Binding CanToggleVacationWindow}"
+                                      FontSize="14" FontWeight="SemiBold"
+                                      HorizontalAlignment="Left"
+                                      ToolTip="Plan a single multi-day Scheduled OOF window. Checking the box doesn't push to Outlook immediately — click ⚡ Sync now or enable Auto-sync to commit the vacation."/>
 
-                            <!-- Active state: green confirmation + End vacation button. -->
-                            <StackPanel Visibility="{Binding IsOnLongVacation, Converter={StaticResource BoolToVisibility}}">
-                                <TextBlock Text="{Binding VacationStatus}"
-                                           FontSize="14" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
-                                           Margin="0,8,0,4" TextWrapping="Wrap"/>
-                                <TextBlock Text="Work schedule auto-sync is paused. The vacation window will clear automatically at the end time, or you can end it now."
-                                           FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,12"/>
-                                <Button Content="🛬 End vacation now"
-                                        Command="{Binding EndVacationCommand}"
-                                        Padding="14,6"
-                                        HorizontalAlignment="Left"
-                                        ToolTip="Clears the vacation OOF window on Exchange, restores your previous reply text, and resumes the regular Work Schedule."/>
-                            </StackPanel>
+                            <!-- Status line: shown only when a vacation
+                                 window is currently active on the server.
+                                 Replaces the separate "vacation active"
+                                 sub-panel that used to host its own End-
+                                 vacation button — ending a vacation is now
+                                 just unchecking the title checkbox above
+                                 (followed by a sync). -->
+                            <TextBlock Text="{Binding VacationStatus}"
+                                       Visibility="{Binding IsOnLongVacation, Converter={StaticResource BoolToVisibility}}"
+                                       FontSize="13" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
+                                       Margin="0,8,0,0" TextWrapping="Wrap"/>
 
-                            <!-- Setup state: collapsed by default to keep the card
-                                 compact for users who aren't planning a vacation
-                                 today. Expander reveals date pickers + Start button. -->
-                            <Expander Visibility="{Binding IsOnLongVacation, Converter={StaticResource InvertBoolToVisibility}}"
-                                      Header="🗓️ Plan a vacation window…"
-                                      IsExpanded="False"
-                                      Margin="0,8,0,0">
-                              <StackPanel Margin="0,8,0,0">
-                                <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.65" Margin="0,0,0,12">
-                                    Push a single multi-day Scheduled OOF for a holiday or extended leave. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply — whatever is in the Internal/External boxes when you click Start vacation gets sent.
+                            <!-- Everything below the checkbox is collapsed
+                                 when the user hasn't planned a vacation,
+                                 so an empty section is literally just the
+                                 header line. -->
+                            <StackPanel Visibility="{Binding IsVacationWindowActive, Converter={StaticResource BoolToVisibility}}">
+                                <!-- Helper tip: only shown when no vacation
+                                     is currently active on the server yet.
+                                     Once it's live the VacationStatus line
+                                     above already says everything we need. -->
+                                <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.65"
+                                           Margin="0,8,0,12"
+                                           Visibility="{Binding IsOnLongVacation, Converter={StaticResource InvertBoolToVisibility}}">
+                                    Push a single multi-day Scheduled OOF for a holiday or extended leave. Click <Run FontWeight="SemiBold">⚡ Sync now</Run> above (or enable Auto-sync) to commit it to Outlook. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply — whatever is in the Internal/External boxes at sync time gets sent.
                                 </TextBlock>
 
-                                <Grid>
+                                <!-- Date pickers. Disabled while a vacation
+                                     is already live on the server so the
+                                     user has to clear the current window
+                                     first (uncheck + sync) before editing
+                                     the dates — prevents accidentally
+                                     rewriting an in-flight Scheduled OOF. -->
+                                <Grid IsEnabled="{Binding IsOnLongVacation, Converter={StaticResource InvertBool}}">
                                     <!-- Two halves of the row are From-block | To-block,
                                          separated by an arrow. Inside each half the
                                          label sits next to a DatePicker + small time
@@ -289,123 +376,22 @@
                                                   HorizontalAlignment="Stretch"/>
                                     </Grid>
                                 </Grid>
-
-                                <!-- Non-accent style + narrower width: this is a
-                                     one-shot override that lives inside a collapsed
-                                     Expander, so it shouldn't compete visually with
-                                     the daily Apply-to-Outlook button below. -->
-                                <Button Content="🏖️ Start vacation"
-                                        Command="{Binding StartVacationCommand}"
-                                        Height="36"
-                                        Width="240"
-                                        HorizontalAlignment="Center"
-                                        HorizontalContentAlignment="Center"
-                                        Margin="0,12,0,0"
-                                        ToolTip="Pushes a single multi-day Scheduled OOF to Exchange covering the entire vacation, and pauses the regular Work Schedule auto-sync."/>
-                              </StackPanel>
-                            </Expander>
-                        </StackPanel>
-                    </Border>
-                </Grid>
-            </Border>
-
-            <!-- Work Schedule Card -->
-            <Border Style="{StaticResource CardStyle}">
-                <!-- IsSharedSizeScope so the schedule grid and the button grid
-                     below it agree on Auto-column widths (Day, Off Work) and
-                     star-column widths (Start Time, End Time). Without this
-                     each grid measures independently and the Save button's
-                     right edge ends up shorter than the Start-time column. -->
-                <StackPanel Margin="0" Grid.IsSharedSizeScope="True">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Margin="0">
-                            <TextBlock Text="🗓️ Work Schedule" FontSize="16" FontWeight="Bold"/>
-                            <TextBlock Text="{Binding WorkScheduleStatus}" FontSize="12" Opacity="0.65" Margin="0,4,0,0"/>
-                            <!-- One-line explainer for the toggle: doubles as the "what does this
-                                 switch actually do?" answer, since flipping it now both saves the
-                                 grid and pushes the result straight to Outlook. -->
-                            <TextBlock FontSize="12" Opacity="0.65" Margin="0,4,0,0"
-                                       TextWrapping="Wrap"
-                                       Text="Flip on to enable auto-managed mode. The schedule is pushed to Outlook only when you click ⚡ Sync now, enable Auto-refresh, or save grid edits. Flip off and OOF Manager finalizes the mailbox once: inside work hours → OOF off; outside work hours → OOF stays on indefinitely until you turn it off in Outlook."/>
-                            <!-- Sub-row: Auto-refresh checkbox + manual sync button side-by-side.
-                                 The checkbox gates the 5-min background ticker (off by default, so
-                                 nothing mutates the mailbox without an explicit gesture). The
-                                 button is the explicit gesture for users who don't want the ticker
-                                 but still need today's off-hours window pushed to Outlook. Hidden
-                                 as a unit when Work Schedule is off — they only matter under the
-                                 auto-managed gate. -->
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <StackPanel.Style>
-                                    <Style TargetType="StackPanel">
-                                        <Setter Property="Visibility" Value="{Binding IsWorkScheduleEnabled, Converter={StaticResource BoolToVisibility}}"/>
-                                    </Style>
-                                </StackPanel.Style>
-                                <CheckBox FontSize="12" VerticalAlignment="Center"
-                                          IsChecked="{Binding IsAutoRefreshEnabled, Mode=TwoWay}"
-                                          Content="🔄 Auto-refresh every 5 minutes (rolls the window forward day-by-day)"
-                                          ToolTip="When checked, OOF Manager re-pushes the next off-hours window to Outlook on every 5-minute tick so the schedule rolls forward indefinitely. When unchecked, the schedule is applied only when you click ⚡ Sync now or save grid edits."/>
-                                <Button Margin="12,0,0,0" Padding="10,4" FontSize="12"
-                                        Content="⚡ Sync now"
-                                        Command="{Binding SyncNowCommand}"
-                                        VerticalAlignment="Center"
-                                        ToolTip="Push the current schedule grid to Outlook right now — pre-loads the next off-hours window so the mailbox auto-flips at the boundary even without Auto-refresh."/>
                             </StackPanel>
                         </StackPanel>
-                        <ui:ToggleSwitch Grid.Column="1"
-                                         IsOn="{Binding IsWorkScheduleEnabled, Mode=TwoWay}"
-                                         VerticalAlignment="Center"/>
+                    </Border>
                     </Grid>
 
-                    <!-- Cloud sync setup. The local auto-toggle above only works when this PC is on
-                         (with the app or its background scheduled task running). For users who want
-                         their OOF window to keep advancing even when ALL their computers are off,
-                         the buttons below set up a Power Automate flow inside their M365 account.
-                         "Download package" creates a one-click .zip the user uploads to Power
-                         Automate; "Manual setup" generates a step-by-step HTML guide as a fallback
-                         for tenants where legacy package import is disabled.
-                         Shown inline (not in an Expander) because this is the only feature that
-                         keeps OOF rolling forward with every device powered down — burying it
-                         behind a collapsed header made users miss it. -->
-                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="0,12,0,0"
-                            Margin="0,0,0,12">
-                        <StackPanel Margin="0">
-                            <TextBlock Text="☁️ Always-on cloud schedule (Power Automate)"
-                                       FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                            <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
-                                       FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <!-- Two equal-width CTAs side-by-side. The
-                                 package is the recommended path; the manual
-                                 setup guide is the fallback for tenants that
-                                 block legacy package import. Equal weight in
-                                 the UI because picking the wrong one wastes
-                                 the user's time and they can't tell up front
-                                 which their tenant supports. -->
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Button Grid.Column="0"
-                                        Content="📦 Generate Power Automate solution"
-                                        Command="{Binding GenerateCloudSyncPackageCommand}"
-                                        Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Generates a Power Automate solution package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
-                                <Button Grid.Column="2"
-                                        Content="📝 Manual setup guide"
-                                        Command="{Binding OpenCloudSyncGuideCommand}"
-                                        Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser."/>
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-
+                    <!-- Lower half — Schedule mode subsection. Holds the
+                         schedule status caption, the always-on cloud sync
+                         setup, the weekly hours grid, and the Save changes
+                         button. The radio button above carries the "Schedule
+                         mode" label so the inline header has been dropped. -->
+                    <StackPanel Margin="0,16,0,0" Grid.IsSharedSizeScope="True"
+                                Visibility="{Binding IsScheduleMode, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{Binding WorkScheduleStatus}"
+                                   FontSize="12" Opacity="0.65"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8"/>
                     <!-- Weekly hours editor laid out horizontally: 1 label
                          column + 7 day columns × 4 rows (day name, Off Work
                          checkbox, Work Start, Work End). Comparing the seven
@@ -479,9 +465,9 @@
                     </Grid>
 
                     <!-- Small \"Save changes\" button. Only surfaces after the user edits the
-                         grid (workday checkboxes, start/end times). The Work Schedule toggle
-                         above auto-commits on flip, so it covers the on/off path; this button
-                         exists solely to push pending grid edits without forcing the user to
+                        grid (workday checkboxes, start/end times). The mode picker
+                        covers the schedule on/off path; this button exists solely
+                        to push pending grid edits without forcing the user to
                          toggle off-and-on. Hidden when nothing's pending so the card stays
                          visually quiet during normal use. -->
                     <Button Margin="0,12,0,0"
@@ -505,6 +491,52 @@
                             </Style>
                         </Button.Style>
                     </Button>
+
+                    <!-- Cloud sync setup. The local auto-toggle above only works when this PC is on
+                         (with the app or its background scheduled task running). For users who want
+                         their OOF window to keep advancing even when ALL their computers are off,
+                         the buttons below set up a Power Automate flow inside their M365 account.
+                         "Download package" creates a one-click .zip the user uploads to Power
+                         Automate; "Manual setup" generates a step-by-step HTML guide as a fallback
+                         for tenants where legacy package import is disabled.
+                         Shown after the weekly editor so the main schedule
+                         controls sit directly under the live status line. -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0"
+                            Margin="0,12,0,0">
+                        <StackPanel Margin="0">
+                            <TextBlock Text="☁️ Always-on cloud schedule (Power Automate)"
+                                       FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                            <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
+                                       FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <!-- Two equal-width CTAs side-by-side. The
+                                 package is the recommended path; the manual
+                                 setup guide is the fallback for tenants that
+                                 block legacy package import. Equal weight in
+                                 the UI because picking the wrong one wastes
+                                 the user's time and they can't tell up front
+                                 which their tenant supports. -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0"
+                                        Content="📦 Generate Power Automate solution"
+                                        Command="{Binding GenerateCloudSyncPackageCommand}"
+                                        Padding="12,6" HorizontalAlignment="Stretch"
+                                        ToolTip="Generates a Power Automate solution package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
+                                <Button Grid.Column="2"
+                                        Content="📝 Manual setup guide"
+                                        Command="{Binding OpenCloudSyncGuideCommand}"
+                                        Padding="12,6" HorizontalAlignment="Stretch"
+                                        ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser."/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
