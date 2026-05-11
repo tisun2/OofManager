@@ -12,6 +12,10 @@
             <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseLowBrush}"/>
             <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"/>
             <Setter Property="Padding" Value="16"/>
+            <!-- Bottom margin so stacked cards have visible breathing room.
+                 Without it sibling cards share an edge and the user can't
+                 tell where one section ends and the next begins. -->
+            <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
 
         <!-- Center the time text inside the editable time-picker ComboBoxes
@@ -88,7 +92,11 @@
                        Margin="0,2,0,14"
                        TextWrapping="Wrap"/>
 
-            <!-- Quick Toggle Card -->
+            <!-- Quick Toggle Card. Holds the OOF on/off toggle plus the
+                 Long Vacation / Holiday override as a sub-section: both
+                 directly mutate the same Exchange OOF window, so grouping
+                 them under one "Out of Office" header keeps the user from
+                 hunting across two visually identical cards. -->
             <Border Style="{StaticResource CardStyle}">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -96,6 +104,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
@@ -111,6 +120,23 @@
                         <TextBlock Text="{Binding OofCardSubtitle}"
                                    FontSize="12" Opacity="0.65" Margin="0,6,0,0"
                                    TextWrapping="Wrap"/>
+
+                        <!-- Manual-control reminder. When the user turns
+                             Work Schedule off they regain full manual
+                             control of the OOF toggle here — but any Power
+                             Automate flow they previously imported still
+                             runs inside their M365 tenant on its own
+                             schedule and will silently re-flip OOF behind
+                             their back. Surface this exactly when manual
+                             mode kicks in so they remember to disable the
+                             flow in Power Automate too. -->
+                        <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
+                                CornerRadius="4" Padding="10,8" Margin="0,10,0,0"
+                                Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
+                            <TextBlock FontSize="11" TextWrapping="Wrap">
+                                ⚠️ If you previously imported the Cloud Sync (Power Automate) solution, turn that flow OFF in make.powerautomate.com — it runs in Microsoft 365 independently and will keep changing your OOF on its own schedule while you're in manual control.
+                            </TextBlock>
+                        </Border>
                     </StackPanel>
 
                     <!-- Toggle: disabled (read-only state indicator) when the
@@ -140,152 +166,147 @@
                             Margin="0,12,0,0"
                             ToolTip="Push your edited reply messages (and the external-audience choice) to Outlook. The on/off toggle commits on its own as soon as you flip it."
                             Visibility="{Binding CanShowSaveNow, Converter={StaticResource BoolToVisibility}}"/>
+
+                    <!-- Long Vacation / Holiday sub-section. Used to be its
+                         own card; folded in here because it writes to the
+                         exact same Exchange OOF window as the toggle above,
+                         and users were confused that "Out of Office" and
+                         "Long Vacation" looked like two unrelated features.
+                         When active, the vacation owns the OOF window for
+                         its whole stretch (single multi-day Scheduled block
+                         on Exchange) and pauses per-day Work Schedule
+                         auto-sync so the two rules don't fight. -->
+                    <Border Grid.Row="2" Grid.ColumnSpan="2"
+                            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0"
+                            Margin="0,16,0,0">
+                        <StackPanel Margin="0" Grid.IsSharedSizeScope="True">
+                            <TextBlock Text="🏖️ Long Vacation / Holiday"
+                                       FontSize="14" FontWeight="SemiBold"/>
+
+                            <!-- Active state: green confirmation + End vacation button. -->
+                            <StackPanel Visibility="{Binding IsOnLongVacation, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="{Binding VacationStatus}"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
+                                           Margin="0,8,0,4" TextWrapping="Wrap"/>
+                                <TextBlock Text="Work schedule auto-sync is paused. The vacation window will clear automatically at the end time, or you can end it now."
+                                           FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                                <Button Content="🛬 End vacation now"
+                                        Command="{Binding EndVacationCommand}"
+                                        Padding="14,6"
+                                        HorizontalAlignment="Left"
+                                        ToolTip="Clears the vacation OOF window on Exchange, restores your previous reply text, and resumes the regular Work Schedule."/>
+                            </StackPanel>
+
+                            <!-- Setup state: collapsed by default to keep the card
+                                 compact for users who aren't planning a vacation
+                                 today. Expander reveals date pickers + Start button. -->
+                            <Expander Visibility="{Binding IsOnLongVacation, Converter={StaticResource InvertBoolToVisibility}}"
+                                      Header="🗓️ Plan a vacation window…"
+                                      IsExpanded="False"
+                                      Margin="0,8,0,0">
+                              <StackPanel Margin="0,8,0,0">
+                                <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.65" Margin="0,0,0,12">
+                                    Push a single multi-day Scheduled OOF for a holiday or extended leave. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply — whatever is in the Internal/External boxes when you click Start vacation gets sent.
+                                </TextBlock>
+
+                                <Grid>
+                                    <!-- Two halves of the row are From-block | To-block,
+                                         separated by an arrow. Inside each half the
+                                         label sits next to a DatePicker + small time
+                                         combo so a vacation window reads naturally
+                                         left-to-right: "From [date] [time] → To
+                                         [date] [time]". -->
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- From group -->
+                                    <Grid Grid.Column="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="From" FontSize="12" Opacity="0.7"
+                                                   VerticalAlignment="Center"/>
+                                        <DatePicker Grid.Column="2"
+                                                    x:Name="VacationStartDatePicker"
+                                                    SelectedDate="{Binding VacationStartDate, Mode=TwoWay}"
+                                                    HorizontalAlignment="Stretch"/>
+                                        <ComboBox Grid.Column="4"
+                                                  Style="{StaticResource TimePickerComboStyle}"
+                                                  IsEditable="True" IsTextSearchEnabled="True"
+                                                  ItemsSource="{Binding WorkTimeOptions}"
+                                                  Text="{Binding VacationStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                  HorizontalAlignment="Stretch"/>
+                                    </Grid>
+
+                                    <!-- Range arrow rendered as a 1px Border + small
+                                         triangle, not a Unicode glyph: the font-stack
+                                         was inserting visible gaps between U+2500 box
+                                         chars on this machine, breaking the line into
+                                         dashes. A Border draws a continuous pixel
+                                         line under any font. -->
+                                    <Grid Grid.Column="1" Margin="24,0,24,0" VerticalAlignment="Center" MinWidth="40">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Height="1"
+                                                Background="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                                Opacity="0.5" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="▶" FontSize="9" Opacity="0.5"
+                                                   VerticalAlignment="Center" Margin="-1,0,0,0"/>
+                                    </Grid>
+
+                                    <!-- To group -->
+                                    <Grid Grid.Column="2">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="6"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="To" FontSize="12" Opacity="0.7"
+                                                   VerticalAlignment="Center"/>
+                                        <DatePicker Grid.Column="2"
+                                                    x:Name="VacationEndDatePicker"
+                                                    SelectedDate="{Binding VacationEndDate, Mode=TwoWay}"
+                                                    HorizontalAlignment="Stretch"/>
+                                        <ComboBox Grid.Column="4"
+                                                  Style="{StaticResource TimePickerComboStyle}"
+                                                  IsEditable="True" IsTextSearchEnabled="True"
+                                                  ItemsSource="{Binding WorkTimeOptions}"
+                                                  Text="{Binding VacationEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                  HorizontalAlignment="Stretch"/>
+                                    </Grid>
+                                </Grid>
+
+                                <!-- Non-accent style + narrower width: this is a
+                                     one-shot override that lives inside a collapsed
+                                     Expander, so it shouldn't compete visually with
+                                     the daily Apply-to-Outlook button below. -->
+                                <Button Content="🏖️ Start vacation"
+                                        Command="{Binding StartVacationCommand}"
+                                        Height="36"
+                                        Width="240"
+                                        HorizontalAlignment="Center"
+                                        HorizontalContentAlignment="Center"
+                                        Margin="0,12,0,0"
+                                        ToolTip="Pushes a single multi-day Scheduled OOF to Exchange covering the entire vacation, and pauses the regular Work Schedule auto-sync."/>
+                              </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
                 </Grid>
-            </Border>
-
-            <!-- Long Vacation Card. Sits "above" the regular Work Schedule:
-                 when active, it owns the OOF window for the whole vacation
-                 stretch (single multi-day Scheduled block on Exchange) and
-                 pauses the per-day work-schedule auto-toggle so the two
-                 don't fight. Used for holidays / extended leave that don't
-                 fit the weekly recurring pattern. -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Margin="0" Grid.IsSharedSizeScope="True">
-                    <TextBlock Text="🏖️ Long Vacation / Holiday" FontSize="16" FontWeight="Bold"/>
-
-                    <!-- Active state: green confirmation + End vacation button. -->
-                    <StackPanel Visibility="{Binding IsOnLongVacation, Converter={StaticResource BoolToVisibility}}">
-                        <TextBlock Text="{Binding VacationStatus}"
-                                   FontSize="14" FontWeight="SemiBold"
-                                   Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
-                                   Margin="0,8,0,4" TextWrapping="Wrap"/>
-                        <TextBlock Text="Work schedule auto-sync is paused. The vacation window will clear automatically at the end time, or you can end it now."
-                                   FontSize="12" Opacity="0.65" TextWrapping="Wrap" Margin="0,0,0,12"/>
-                        <Button Content="🛬 End vacation now"
-                                Command="{Binding EndVacationCommand}"
-                                Padding="14,6"
-                                HorizontalAlignment="Left"
-                                ToolTip="Clears the vacation OOF window on Exchange, restores your previous reply text, and resumes the regular Work Schedule."/>
-                    </StackPanel>
-
-                    <!-- Setup state: collapsed by default to keep the card
-                         compact for users who aren't planning a vacation
-                         today. Expander reveals date pickers + Start button. -->
-                    <Expander Visibility="{Binding IsOnLongVacation, Converter={StaticResource InvertBoolToVisibility}}"
-                              Header="🗓️ Plan a vacation window…"
-                              IsExpanded="False"
-                              Margin="0,8,0,0">
-                      <StackPanel Margin="0,8,0,0">
-                        <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.65" Margin="0,0,0,12">
-                            Push a single multi-day Scheduled OOF for a holiday or extended leave. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply — whatever is in the Internal/External boxes when you click Start vacation gets sent.
-                        </TextBlock>
-
-                        <Grid>
-                            <!-- Two halves of the row are From-block | To-block,
-                                 separated by an arrow. Inside each half the
-                                 label sits next to a DatePicker + small time
-                                 combo so a vacation window reads naturally
-                                 left-to-right: "From [date] [time] → To
-                                 [date] [time]". -->
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-
-                            <!-- From group -->
-                            <Grid Grid.Column="0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="6"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="6"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="From" FontSize="12" Opacity="0.7"
-                                           VerticalAlignment="Center"/>
-                                <DatePicker Grid.Column="2"
-                                            x:Name="VacationStartDatePicker"
-                                            SelectedDate="{Binding VacationStartDate, Mode=TwoWay}"
-                                            HorizontalAlignment="Stretch"/>
-                                <ComboBox Grid.Column="4"
-                                          Style="{StaticResource TimePickerComboStyle}"
-                                          IsEditable="True" IsTextSearchEnabled="True"
-                                          ItemsSource="{Binding WorkTimeOptions}"
-                                          Text="{Binding VacationStartTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                          HorizontalAlignment="Stretch"/>
-                            </Grid>
-
-                            <!-- Range arrow rendered as a 1px Border + small
-                                 triangle, not a Unicode glyph: the font-stack
-                                 was inserting visible gaps between U+2500 box
-                                 chars on this machine, breaking the line into
-                                 dashes. A Border draws a continuous pixel
-                                 line under any font. -->
-                            <Grid Grid.Column="1" Margin="24,0,24,0" VerticalAlignment="Center" MinWidth="40">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" Height="1"
-                                        Background="{DynamicResource SystemControlForegroundBaseMediumBrush}"
-                                        Opacity="0.5" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Text="▶" FontSize="9" Opacity="0.5"
-                                           VerticalAlignment="Center" Margin="-1,0,0,0"/>
-                            </Grid>
-
-                            <!-- To group -->
-                            <Grid Grid.Column="2">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="6"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="6"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="To" FontSize="12" Opacity="0.7"
-                                           VerticalAlignment="Center"/>
-                                <DatePicker Grid.Column="2"
-                                            x:Name="VacationEndDatePicker"
-                                            SelectedDate="{Binding VacationEndDate, Mode=TwoWay}"
-                                            HorizontalAlignment="Stretch"/>
-                                <ComboBox Grid.Column="4"
-                                          Style="{StaticResource TimePickerComboStyle}"
-                                          IsEditable="True" IsTextSearchEnabled="True"
-                                          ItemsSource="{Binding WorkTimeOptions}"
-                                          Text="{Binding VacationEndTime, Converter={StaticResource TimeSpanToHourMinute}, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                          HorizontalAlignment="Stretch"/>
-                            </Grid>
-                        </Grid>
-
-                        <!-- Cloud-sync interaction warning. The Power Automate
-                             flow runs independently of this app, so it will
-                             keep overwriting our long vacation window with
-                             daily off-hours pushes unless the user turns it
-                             off in Power Automate first. Surface this where
-                             they'll actually see it. -->
-                        <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
-                                CornerRadius="4" Padding="10,8" Margin="0,12,0,0">
-                            <TextBlock FontSize="11" TextWrapping="Wrap">
-                                ⚠️ If you set up Cloud Sync (Power Automate), turn that flow OFF before vacation — it runs in Microsoft 365 independently and will overwrite this vacation window with the daily off-hours window each morning.
-                            </TextBlock>
-                        </Border>
-
-                        <!-- Non-accent style + narrower width: this is a
-                             one-shot override that lives inside a collapsed
-                             Expander, so it shouldn't compete visually with
-                             the daily Apply-to-Outlook button below. -->
-                        <Button Content="🏖️ Start vacation"
-                                Command="{Binding StartVacationCommand}"
-                                Height="36"
-                                Width="240"
-                                HorizontalAlignment="Center"
-                                HorizontalContentAlignment="Center"
-                                Margin="0,12,0,0"
-                                ToolTip="Pushes a single multi-day Scheduled OOF to Exchange covering the entire vacation, and pauses the regular Work Schedule auto-sync."/>
-                      </StackPanel>
-                    </Expander>
-                </StackPanel>
             </Border>
 
             <!-- Work Schedule Card -->
@@ -358,20 +379,30 @@
                                        FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
                             <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
                                        FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <!-- Primary CTA: generate the package. Manual
-                                 setup is rare (only needed when tenant blocks
-                                 legacy package import) so we demote it to a
-                                 small text link rather than a parallel button. -->
-                            <Button Content="📦 Generate Power Automate solution"
-                                    Command="{Binding GenerateCloudSyncPackageCommand}"
-                                    Padding="12,6" HorizontalAlignment="Stretch"
-                                    ToolTip="Generates a Power Automate solution package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
-                            <TextBlock Margin="0,6,0,0" FontSize="11" Opacity="0.65" HorizontalAlignment="Center">
-                                <Hyperlink Command="{Binding OpenCloudSyncGuideCommand}"
-                                           ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser.">
-                                    package import blocked? open manual setup guide
-                                </Hyperlink>
-                            </TextBlock>
+                            <!-- Two equal-width CTAs side-by-side. The
+                                 package is the recommended path; the manual
+                                 setup guide is the fallback for tenants that
+                                 block legacy package import. Equal weight in
+                                 the UI because picking the wrong one wastes
+                                 the user's time and they can't tell up front
+                                 which their tenant supports. -->
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="8"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0"
+                                        Content="📦 Generate Power Automate solution"
+                                        Command="{Binding GenerateCloudSyncPackageCommand}"
+                                        Padding="12,6" HorizontalAlignment="Stretch"
+                                        ToolTip="Generates a Power Automate solution package on your Desktop and opens make.powerautomate.com so you can import it. Recommended."/>
+                                <Button Grid.Column="2"
+                                        Content="📝 Manual setup guide"
+                                        Command="{Binding OpenCloudSyncGuideCommand}"
+                                        Padding="12,6" HorizontalAlignment="Stretch"
+                                        ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser."/>
+                            </Grid>
                         </StackPanel>
                     </Border>
 
@@ -477,63 +508,15 @@
                 </StackPanel>
             </Border>
 
-            <!-- Reply Messages -->
-            <Grid Grid.IsSharedSizeScope="True">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="12"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-
-                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" SharedSizeGroup="ReplyTitle"/>
-                            <RowDefinition Height="Auto" SharedSizeGroup="ReplySubtitle"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="🏢 Internal Reply" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock Grid.Row="1" Text="Sent to people inside your organization" FontSize="12" Opacity="0.6"
-                                   VerticalAlignment="Center" Margin="0,4,0,8"/>
-                        <TextBox Grid.Row="2"
-                                 Text="{Binding InternalReply, UpdateSourceTrigger=PropertyChanged}"
-                                 Height="180"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 ui:ControlHelper.PlaceholderText="Enter the internal auto-reply message..."
-                                 FontSize="14"/>
-                    </Grid>
-                </Border>
-
-                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" SharedSizeGroup="ReplyTitle"/>
-                            <RowDefinition Height="Auto" SharedSizeGroup="ReplySubtitle"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Text="🌐 External Reply" FontSize="16" FontWeight="Bold"/>
-                        <TextBlock Grid.Row="1" Text="Sent to anyone outside your organization" FontSize="12" Opacity="0.6"
-                                   VerticalAlignment="Center" Margin="0,4,0,8"/>
-                        <TextBox Grid.Row="2"
-                                 Text="{Binding ExternalReply, UpdateSourceTrigger=PropertyChanged}"
-                                 Height="180"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 ui:ControlHelper.PlaceholderText="Enter the external auto-reply message..."
-                                 FontSize="14"/>
-                    </Grid>
-                </Border>
-            </Grid>
-
-            <!-- Save as Template moved into the Internal Reply card's title
-                 row (top-right corner) — it acts on the reply text below it,
-                 so co-locating saves a full button row at the bottom of the
-                 page and reduces visual button count. -->
-
-            <!-- Templates Card -->
+            <!-- Reply Messages + Templates. Three cards (Internal reply,
+                 External reply, My Templates) used to sit stacked here; they
+                 form a single logical unit ("the reply text and the saved
+                 versions of it") so they're now one card with two
+                 side-by-side editors at the top and the templates list
+                 underneath, separated by a divider. The "Save current as
+                 template" button stays on the right of the card header so
+                 it's unambiguously about "snapshot the current replies
+                 into the list below". -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel Margin="0">
                     <Grid>
@@ -541,13 +524,9 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="📁 My Templates" FontSize="16" FontWeight="Bold"
+                        <TextBlock Grid.Column="0" Text="✉️ Reply Messages"
+                                   FontSize="16" FontWeight="Bold"
                                    VerticalAlignment="Center"/>
-                        <!-- "Save current as template" lives on the templates
-                             card so it's unambiguous — the command persists
-                             both replies + audience together, but on a reply
-                             card it read as "only this reply". Here it reads
-                             as "add a new entry to the list below". -->
                         <Button Grid.Column="1"
                                 Content="📋 Save current as template"
                                 Command="{Binding SaveAsTemplateCommand}"
@@ -555,54 +534,117 @@
                                 VerticalAlignment="Center"
                                 ToolTip="Save the current Internal &amp; External reply text and external-audience choice as a new reusable template. Doesn't push anything to Outlook."/>
                     </Grid>
-                    <TextBlock Text="Click a template to load it" FontSize="12" Opacity="0.6" Margin="0,4,0,8"/>
 
-                    <ItemsControl ItemsSource="{Binding Templates}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="{x:Type models:OofTemplate}">
-                                <Border CornerRadius="8" BorderThickness="1"
-                                        BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                                        Padding="12" Margin="0,4">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Margin="0">
-                                            <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
-                                            <TextBlock Text="{Binding UpdatedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
-                                                       FontSize="11" Opacity="0.5"/>
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="Load"
-                                                Command="{Binding DataContext.LoadTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                CommandParameter="{Binding}"
-                                                Margin="8,0,4,0"
-                                                Padding="12,4"/>
-                                        <Button Grid.Column="2" Content="🗑️"
-                                                Command="{Binding DataContext.DeleteTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                CommandParameter="{Binding}"
-                                                Padding="8,4"/>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <!-- Two reply editors side-by-side. SharedSizeGroups keep
+                         the title row and subtitle row vertically aligned
+                         across the two halves so the TextBox tops line up
+                         even if one subtitle wraps. -->
+                    <Grid Grid.IsSharedSizeScope="True" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="No templates yet. Save your current settings as a template to get started."
-                               FontSize="13" Opacity="0.5"
-                               HorizontalAlignment="Center" Margin="0,12">
-                        <TextBlock.Style>
-                            <Style TargetType="TextBlock">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding Templates.Count}" Value="0">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </TextBlock.Style>
-                    </TextBlock>
+                        <Grid Grid.Column="0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" SharedSizeGroup="ReplyTitle"/>
+                                <RowDefinition Height="Auto" SharedSizeGroup="ReplySubtitle"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="🏢 Internal Reply" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Row="1" Text="Sent to people inside your organization" FontSize="12" Opacity="0.6"
+                                       VerticalAlignment="Center" Margin="0,4,0,8"/>
+                            <TextBox Grid.Row="2"
+                                     Text="{Binding InternalReply, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="180"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     ui:ControlHelper.PlaceholderText="Enter the internal auto-reply message..."
+                                     FontSize="14"/>
+                        </Grid>
+
+                        <Grid Grid.Column="2">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" SharedSizeGroup="ReplyTitle"/>
+                                <RowDefinition Height="Auto" SharedSizeGroup="ReplySubtitle"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="🌐 External Reply" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Grid.Row="1" Text="Sent to anyone outside your organization" FontSize="12" Opacity="0.6"
+                                       VerticalAlignment="Center" Margin="0,4,0,8"/>
+                            <TextBox Grid.Row="2"
+                                     Text="{Binding ExternalReply, UpdateSourceTrigger=PropertyChanged}"
+                                     Height="180"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     ui:ControlHelper.PlaceholderText="Enter the external auto-reply message..."
+                                     FontSize="14"/>
+                        </Grid>
+                    </Grid>
+
+                    <!-- Templates sub-section — same divider style we use
+                         elsewhere on the page to separate sub-sections within
+                         a single card. -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0"
+                            Padding="0,12,0,0"
+                            Margin="0,16,0,0">
+                        <StackPanel Margin="0">
+                            <TextBlock Text="📁 My Templates"
+                                       FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="Click a template to load it" FontSize="12" Opacity="0.6" Margin="0,4,0,8"/>
+
+                            <ItemsControl ItemsSource="{Binding Templates}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type models:OofTemplate}">
+                                        <Border CornerRadius="8" BorderThickness="1"
+                                                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                                                Padding="12" Margin="0,4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Margin="0">
+                                                    <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
+                                                    <TextBlock Text="{Binding UpdatedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
+                                                               FontSize="11" Opacity="0.5"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="Load"
+                                                        Command="{Binding DataContext.LoadTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                        CommandParameter="{Binding}"
+                                                        Margin="8,0,4,0"
+                                                        Padding="12,4"/>
+                                                <Button Grid.Column="2" Content="🗑️"
+                                                        Command="{Binding DataContext.DeleteTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                        CommandParameter="{Binding}"
+                                                        Padding="8,4"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="No templates yet. Save your current settings as a template to get started."
+                                       FontSize="13" Opacity="0.5"
+                                       HorizontalAlignment="Center" Margin="0,12">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Templates.Count}" Value="0">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 
