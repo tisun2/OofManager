@@ -34,7 +34,14 @@ public static class SyncLogger
                 Directory.CreateDirectory(dir);
                 RotateIfNeeded();
                 var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
-                File.AppendAllText(LogPath, $"[{stamp}] {line}{Environment.NewLine}", Encoding.UTF8);
+                // FileShare.ReadWrite lets the user tail the log in another tool while
+                // the app keeps writing — useful when debugging the auto-sync loop.
+                using var fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                using var sw = new StreamWriter(fs, Encoding.UTF8);
+                sw.Write('[');
+                sw.Write(stamp);
+                sw.Write("] ");
+                sw.WriteLine(line);
             }
         }
         catch

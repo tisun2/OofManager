@@ -20,6 +20,7 @@ namespace OofManager.Wpf.Services;
 public class ExchangeService : IExchangeService, IAsyncDisposable
 {
     private Runspace? _runspace;
+    private PowerShell? _ps;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     private bool _isConnected;
@@ -55,7 +56,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             // Import once now so the user's click only pays the auth round-trip.
             // -DisableNameChecking skips a slow per-cmdlet name validation pass.
             // The module ships in the app's Modules\ folder so no install step is needed.
-            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop");
+            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop").ConfigureAwait(false);
             _moduleImported = true;
         }
         catch
@@ -78,7 +79,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         {
             try
             {
-                await ConnectAsync(upnHint);
+                await ConnectAsync(upnHint).ConfigureAwait(false);
             }
             catch
             {
@@ -102,12 +103,12 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         // Wait for any in-flight pre-warm; if none was started, do the work now.
         if (_prewarmTask != null)
         {
-            try { await _prewarmTask; } catch { _prewarmTask = null; }
+            try { await _prewarmTask.ConfigureAwait(false); } catch { _prewarmTask = null; }
         }
         EnsureRunspace();
         if (!_moduleImported)
         {
-            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop");
+            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop").ConfigureAwait(false);
             _moduleImported = true;
         }
 
@@ -155,7 +156,7 @@ try {{
 [PSCustomObject]@{{ UPN = $connUpn; PrimarySmtp = $primarySmtp }} | ConvertTo-Json -Compress
 ";
 
-        var output = await InvokeAsync(script);
+        var output = await InvokeAsync(script).ConfigureAwait(false);
 
         var rawJson = output
             .Select(o => o?.ToString()?.Trim())
@@ -187,7 +188,7 @@ try {{
             // Connect-ExchangeOnline succeeded but Get-ConnectionInformation returned
             // nothing usable. Clean up the live REST session so a retry doesn't pile up
             // ghost sessions on the server side.
-            try { await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue"); }
+            try { await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue").ConfigureAwait(false); }
             catch { /* best-effort */ }
             throw new Exception("Connected, but failed to read the current signed-in user.");
         }
@@ -211,7 +212,7 @@ try {{
         {
             if (_runspace != null && _runspace.RunspaceStateInfo.State == RunspaceState.Opened)
             {
-                await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue");
+                await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue").ConfigureAwait(false);
             }
         }
         catch { /* best-effort */ }
@@ -257,9 +258,9 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 }} | ConvertTo-Json -Depth 2 -Compress
 ";
 
-        var output = await InvokeAsync(script);
+        var output = await InvokeAsync(script).ConfigureAwait(false);
         var json = ExtractJson(string.Join("\n", output.Select(o => o?.ToString() ?? "")));
-        var doc = JsonDocument.Parse(json);
+        using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
         var statusStr = root.GetProperty("Status").GetString() ?? "Disabled";
@@ -330,15 +331,15 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
         for (int writeAttempt = 1; writeAttempt <= maxWriteAttempts; writeAttempt++)
         {
-            await WriteOnceAsync(settings, expectedState);
+            await WriteOnceAsync(settings, expectedState).ConfigureAwait(false);
             SyncLogger.Write(
                 $"    WriteOnce attempt={writeAttempt} target=({_targetMailboxIdentity}) " +
                 $"state={expectedState} window={settings.StartTime:yyyy-MM-ddTHH:mm}..{settings.EndTime:yyyy-MM-ddTHH:mm}");
 
             foreach (var delay in readDelays)
             {
-                await Task.Delay(delay);
-                var verify = await GetOofSettingsAsync();
+                await Task.Delay(delay).ConfigureAwait(false);
+                var verify = await GetOofSettingsAsync().ConfigureAwait(false);
                 lastObservedState = verify.Status switch
                 {
                     OofStatus.Enabled => "Enabled",
@@ -456,7 +457,7 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         // instead of being surfaced to the user as a fake "✅ saved" message.
         sb.AppendLine($"(Get-MailboxAutoReplyConfiguration -Identity '{upn}' -ErrorAction Stop).AutoReplyState.ToString()");
 
-        var output = await InvokeAsync(sb.ToString());
+        var output = await InvokeAsync(sb.ToString()).ConfigureAwait(false);
         var actualState = output
             .Select(o => o?.ToString()?.Trim())
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -514,6 +515,8 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
     private void CloseRunspace()
     {
+        try { _ps?.Dispose(); } catch { }
+        _ps = null;
         try { _runspace?.Close(); } catch { }
         try { _runspace?.Dispose(); } catch { }
         _runspace = null;
@@ -526,34 +529,41 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     {
         EnsureRunspace();
 
-        await _lock.WaitAsync();
+        await _lock.WaitAsync().ConfigureAwait(false);
         try
         {
-            // Use the native APM API instead of Task.Run(() => ps.Invoke()):
+            // Reuse a single PowerShell instance bound to the persistent runspace.
+            // PowerShell.Create() allocates a per-call object graph (pipeline, streams,
+            // command collection) that the host re-builds even when the underlying
+            // runspace is hot — Commands.Clear() + Streams.ClearStreams() resets only
+            // the bits that vary per invocation, which is materially cheaper on the
+            // tight automation loop.
+            var ps = _ps;
+            if (ps == null || ps.Runspace != _runspace)
+            {
+                try { _ps?.Dispose(); } catch { }
+                ps = PowerShell.Create();
+                ps.Runspace = _runspace;
+                _ps = ps;
+            }
+            else
+            {
+                ps.Commands.Clear();
+                ps.Streams.ClearStreams();
+            }
+
+            ps.AddScript(script);
             // BeginInvoke/EndInvoke lets PowerShell schedule the work itself and avoids
             // tying up a thread-pool worker for the entire (potentially multi-second)
             // cmdlet duration — e.g. Connect-ExchangeOnline normally blocks for ~2s.
-            var ps = PowerShell.Create();
-            try
+            var asyncResults = await Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke).ConfigureAwait(false);
+            if (ps.HadErrors && ps.Streams.Error.Count > 0)
             {
-                ps.Runspace = _runspace;
-                ps.AddScript(script);
-                // BeginInvoke/EndInvoke surfaces results as PSDataCollection<PSObject>;
-                // wrap in Collection<PSObject> to keep this method's signature stable
-                // for callers (which already enumerate the result via LINQ).
-                var asyncResults = await Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke);
-                if (ps.HadErrors && ps.Streams.Error.Count > 0)
-                {
-                    var err = ps.Streams.Error[0];
-                    var msg = err.Exception?.Message ?? err.ToString();
-                    throw new Exception(msg);
-                }
-                return new Collection<PSObject>(asyncResults);
+                var err = ps.Streams.Error[0];
+                var msg = err.Exception?.Message ?? err.ToString();
+                throw new Exception(msg);
             }
-            finally
-            {
-                ps.Dispose();
-            }
+            return new Collection<PSObject>(asyncResults);
         }
         finally
         {
