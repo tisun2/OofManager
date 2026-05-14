@@ -48,24 +48,10 @@
 
             <!-- User Info Card -->
             <Border Style="{StaticResource CardStyle}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Margin="0">
-                        <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
-                        <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
-                    </StackPanel>
-                        <Button Grid.Column="1" Content="🔄 Switch account"
-                            Command="{Binding SwitchAccountCommand}"
-                            ToolTip="Sign out and pick a different Microsoft 365 account"
-                            VerticalAlignment="Center"
-                            Padding="10,4" FontSize="12"
-                            MinWidth="130"
-                            Height="32"
-                            Margin="0,0,13,0"/>
-                </Grid>
+                <StackPanel Margin="0">
+                    <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
+                </StackPanel>
             </Border>
 
             <!-- Status Message -->
