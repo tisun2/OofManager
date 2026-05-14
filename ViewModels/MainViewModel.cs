@@ -289,8 +289,8 @@ public partial class MainViewModel : ObservableObject
         if (IsOnLongVacation)
         {
             StatusMessage = value
-                ? "Long Vacation / Holiday remains selected in Outlook. Click ⚡ Sync now or enable Auto-sync to re-assert it."
-                : "Long Vacation / Holiday cleared locally. Click ⚡ Sync now or enable Auto-sync to clear the vacation OOF in Outlook.";
+                ? "Vacation / Holiday remains selected in Outlook. Click ⚡ Sync now or enable Auto-sync to re-assert it."
+                : "Vacation / Holiday cleared locally. Click ⚡ Sync now or enable Auto-sync to clear the vacation OOF in Outlook.";
             return;
         }
         StatusMessage = value
@@ -396,6 +396,17 @@ public partial class MainViewModel : ObservableObject
 
         if (_suppressDirtyTracking) return;
         _prefs.Set("Vacation.WindowActive", value);
+
+        // Default the start to "now floored to the previous :00 or :30" so
+        // the user isn't scrolling back from a hard-coded 18:00 every time.
+        // Only fires on a genuine user gesture — prefs-restore returned above.
+        if (value)
+        {
+            var now = DateTime.Now;
+            var floor = new DateTime(now.Year, now.Month, now.Day, now.Hour, (now.Minute / 30) * 30, 0);
+            VacationStartDate = floor.Date;
+            VacationStartTime = floor.TimeOfDay;
+        }
     }
     partial void OnStartDateChanged(DateTime value) => RefreshOofStatusBar();
     partial void OnStartTimeChanged(TimeSpan value) => RefreshOofStatusBar();
@@ -798,10 +809,10 @@ public partial class MainViewModel : ObservableObject
         {
             if (IsOnLongVacation)
             {
-                StatusMessage = "Clearing Long Vacation / Holiday override and syncing the schedule...";
+                StatusMessage = "Clearing Vacation / Holiday override and syncing the schedule...";
                 await EndVacationAsync();
                 if (IsOnLongVacation) return;
-                StatusMessage = "Schedule mode synced. Long Vacation / Holiday override cleared.";
+                StatusMessage = "Schedule mode synced. Vacation / Holiday override cleared.";
                 return;
             }
 
@@ -1002,6 +1013,34 @@ public partial class MainViewModel : ObservableObject
         {
             StatusMessage = $"Failed to generate cloud sync solution: {ex.Message}";
             await _dialog.AlertAsync("Cloud Sync Solution", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Opens make.powerautomate.com/flows so the user can locate the imported
+    /// OofManager Cloud Sync flow and toggle it Off. Lightweight companion to
+    /// the Manual-mode "⚠️ Cloud Sync flow runs in M365" reminder banner —
+    /// saves the user from copy-pasting the URL into a browser by hand. We
+    /// don't pin an environment or flow id in the URL: the user could be in
+    /// any environment, and the plain /flows page lands them in whichever env
+    /// the portal had them in last (env picker top-right), where the imported
+    /// flow shows up under <em>Cloud flows</em> with a one-click On/Off toggle.
+    /// </summary>
+    [RelayCommand]
+    private void OpenPowerAutomateFlows()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "https://make.powerautomate.com/flows")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // Best-effort: if the OS has no default browser handler we just
+            // swallow — the banner text still tells the user where to go.
         }
     }
 
@@ -2048,6 +2087,26 @@ public partial class MainViewModel : ObservableObject
                     // it respects the auto-sync gate.)
                     if (IsOnLongVacation && HasVacationEnded(DateTime.Now))
                     {
+                        // Background-sync intent: when the vacation expires
+                        // automatically, the user wants the weekly schedule to
+                        // pick up where it left off — not Manual mode + plain
+                        // Disabled. If we're still in Manual mode (the typical
+                        // path: user kicked off Vacation/Holiday from there),
+                        // flip the underlying schedule flag *first* so the
+                        // EndVacationAsync branch that pushes the next off-
+                        // hours Scheduled window runs. Suppress the commit
+                        // handler so we don't pop a validation alert on a
+                        // grid the user never touched; ComputeNextOffHoursWindow
+                        // already falls back to plain Disabled on a degenerate
+                        // schedule, so this is safe even when the grid is
+                        // empty.
+                        if (!IsWorkScheduleEnabled)
+                        {
+                            _suppressWorkScheduleCommit = true;
+                            try { IsWorkScheduleEnabled = true; }
+                            finally { _suppressWorkScheduleCommit = false; }
+                            SaveWorkSchedulePreferences();
+                        }
                         await EndVacationAsync();
                         return;
                     }

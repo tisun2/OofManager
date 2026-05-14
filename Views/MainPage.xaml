@@ -22,12 +22,19 @@
              (work schedule grid + vacation start/end). HorizontalContentAlignment
              flows through ModernWpf's default ComboBox template to the embedded
              PART_EditableTextBox; the ItemContainerStyle does the same for the
-             dropdown rows so the picker stays visually consistent open or closed. -->
+             dropdown rows so the picker stays visually consistent open or closed.
+             FontSize + BorderBrush are pinned so the time pickers visually match
+             the neighbouring DatePicker controls (ModernWpf otherwise gives the
+             ComboBox a slightly smaller font and a paler border). -->
         <Style x:Key="TimePickerComboStyle" TargetType="ComboBox">
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource TextControlBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="{DynamicResource TextControlBorderThemeThickness}"/>
             <!-- Left padding offsets the right-side dropdown chevron so the
                  visible text re-centers under the Off Work checkbox column. -->
-            <Setter Property="Padding" Value="16,5,0,7"/>
+            <Setter Property="Padding" Value="20,0,0,0"/>
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
                     <Style TargetType="ComboBoxItem">
@@ -35,6 +42,23 @@
                     </Style>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!-- Center the date text inside the vacation DatePickers across the
+             *entire* visible control (not just the inner TextBox column).
+             By default DatePickerTextBox occupies only the left column and
+             the calendar glyph button takes the right column, so plain
+             padding can only shift text inside the left column. The
+             negative right Margin stretches the TextBox under the button,
+             and TextAlignment=Center then centers the text across the full
+             DatePicker width. The button renders on top (later in z-order)
+             so it stays clickable. -->
+        <Style TargetType="DatePickerTextBox">
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,-28,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
         </Style>
     </Page.Resources>
 
@@ -181,14 +205,29 @@
                              schedule and will silently re-flip OOF behind
                              their back. Surface this exactly when manual
                              mode kicks in so they remember to disable the
-                             flow in Power Automate too. -->
+                             flow in Power Automate too. The button shortcuts
+                             a two-step trip (open browser → type URL) into
+                             one click; it can't toggle the flow off itself
+                             (would need MSAL + Dataverse Web API), but it
+                             lands the user one toggle-click away on the
+                             /flows page where the imported solution flow
+                             shows up under Cloud flows. -->
                         <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
                                 CornerRadius="4" Padding="10,8" Margin="0,10,0,0"
                                 HorizontalAlignment="Left"
                                 Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
-                            <TextBlock FontSize="11" TextWrapping="Wrap">
-                                ⚠️ Using the Cloud Sync (Power Automate) flow? Turn it OFF at make.powerautomate.com — it runs in M365 and will override your manual changes.
-                            </TextBlock>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0">
+                                <TextBlock FontSize="11" TextWrapping="Wrap" MaxWidth="700"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0">
+                                    ⚠️ Cloud Sync (Power Automate) flow runs in M365 and can override your manual changes. Turn it OFF in Power Automate first.
+                                </TextBlock>
+                                <Button Padding="10,4" FontSize="11"
+                                        Content="🌐 Open Power Automate"
+                                        Command="{Binding OpenPowerAutomateFlowsCommand}"
+                                        VerticalAlignment="Center"
+                                        ToolTip="Opens make.powerautomate.com/flows in your browser. Find the OofManager Cloud Sync flow under Cloud flows and toggle it Off."/>
+                            </StackPanel>
                         </Border>
                     </StackPanel>
 
@@ -235,7 +274,7 @@
                                  click or 5-min auto-sync tick (matches the
                                  deferred-sync model the rest of Manual mode
                                  already uses). -->
-                            <CheckBox Content="🏖️ Long Vacation / Holiday"
+                            <CheckBox Content="🏖️ Vacation / Holiday"
                                       IsChecked="{Binding IsVacationWindowActive, Mode=TwoWay}"
                                       IsEnabled="{Binding CanToggleVacationWindow}"
                                       FontSize="14" FontWeight="SemiBold"
