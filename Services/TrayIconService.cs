@@ -45,17 +45,8 @@ public sealed class TrayIconService : ITrayService, IDisposable
             Visible = true,
         };
 
-        var menu = new WinForms.ContextMenuStrip();
-        menu.Items.Add("Show Window", null, (_, _) => Restore());
-        menu.Items.Add("Hide to Tray", null, (_, _) => HideToTray());
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add("Exit", null, (_, _) => ExitApp());
-        _icon.ContextMenuStrip = menu;
-
-        _icon.MouseClick += (_, e) =>
+        _icon.MouseDoubleClick += (_, e) =>
         {
-            // Left click toggles visibility — restore if hidden, hide otherwise.
-            // Right-click is handled by the ContextMenuStrip automatically.
             if (e.Button != WinForms.MouseButtons.Left) return;
             if (_window != null && _window.IsVisible) HideToTray();
             else Restore();
@@ -109,18 +100,6 @@ public sealed class TrayIconService : ITrayService, IDisposable
         // message loop). Setting then clearing avoids a permanently-on-top window.
         _window.Topmost = true;
         _window.Topmost = false;
-    }
-
-    private static void ExitApp()
-    {
-        // Bypass the "what should X do?" prompt for the tray-driven exit, then
-        // let the standard shutdown path run (which closes the main window and
-        // disposes the DI container).
-        if (Application.Current?.MainWindow is MainWindow mw)
-        {
-            mw.ConfirmExit();
-        }
-        Application.Current?.Shutdown();
     }
 
     private static Icon LoadIcon()
