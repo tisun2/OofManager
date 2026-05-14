@@ -52,12 +52,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
                     <StackPanel Margin="0">
                         <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
                         <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
@@ -66,20 +61,10 @@
                             Command="{Binding SwitchAccountCommand}"
                             ToolTip="Sign out and pick a different Microsoft 365 account"
                             VerticalAlignment="Center"
-                            Padding="14,4"
-                            Margin="0,0,8,0"/>
-                        <Button Grid.Column="2" Content="📥 Hide to Tray"
-                            Command="{Binding HideToTrayCommand}"
-                            ToolTip="Hide window to system tray; the app keeps running in the background"
-                            VerticalAlignment="Center"
-                            Padding="14,4"/>
-
-                    <CheckBox Grid.Row="1" Grid.ColumnSpan="3"
-                              IsChecked="{Binding IsStartWithWindowsEnabled, Mode=TwoWay}"
-                              Content="🚀 Start with Windows (launch hidden in the tray)"
-                              FontSize="12"
-                              Margin="0,12,0,0"
-                              ToolTip="When on, OofManager launches automatically when you sign in to Windows and starts hidden in the system tray."/>
+                            Padding="10,4" FontSize="12"
+                            MinWidth="130"
+                            Height="32"
+                            Margin="0,0,13,0"/>
                 </Grid>
             </Border>
 
@@ -131,18 +116,30 @@
                          use these — Schedule mode pushes the next off-hours
                          window, Manual mode re-asserts the current toggle
                          state + reply text. The Sync now tooltip is
-                         mode-agnostic for the same reason. -->
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <CheckBox FontSize="12" VerticalAlignment="Center"
-                                  IsChecked="{Binding IsAutoRefreshEnabled, Mode=TwoWay}"
-                                  Content="🔄 Auto-sync every 5 minutes"
-                                  ToolTip="When checked, OofManager runs a background reconcile every 5 minutes. In Schedule mode it re-pushes the next off-hours window so the schedule rolls forward indefinitely. In Manual mode it re-asserts your current on/off state + reply text on Exchange, correcting drift from Outlook desktop / OWA / admins / Power Automate flows."/>
-                        <Button Margin="12,0,0,0" Padding="10,4" FontSize="12"
+                         mode-agnostic for the same reason. Sync now is
+                         right-aligned to match Switch account / Save as
+                         template buttons elsewhere on the page. -->
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <CheckBox Grid.Column="0" FontSize="12"
+                                  VerticalAlignment="Center"
+                                  VerticalContentAlignment="Center"
+                                  Height="32"
+                                  IsChecked="{Binding IsBackgroundSyncEnabled, Mode=TwoWay}"
+                                  Content="🔄 Run in background (start with Windows + sync every 5 min + X hides to tray)"
+                                  ToolTip="One switch for &quot;always-on&quot; mode. Three effects when checked:&#10;  • Start with Windows — launches hidden in the tray at logon.&#10;  • 5-minute background reconcile — Schedule mode re-pushes the next off-hours window so the schedule rolls forward indefinitely; Manual mode re-asserts your current on/off state + reply text to correct drift from Outlook desktop / OWA / admins / Power Automate flows.&#10;  • Close button (X) — minimises the window to the system tray instead of exiting, so the background sync keeps running.&#10;When unchecked: no auto-start, no background sync, and X really exits the app."/>
+                        <Button Grid.Column="1" Padding="10,4" FontSize="12"
+                                MinWidth="130"
+                                Height="32"
+                                Margin="0,0,13,0"
                                 Content="⚡ Sync now"
                                 Command="{Binding SyncNowCommand}"
                                 VerticalAlignment="Center"
                                 ToolTip="Force-push to Outlook right now. Schedule mode pushes the next off-hours window; Manual mode re-asserts the current OOF on/off state + reply text."/>
-                    </StackPanel>
+                    </Grid>
 
                         <TextBlock Text="{Binding StatusMessage}"
                                Visibility="{Binding HasStatusMessage, Converter={StaticResource BoolToVisibility}}"
@@ -201,9 +198,10 @@
                              flow in Power Automate too. -->
                         <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
                                 CornerRadius="4" Padding="10,8" Margin="0,10,0,0"
+                                HorizontalAlignment="Left"
                                 Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
                             <TextBlock FontSize="11" TextWrapping="Wrap">
-                                ⚠️ If you previously imported the Cloud Sync (Power Automate) solution, turn that flow OFF in make.powerautomate.com — it runs in Microsoft 365 independently and will keep changing your OOF on its own schedule while you're in manual control.
+                                ⚠️ Using the Cloud Sync (Power Automate) flow? Turn it OFF at make.powerautomate.com — it runs in M365 and will override your manual changes.
                             </TextBlock>
                         </Border>
                     </StackPanel>
@@ -216,24 +214,17 @@
                     <ui:ToggleSwitch Grid.Column="1"
                                      IsOn="{Binding IsOofEnabled, Mode=TwoWay}"
                                      IsEnabled="{Binding IsOofAutoManaged, Converter={StaticResource InvertBool}}"
+                                     OnContent="OOF On"
+                                     OffContent="OOF Off"
+                                     Width="130"
+                                     Margin="0,0,13,0"
+                                     Padding="0"
+                                     HorizontalAlignment="Right"
                                      VerticalAlignment="Center"/>
 
-                    <!-- "Update reply messages" appears only when (a) the
-                         user is in manual mode AND (b) they've edited the
-                        reply text since the last commit. The OOF on/off
-                        toggle is deferred to ⚡ Sync now / Auto-sync, so
-                        this button only pushes edited reply bodies while
-                        preserving Outlook's current on/off/window state. -->
-                    <Button Grid.Row="1" Grid.ColumnSpan="2"
-                            Content="💾 Update reply messages"
-                            Command="{Binding QuickToggleCommand}"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Height="44"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center"
-                            Margin="0,12,0,0"
-                            ToolTip="Push edited reply messages to Outlook. The on/off switch is pushed by ⚡ Sync now or Auto-sync."
-                            Visibility="{Binding CanShowSaveNow, Converter={StaticResource BoolToVisibility}}"/>
+                    <!-- "Update reply messages" button removed — Sync now
+                         in Manual mode already re-asserts current OOF state +
+                         reply text, so a separate button was redundant. -->
 
                     <!-- Long Vacation / Holiday sub-section. Used to be its
                          own card; folded in here because it writes to the
@@ -560,10 +551,13 @@
                                    FontSize="16" FontWeight="Bold"
                                    VerticalAlignment="Center"/>
                         <Button Grid.Column="1"
-                                Content="📋 Save current as template"
+                                Content="📋 Save as template"
                                 Command="{Binding SaveAsTemplateCommand}"
                                 Padding="10,4" FontSize="12"
                                 VerticalAlignment="Center"
+                                MinWidth="130"
+                                Height="32"
+                                Margin="0,0,13,0"
                                 ToolTip="Save the current Internal &amp; External reply text and external-audience choice as a new reusable template. Doesn't push anything to Outlook."/>
                     </Grid>
 
@@ -650,11 +644,13 @@
                                                         Command="{Binding DataContext.LoadTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
                                                         CommandParameter="{Binding}"
                                                         Margin="8,0,4,0"
-                                                        Padding="12,4"/>
+                                                        Padding="10,4" FontSize="12"
+                                                        Width="63" Height="32"/>
                                                 <Button Grid.Column="2" Content="🗑️"
                                                         Command="{Binding DataContext.DeleteTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
                                                         CommandParameter="{Binding}"
-                                                        Padding="8,4"/>
+                                                        Padding="0,4" FontSize="12"
+                                                        Width="63" Height="32"/>
                                             </Grid>
                                         </Border>
                                     </DataTemplate>

@@ -31,13 +31,7 @@ public sealed class TrayIconService : ITrayService, IDisposable
 {
     private WinForms.NotifyIcon? _icon;
     private Window? _window;
-    private readonly IPreferencesService _prefs;
     private bool _disposed;
-
-    public TrayIconService(IPreferencesService prefs)
-    {
-        _prefs = prefs;
-    }
 
     public void Attach(Window window)
     {
@@ -54,13 +48,6 @@ public sealed class TrayIconService : ITrayService, IDisposable
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("Show Window", null, (_, _) => Restore());
         menu.Items.Add("Hide to Tray", null, (_, _) => HideToTray());
-        menu.Items.Add(new WinForms.ToolStripSeparator());
-        menu.Items.Add("Reset Close Button Behavior (Ask Again Next Time)", null, (_, _) =>
-        {
-            // 0 == ActionAsk in MainWindow. Stored as int; using 0 here keeps
-            // the dependency one-way (TrayIconService doesn't import MainWindow).
-            _prefs.Set("WindowClose.Action", 0);
-        });
         menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => ExitApp());
         _icon.ContextMenuStrip = menu;

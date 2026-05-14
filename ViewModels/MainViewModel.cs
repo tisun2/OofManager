@@ -117,14 +117,6 @@ public partial class MainViewModel : ObservableObject
     /// </summary>
     public bool HasUnsavedOofChanges => HasUnsavedReplyChanges();
 
-    /// <summary>
-    /// Final gate for the "Update reply messages" button: we only show it in manual mode
-    /// AND only when there's a pending change. In auto-managed mode (Work
-    /// Schedule + Auto-sync both on) the automation loop owns OOF state, so
-    /// a manual reply-update button would create a fight-with-itself UX.
-    /// </summary>
-    public bool CanShowSaveNow => !IsOofAutoManaged && HasUnsavedOofChanges;
-
     public bool HasStatusMessage => !string.IsNullOrWhiteSpace(StatusMessage);
 
     /// <summary>
@@ -327,7 +319,6 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsManualMode));
         OnPropertyChanged(nameof(OofCardSubtitle));
         OnPropertyChanged(nameof(SyncCardSubtitle));
-        OnPropertyChanged(nameof(CanShowSaveNow));
         RefreshOofStatusBar();
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
@@ -340,6 +331,10 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnIsAutoRefreshEnabledChanged(bool value)
     {
+        // Merged "Run in background" checkbox is computed from both this and
+        // IsStartWithWindowsEnabled; fire before the suppress-return so the UI
+        // also reflects state loaded from prefs during initial hydration.
+        OnPropertyChanged(nameof(IsBackgroundSyncEnabled));
         // No mailbox push needed — this flag only gates the in-loop work.
         // Persist the choice so it survives restarts. The loop itself reads
         // IsAutoRefreshEnabled on every tick, so flipping this checkbox
@@ -360,22 +355,16 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnCurrentStatusChanged(OofStatus value)
     {
-        OnPropertyChanged(nameof(HasUnsavedOofChanges));
-        OnPropertyChanged(nameof(CanShowSaveNow));
         OnPropertyChanged(nameof(OofCardSubtitle));
         RefreshOofStatusBar();
     }
 
     partial void OnInternalReplyChanged(string value)
     {
-        OnPropertyChanged(nameof(HasUnsavedOofChanges));
-        OnPropertyChanged(nameof(CanShowSaveNow));
     }
 
     partial void OnExternalReplyChanged(string value)
     {
-        OnPropertyChanged(nameof(HasUnsavedOofChanges));
-        OnPropertyChanged(nameof(CanShowSaveNow));
     }
     // Vacation toggle drives both the work-schedule status caption (so the
     // user can see "paused" right on the schedule card) and a refresh of the
@@ -472,6 +461,30 @@ public partial class MainViewModel : ObservableObject
             _isStartWithWindowsEnabled = actual;
             OnPropertyChanged(nameof(IsStartWithWindowsEnabled));
             StatusMessage = "Could not update startup setting (policy may block it).";
+        }
+        // Merged "Run in background" checkbox reads from both this and
+        // IsAutoRefreshEnabled; fire after the policy-rollback above so the
+        // UI converges on the *actual* registry state.
+        OnPropertyChanged(nameof(IsBackgroundSyncEnabled));
+    }
+
+    /// <summary>
+    /// Merged user-facing background-mode toggle. Bundles the two flags that
+    /// only make sense together:
+    ///   • <see cref="IsStartWithWindowsEnabled"/> — auto-launch at logon, so
+    ///     the app is actually running to do anything in the background.
+    ///   • <see cref="IsAutoRefreshEnabled"/> — the in-loop 5-minute reconcile.
+    /// Reads ON when *either* underlying flag is on, so a user who upgrades
+    /// from a build that had them separate doesn't see the merged checkbox
+    /// lie about state. Writing flips both at once.
+    /// </summary>
+    public bool IsBackgroundSyncEnabled
+    {
+        get => IsStartWithWindowsEnabled || IsAutoRefreshEnabled;
+        set
+        {
+            IsStartWithWindowsEnabled = value;
+            IsAutoRefreshEnabled = value;
         }
     }
 
@@ -920,8 +933,6 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            if (!await EnsureRepliesCommittedAsync("Cloud Sync Guide")) return;
-
             var snapshot = new WorkScheduleSnapshot(_prefs);
             var path = CloudSyncGuideGenerator.GenerateAndOpen(
                 snapshot,
@@ -951,8 +962,6 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
-            if (!await EnsureRepliesCommittedAsync("Cloud Sync Solution")) return;
-
             var snapshot = new WorkScheduleSnapshot(_prefs);
             // Desktop is the most discoverable location for a download-style
             // artifact. If we ever ship this on machines with redirected /
@@ -996,52 +1005,6 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>
-    /// Guards the cloud-sync zip / guide generators against shipping reply
-    /// text the user typed but never confirmed (no reply update, no auto-
-    /// sync tick). If the live <see cref="InternalReply"/> / <see cref="ExternalReply"/>
-    /// match what's currently on Exchange, returns true straight through. If
-    /// not, prompts the user with Save-first / use-draft / cancel so the
-    /// cloud flow can't silently broadcast a draft that was never confirmed
-    /// locally.
-    /// </summary>
-    private async Task<bool> EnsureRepliesCommittedAsync(string dialogTitle)
-    {
-        if (!HasUnsavedReplyChanges()) return true;
-
-        var choice = await _dialog.ChoiceAsync(
-            dialogTitle,
-            "Your reply messages have unsaved local edits. The cloud flow will broadcast whatever text is in the package, so confirm what you want to ship:\n\n" +
-            "• Save and generate — push your edits to Exchange now, then build the package.\n" +
-            "• Use current draft — build the package with the on-screen text (Exchange stays as-is).\n" +
-            "• Cancel — go back without generating.",
-            primary: "Save and generate",
-            secondary: "Use current draft",
-            cancel: "Cancel");
-
-        switch (choice)
-        {
-            case DialogChoice.Primary:
-                await SaveOofAsync();
-                // SaveOofAsync swallows its own exceptions and only updates
-                // the committed snapshot on success — so if we're still dirty
-                // after the call, the save failed and we should bail rather
-                // than ship a draft that the user explicitly asked to push.
-                if (HasUnsavedReplyChanges())
-                {
-                    await _dialog.AlertAsync(
-                        dialogTitle,
-                        "Saving the reply messages failed, so the package was not generated. Check the status bar for details and try again.");
-                    return false;
-                }
-                return true;
-            case DialogChoice.Secondary:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     private bool HasUnsavedReplyChanges()
     {
         return !string.Equals(InternalReply ?? string.Empty, _committedInternalReply, StringComparison.Ordinal)
@@ -1050,17 +1013,13 @@ public partial class MainViewModel : ObservableObject
 
     /// <summary>
     /// Snapshots the current OOF state (status + reply bodies) as the
-    /// committed baseline, then raises PropertyChanged for the dirty-tracker
-    /// observables. Call this after any successful Set against Exchange so
-    /// the Update reply messages button collapses back to "nothing to commit".
+    /// committed baseline. Called after any successful Set against Exchange.
     /// </summary>
     private void MarkOofClean(OofStatus committedStatus)
     {
         _committedInternalReply = InternalReply ?? string.Empty;
         _committedExternalReply = ExternalReply ?? string.Empty;
         _committedStatus = committedStatus;
-        OnPropertyChanged(nameof(HasUnsavedOofChanges));
-        OnPropertyChanged(nameof(CanShowSaveNow));
     }
 
     /// <summary>
@@ -1708,15 +1667,6 @@ public partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
         }
-    }
-
-    [RelayCommand]
-    private async Task QuickToggleAsync()
-    {
-        // Only persist reply-body edits. The Manual OOF switch is deferred
-        // and is pushed by ⚡ Sync now or Auto-sync, so this button must not
-        // accidentally ship a pending local on/off change.
-        await SaveOofAsync();
     }
 
     [RelayCommand]
