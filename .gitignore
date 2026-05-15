@@ -12,6 +12,7 @@ Installer/Output/
 *.user
 *.suo
 *.userprefs
+*.lscache
 
 # Logs / temp
 *.log
