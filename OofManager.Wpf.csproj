@@ -20,7 +20,7 @@
     <!-- Drives FileVersion / AssemblyVersion. Bump this in lock-step with
          Installer\OofManager.iss MyAppVersion on every release so the
          per-version "start with Windows?" prompt re-asks on upgrade. -->
-    <Version>1.1.3</Version>
+    <Version>1.1.4</Version>
   </PropertyGroup>
 
   <!-- App.xaml is loaded as a Page so we can supply our own Main(). -->
