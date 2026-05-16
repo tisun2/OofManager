@@ -31,7 +31,7 @@ namespace OofManager.Wpf.Services;
 ///   OofManager-README.txt                               &mdash; human-readable import instructions
 /// </code>
 /// </summary>
-public static class CloudSyncPackageGenerator
+public static class CloudSchedulePackageGenerator
 {
     // Publisher identity is shared across every OofManager-generated solution
     // (Dataverse explicitly supports many solutions per publisher). Per-user
@@ -61,7 +61,7 @@ public static class CloudSyncPackageGenerator
     /// alias and threaded into each Build* helper so the same name/GUID is
     /// used in solution.xml, customizations.xml, and the workflow JSON.
     /// </summary>
-    private sealed class CloudSyncIdentity
+    private sealed class CloudScheduleIdentity
     {
         public string Alias { get; }
         public string SolutionUniqueName { get; }
@@ -72,7 +72,7 @@ public static class CloudSyncPackageGenerator
         public Guid ConnectionReferenceId { get; }
         public string ConnectionReferenceLogicalName { get; }
 
-        public CloudSyncIdentity(
+        public CloudScheduleIdentity(
             string alias,
             string solutionUniqueName,
             string solutionDisplayName,
@@ -94,8 +94,31 @@ public static class CloudSyncPackageGenerator
     }
 
     /// <summary>
+    /// Result of <see cref="GenerateWithIdentity"/> — both the path to the
+    /// zip on disk AND the identifiers (solution unique name, workflow id,
+    /// flow display name) baked into it. Callers that import the solution
+    /// programmatically need these to query Dataverse afterwards (look up
+    /// the imported workflow's runtime URL, etc.) without re-deriving them
+    /// from the user's alias.
+    /// </summary>
+    public sealed class GenerateResult
+    {
+        public GenerateResult(string path, string solutionUniqueName, string flowDisplayName, Guid workflowId)
+        {
+            Path = path;
+            SolutionUniqueName = solutionUniqueName;
+            FlowDisplayName = flowDisplayName;
+            WorkflowId = workflowId;
+        }
+        public string Path { get; }
+        public string SolutionUniqueName { get; }
+        public string FlowDisplayName { get; }
+        public Guid WorkflowId { get; }
+    }
+
+    /// <summary>
     /// Builds the package and writes it to <paramref name="outputPath"/>.
-    /// Pass null to drop it under <c>%TEMP%\OofManager-CloudSync.zip</c>.
+    /// Pass null to drop it under <c>%TEMP%\OofManager-CloudSchedule.zip</c>.
     /// Returns the resolved path so the caller can surface it in the UI.
     /// </summary>
     public static string Generate(
@@ -106,8 +129,39 @@ public static class CloudSyncPackageGenerator
         bool externalAudienceAll,
         bool generateManaged = true,
         string? outputPath = null)
+        => GenerateWithIdentity(schedule, userEmail, internalReply, externalReply, externalAudienceAll, generateManaged, outputPath).Path;
+
+    /// <summary>
+    /// Recomputes the per-user flow identifiers (workflow GUID, solution
+    /// unique name, flow display name) without generating a package. Lets
+    /// callers — e.g. the Disable/Enable buttons — match a specific user's
+    /// flow by exact workflowId instead of a fuzzy display-name prefix that
+    /// could collide with other "OofManager Cloud Schedule …" flows in the
+    /// same env. Pure function of the email's local part, so the same UPN
+    /// always returns the same GUID across runs and machines.
+    /// </summary>
+    public static GenerateResult ComputeFlowIdentity(string userEmail)
     {
-        outputPath ??= Path.Combine(Path.GetTempPath(), "OofManager-CloudSync.zip");
+        var i = BuildIdentity(userEmail);
+        return new GenerateResult(string.Empty, i.SolutionUniqueName, i.FlowDisplayName, i.WorkflowId);
+    }
+
+    /// <summary>
+    /// Same as <see cref="Generate"/> but also returns the solution unique
+    /// name + workflow id so callers can act on the import server-side
+    /// (check whether the solution already exists, poll Dataverse for the
+    /// imported workflow row, build a flow-details URL, etc).
+    /// </summary>
+    public static GenerateResult GenerateWithIdentity(
+        WorkScheduleSnapshot schedule,
+        string userEmail,
+        string internalReply,
+        string externalReply,
+        bool externalAudienceAll,
+        bool generateManaged = true,
+        string? outputPath = null)
+    {
+        outputPath ??= Path.Combine(Path.GetTempPath(), "OofManager-CloudSchedule.zip");
 
         var identity = BuildIdentity(userEmail);
 
@@ -212,7 +266,7 @@ public static class CloudSyncPackageGenerator
             WriteEntry(zip, "OofManager-README.txt", BuildReadme(userEmail, identity));
         }
 
-        return outputPath;
+        return new GenerateResult(outputPath, identity.SolutionUniqueName, identity.FlowDisplayName, identity.WorkflowId);
     }
 
     private static string BuildWorkflowFileName(string flowDisplayName, Guid workflowId) =>
@@ -237,7 +291,7 @@ public static class CloudSyncPackageGenerator
     /// <c>definition</c>, and a flow display name.
     /// </summary>
     private static string BuildWorkflowFileJson(
-        CloudSyncIdentity identity,
+        CloudScheduleIdentity identity,
         string tzId,
         int triggerHour,
         int triggerMinute,
@@ -374,7 +428,7 @@ public static class CloudSyncPackageGenerator
         };
     }
 
-    private static string BuildSolutionXml(bool managed, CloudSyncIdentity identity)
+    private static string BuildSolutionXml(bool managed, CloudScheduleIdentity identity)
     {
         // Minimal solution manifest. UniqueName + Publisher prefix identify
         // the solution; the version triggers an upgrade vs. install. Component
@@ -402,7 +456,7 @@ public static class CloudSyncPackageGenerator
         <LocalizedName description=""{XmlEscape(PublisherDisplayName)}"" languagecode=""1033"" />
       </LocalizedNames>
       <Descriptions>
-        <Description description=""Default publisher for OofManager-generated cloud sync solutions."" languagecode=""1033"" />
+        <Description description=""Default publisher for OofManager-generated cloud schedule solutions."" languagecode=""1033"" />
       </Descriptions>
       <EMailAddress xsi:nil=""true""></EMailAddress>
       <SupportingWebsiteUrl xsi:nil=""true""></SupportingWebsiteUrl>
@@ -476,7 +530,7 @@ public static class CloudSyncPackageGenerator
 ";
     }
 
-    private static string BuildCustomizationsXml(CloudSyncIdentity identity)
+    private static string BuildCustomizationsXml(CloudScheduleIdentity identity)
     {
         // <Workflow> Category=5 = Modern (cloud) Flow. <JsonFileName> path
         // points at the JSON file under /Workflows/. <PrimaryEntity>none</...>
@@ -584,7 +638,7 @@ public static class CloudSyncPackageGenerator
         return earliest ?? new TimeSpan(17, 30, 0);
     }
 
-    private static string BuildReadme(string userEmail, CloudSyncIdentity identity)
+    private static string BuildReadme(string userEmail, CloudScheduleIdentity identity)
     {
         return string.Join("\r\n", new[]
         {
@@ -601,8 +655,9 @@ public static class CloudSyncPackageGenerator
             "How to import",
             "-------------",
             "1. Open https://make.powerautomate.com and sign in as " + userEmail + ".",
-            "2. Make sure the environment selector (top right) shows your default",
-            "   environment — solutions are scoped to a single environment.",
+            "2. Make sure the environment selector (top right) shows the environment",
+            "   named after you — solutions are scoped",
+            "   to a single environment.",
             "3. In the left rail, click 'Solutions'.",
             "4. Click 'Import solution' on the toolbar.",
             "5. Click 'Browse', pick the .zip you got from OofManager, then 'Next'.",
@@ -620,7 +675,7 @@ public static class CloudSyncPackageGenerator
             "",
             "If anything fails",
             "-----------------",
-            "Re-run 'Set up cloud sync' in OofManager — the regenerated zip uses",
+            "Re-run 'Set up cloud schedule' in OofManager — the regenerated zip uses",
             "the same solution + workflow GUIDs (derived from your alias '" + identity.Alias + "'),",
             "so a re-import becomes an upgrade rather than a duplicate. If solution",
             "import is also blocked by your tenant, switch to the manual setup guide",
@@ -637,16 +692,16 @@ public static class CloudSyncPackageGenerator
     /// import), while the same user re-importing repeatedly always sees
     /// the same identifiers (so re-import = upgrade, not duplicate).
     /// </summary>
-    private static CloudSyncIdentity BuildIdentity(string userEmail)
+    private static CloudScheduleIdentity BuildIdentity(string userEmail)
     {
         var alias = SanitizeAlias(userEmail);
 
         // Solution UniqueName must match [A-Za-z][A-Za-z0-9_]*. The base
         // is ASCII-safe; alias is already sanitized to alphanumerics by
         // SanitizeAlias, so concatenation stays valid.
-        var solutionUniqueName = $"OofManagerCloudSync_{alias}";
-        var solutionDisplayName = $"OofManager Cloud Sync ({alias})";
-        var flowDisplayName = $"OofManager Cloud Sync ({alias})";
+        var solutionUniqueName = $"OofManagerCloudSchedule_{alias}";
+        var solutionDisplayName = $"OofManager Cloud Schedule ({alias})";
+        var flowDisplayName = $"OofManager Cloud Schedule ({alias})";
 
         // Connection-reference logical names must be prefixed with the
         // publisher's customization prefix and be Dataverse-safe. Lower
@@ -659,7 +714,7 @@ public static class CloudSyncPackageGenerator
 
         var workflowFileName = BuildWorkflowFileName(flowDisplayName, workflowId);
 
-        return new CloudSyncIdentity(
+        return new CloudScheduleIdentity(
             alias: alias,
             solutionUniqueName: solutionUniqueName,
             solutionDisplayName: solutionDisplayName,

@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -75,7 +75,7 @@
     </Reference>
     <!--
       System.IO.Compression + .FileSystem are framework assemblies on net48.
-      Used by CloudSyncPackageGenerator to build the Power Automate import zip.
+      Used by CloudSchedulePackageGenerator to build the Power Automate import zip.
     -->
     <Reference Include="System.IO.Compression">
       <Private>false</Private>

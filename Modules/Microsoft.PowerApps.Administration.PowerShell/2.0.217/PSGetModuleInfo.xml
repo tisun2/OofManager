@@ -1,0 +1,490 @@
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <TN RefId="0">
+      <T>Microsoft.PowerShell.Commands.PSRepositoryItemInfo</T>
+      <T>System.Management.Automation.PSCustomObject</T>
+      <T>System.Object</T>
+    </TN>
+    <MS>
+      <S N="Name">Microsoft.PowerApps.Administration.PowerShell</S>
+      <S N="Version">2.0.217</S>
+      <S N="Type">Module</S>
+      <S N="Description">PowerShell interface for Microsoft PowerApps and Flow Administrative features</S>
+      <S N="Author">Microsoft Common Data Service Team</S>
+      <S N="CompanyName">Crmsdk</S>
+      <S N="Copyright">© 2020 Microsoft Corporation. All rights reserved</S>
+      <DT N="PublishedDate">2026-03-30T17:52:09+08:00</DT>
+      <Nil N="InstalledDate" />
+      <Nil N="UpdatedDate" />
+      <URI N="LicenseUri">https://aka.ms/powerappspowershellterms</URI>
+      <URI N="ProjectUri">https://docs.microsoft.com/en-us/powerapps/administrator/powerapps-powershell</URI>
+      <URI N="IconUri">https://connectoricons-prod.azureedge.net/powerplatformforadmins/icon_1.0.1056.1255.png</URI>
+      <Obj N="Tags" RefId="1">
+        <TN RefId="1">
+          <T>System.Object[]</T>
+          <T>System.Array</T>
+          <T>System.Object</T>
+        </TN>
+        <LST>
+          <S>PSModule</S>
+        </LST>
+      </Obj>
+      <Obj N="Includes" RefId="2">
+        <TN RefId="2">
+          <T>System.Collections.Hashtable</T>
+          <T>System.Object</T>
+        </TN>
+        <DCT>
+          <En>
+            <S N="Key">Cmdlet</S>
+            <Obj N="Value" RefId="3">
+              <TNRef RefId="1" />
+              <LST />
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">DscResource</S>
+            <Ref N="Value" RefId="3" />
+          </En>
+          <En>
+            <S N="Key">Function</S>
+            <Obj N="Value" RefId="4">
+              <TNRef RefId="1" />
+              <LST>
+                <S>New-AdminPowerAppCdsDatabase</S>
+                <S>Get-AdminPowerAppCdsDatabaseLanguages</S>
+                <S>Get-AdminPowerAppCdsDatabaseCurrencies</S>
+                <S>Get-AdminPowerAppEnvironmentLocations</S>
+                <S>Get-AdminPowerAppCdsDatabaseTemplates</S>
+                <S>New-AdminPowerAppEnvironment</S>
+                <S>Set-AdminPowerAppEnvironmentDisplayName</S>
+                <S>Set-AdminPowerAppEnvironmentBackupRetentionPeriod</S>
+                <S>Set-AdminPowerAppEnvironmentRuntimeState</S>
+                <S>Set-AdminPowerAppEnvironmentGovernanceConfiguration</S>
+                <S>Get-AdminPowerAppEnvironment</S>
+                <S>Get-AdminPowerAppSoftDeletedEnvironment</S>
+                <S>Get-AdminPowerAppOperationStatus</S>
+                <S>Remove-AdminPowerAppEnvironment</S>
+                <S>Recover-AdminPowerAppEnvironment</S>
+                <S>Reset-PowerAppEnvironment</S>
+                <S>Get-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Set-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Remove-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Get-AdminPowerApp</S>
+                <S>Remove-AdminPowerApp</S>
+                <S>Get-AdminPowerAppRoleAssignment</S>
+                <S>Remove-AdminPowerAppRoleAssignment</S>
+                <S>Set-AdminPowerAppRoleAssignment</S>
+                <S>Set-AdminPowerAppOwner</S>
+                <S>Get-AdminFlow</S>
+                <S>Add-PowerAppsCustomBrandingAssets</S>
+                <S>Enable-AdminFlow</S>
+                <S>Disable-AdminFlow</S>
+                <S>Remove-AdminFlow</S>
+                <S>Restore-AdminFlow</S>
+                <S>Remove-AdminFlowApprovals</S>
+                <S>Set-AdminFlowOwnerRole</S>
+                <S>Remove-AdminFlowOwnerRole</S>
+                <S>Get-AdminFlowOwnerRole</S>
+                <S>Get-AdminPowerAppConnector</S>
+                <S>Get-AdminFlowEnvironmentCmkStatus</S>
+                <S>Get-AdminFlowEncryptedByMicrosoftKey</S>
+                <S>Get-AdminFlowWithHttpAction</S>
+                <S>Get-AdminFlowWithMigratingTriggerUrl</S>
+                <S>Get-DesktopFlowModules</S>
+                <S>Add-AdminFlowsToSolution</S>
+                <S>Start-EUDBMigration</S>
+                <S>Cancel-EUDBMigration</S>
+                <S>Get-EUDBMigrationStatus</S>
+                <S>Add-AdminFlowPowerAppContext</S>
+                <S>Remove-AdminFlowPowerAppContext</S>
+                <S>Get-AdminFlowAtRiskOfSuspension</S>
+                <S>Get-AdminPowerAppConnectorAction</S>
+                <S>Get-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Set-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Remove-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Get-AdminGenerateDataverseEnforceReport</S>
+                <S>Remove-AdminPowerAppConnector</S>
+                <S>Get-AdminPowerAppConnection</S>
+                <S>Remove-AdminPowerAppConnection</S>
+                <S>Get-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Set-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Remove-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Get-AdminPowerAppsUserDetails</S>
+                <S>Get-AdminFlowUserDetails</S>
+                <S>Remove-AdminFlowUserDetails</S>
+                <S>Set-AdminPowerAppAsFeatured</S>
+                <S>Clear-AdminPowerAppAsFeatured</S>
+                <S>Set-AdminPowerAppAsHero</S>
+                <S>Clear-AdminPowerAppAsHero</S>
+                <S>Set-AppAsUnquarantined</S>
+                <S>Set-AppAsQuarantined</S>
+                <S>Get-AppQuarantineState</S>
+                <S>Set-AdminPowerAppApisToBypassConsent</S>
+                <S>Clear-AdminPowerAppApisToBypassConsent</S>
+                <S>Get-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Set-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Remove-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Get-AdminDlpPolicy</S>
+                <S>New-AdminDlpPolicy</S>
+                <S>Remove-AdminDlpPolicy</S>
+                <S>Set-AdminDlpPolicy</S>
+                <S>Add-ConnectorToBusinessDataGroup</S>
+                <S>Remove-ConnectorFromBusinessDataGroup</S>
+                <S>Get-AdminPowerAppConnectionReferences</S>
+                <S>Add-CustomConnectorToPolicy</S>
+                <S>Add-ConnectorsToPolicy</S>
+                <S>Remove-CustomConnectorFromPolicy</S>
+                <S>Remove-LegacyCDSDatabase</S>
+                <S>Get-AdminDeletedPowerAppsList</S>
+                <S>Get-AdminRecoverDeletedPowerApp</S>
+                <S>Add-AdminAllowedThirdPartyApps</S>
+                <S>Get-AdminAllowedThirdPartyApps</S>
+                <S>Remove-AdminAllowedThirdPartyApps</S>
+                <S>Set-PowerPlatformGenerativeAiSettings</S>
+                <S>Set-AdminPowerAppEnvironmentMakerAnalyticsSettings</S>
+                <S>Select-CurrentEnvironment</S>
+                <S>Add-PowerAppsAccount</S>
+                <S>Remove-PowerAppsAccount</S>
+                <S>Test-PowerAppsAccount</S>
+                <S>Get-TenantDetailsFromGraph</S>
+                <S>Get-UsersOrGroupsFromGraph</S>
+                <S>Get-JwtToken</S>
+                <S>ReplaceMacro</S>
+                <S>Set-TenantSettings</S>
+                <S>Get-TenantSettings</S>
+                <S>Get-AdminPowerAppTenantConsumedQuota</S>
+                <S>InvokeApi</S>
+                <S>InvokeApiNoParseContent</S>
+                <S>Add-AdminPowerAppsSyncUser</S>
+                <S>Remove-AllowedConsentPlans</S>
+                <S>Add-AllowedConsentPlans</S>
+                <S>Get-AllowedConsentPlans</S>
+                <S>Get-AdminPowerAppCdsAdditionalNotificationEmails</S>
+                <S>Set-AdminPowerAppCdsAdditionalNotificationEmails</S>
+                <S>Get-AdminPowerAppLicenses</S>
+                <S>Set-AdminPowerAppDesiredLogicalName</S>
+                <S>Get-DlpPolicy</S>
+                <S>New-DlpPolicy</S>
+                <S>Remove-DlpPolicy</S>
+                <S>Set-DlpPolicy</S>
+                <S>Get-PowerAppTenantUrlPatterns</S>
+                <S>New-PowerAppTenantUrlPatterns</S>
+                <S>Remove-PowerAppTenantUrlPatterns</S>
+                <S>Get-PowerAppPolicyUrlPatterns</S>
+                <S>New-PowerAppPolicyUrlPatterns</S>
+                <S>Remove-PowerAppPolicyUrlPatterns</S>
+                <S>Get-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>New-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Remove-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Set-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Copy-PowerAppEnvironment</S>
+                <S>Backup-PowerAppEnvironment</S>
+                <S>Get-PowerAppEnvironmentBackups</S>
+                <S>Restore-PowerAppEnvironment</S>
+                <S>Remove-PowerAppEnvironmentBackup</S>
+                <S>TenantToTenant-PrepareMigration</S>
+                <S>TenantToTenant-GetMigrationStatus</S>
+                <S>TenantToTenant-MigratePowerAppEnvironment</S>
+                <S>TenantToTenant-SubmitMigrationRequest</S>
+                <S>TenantToTenant-ManageMigrationRequest</S>
+                <S>TenantToTenant-ViewMigrationRequest</S>
+                <S>TenantToTenant-ViewApprovalRequest</S>
+                <S>TenantToTenant-DeleteMigrationRequest</S>
+                <S>TenantToTenant-UploadUserMappingFile</S>
+                <S>GenerateResourceStorage-PowerAppEnvironment</S>
+                <S>Get-PowerAppManagementApp</S>
+                <S>Get-PowerAppManagementApps</S>
+                <S>New-PowerAppManagementApp</S>
+                <S>Remove-PowerAppManagementApp</S>
+                <S>Get-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Set-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Reset-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Get-PowerAppGenerateProtectionKey</S>
+                <S>Get-PowerAppRetrieveTenantProtectionKey</S>
+                <S>Get-PowerAppRetrieveAvailableTenantProtectionKeys</S>
+                <S>New-PowerAppImportProtectionKey</S>
+                <S>Set-PowerAppProtectionStatus</S>
+                <S>Set-PowerAppTenantProtectionKey</S>
+                <S>Set-PowerAppLockAllEnvironments</S>
+                <S>Set-PowerAppUnlockEnvironment</S>
+                <S>Get-PowerAppTenantIsolationPolicy</S>
+                <S>Set-PowerAppTenantIsolationPolicy</S>
+                <S>Get-PowerAppTenantIsolationOperationStatus</S>
+                <S>Get-PowerAppDlpErrorSettings</S>
+                <S>New-PowerAppDlpErrorSettings</S>
+                <S>Set-PowerAppDlpErrorSettings</S>
+                <S>Remove-PowerAppDlpErrorSettings</S>
+                <S>Get-GovernanceErrorSettings</S>
+                <S>New-GovernanceErrorSettings</S>
+                <S>Set-GovernanceErrorSettings</S>
+                <S>Remove-GovernanceErrorSettings</S>
+                <S>Get-PowerAppDlpPolicyExemptResources</S>
+                <S>New-PowerAppDlpPolicyExemptResources</S>
+                <S>Remove-PowerAppDlpPolicyExemptResources</S>
+                <S>Set-PowerAppDlpPolicyExemptResources</S>
+                <S>Get-AdminVirtualConnectors</S>
+                <S>Start-DLPEnforcementOnConnectionsInTenant</S>
+                <S>Start-DLPEnforcementOnConnectionsInEnvironment</S>
+                <S>Get-PowerAppDlpConnectorBlockingPolicies</S>
+                <S>Get-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>New-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Set-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Remove-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Get-AdminPowerPlatformRequestsConsumptionOfFlows</S>
+                <S>Get-AdminNonZoneRedundantFlows</S>
+                <S>Get-AdminEnableZoneRedundancyPreflightCheck</S>
+                <S>Start-AdminFlowEnableZoneRedundancy</S>
+                <S>Get-AdminEnableZoneRedundancyStatus</S>
+              </LST>
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">Command</S>
+            <Obj N="Value" RefId="5">
+              <TNRef RefId="1" />
+              <LST>
+                <S>New-AdminPowerAppCdsDatabase</S>
+                <S>Get-AdminPowerAppCdsDatabaseLanguages</S>
+                <S>Get-AdminPowerAppCdsDatabaseCurrencies</S>
+                <S>Get-AdminPowerAppEnvironmentLocations</S>
+                <S>Get-AdminPowerAppCdsDatabaseTemplates</S>
+                <S>New-AdminPowerAppEnvironment</S>
+                <S>Set-AdminPowerAppEnvironmentDisplayName</S>
+                <S>Set-AdminPowerAppEnvironmentBackupRetentionPeriod</S>
+                <S>Set-AdminPowerAppEnvironmentRuntimeState</S>
+                <S>Set-AdminPowerAppEnvironmentGovernanceConfiguration</S>
+                <S>Get-AdminPowerAppEnvironment</S>
+                <S>Get-AdminPowerAppSoftDeletedEnvironment</S>
+                <S>Get-AdminPowerAppOperationStatus</S>
+                <S>Remove-AdminPowerAppEnvironment</S>
+                <S>Recover-AdminPowerAppEnvironment</S>
+                <S>Reset-PowerAppEnvironment</S>
+                <S>Get-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Set-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Remove-AdminPowerAppEnvironmentRoleAssignment</S>
+                <S>Get-AdminPowerApp</S>
+                <S>Remove-AdminPowerApp</S>
+                <S>Get-AdminPowerAppRoleAssignment</S>
+                <S>Remove-AdminPowerAppRoleAssignment</S>
+                <S>Set-AdminPowerAppRoleAssignment</S>
+                <S>Set-AdminPowerAppOwner</S>
+                <S>Get-AdminFlow</S>
+                <S>Add-PowerAppsCustomBrandingAssets</S>
+                <S>Enable-AdminFlow</S>
+                <S>Disable-AdminFlow</S>
+                <S>Remove-AdminFlow</S>
+                <S>Restore-AdminFlow</S>
+                <S>Remove-AdminFlowApprovals</S>
+                <S>Set-AdminFlowOwnerRole</S>
+                <S>Remove-AdminFlowOwnerRole</S>
+                <S>Get-AdminFlowOwnerRole</S>
+                <S>Get-AdminPowerAppConnector</S>
+                <S>Get-AdminFlowEnvironmentCmkStatus</S>
+                <S>Get-AdminFlowEncryptedByMicrosoftKey</S>
+                <S>Get-AdminFlowWithHttpAction</S>
+                <S>Get-AdminFlowWithMigratingTriggerUrl</S>
+                <S>Get-DesktopFlowModules</S>
+                <S>Add-AdminFlowsToSolution</S>
+                <S>Start-EUDBMigration</S>
+                <S>Cancel-EUDBMigration</S>
+                <S>Get-EUDBMigrationStatus</S>
+                <S>Add-AdminFlowPowerAppContext</S>
+                <S>Remove-AdminFlowPowerAppContext</S>
+                <S>Get-AdminFlowAtRiskOfSuspension</S>
+                <S>Get-AdminPowerAppConnectorAction</S>
+                <S>Get-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Set-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Remove-AdminPowerAppConnectorRoleAssignment</S>
+                <S>Get-AdminGenerateDataverseEnforceReport</S>
+                <S>Remove-AdminPowerAppConnector</S>
+                <S>Get-AdminPowerAppConnection</S>
+                <S>Remove-AdminPowerAppConnection</S>
+                <S>Get-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Set-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Remove-AdminPowerAppConnectionRoleAssignment</S>
+                <S>Get-AdminPowerAppsUserDetails</S>
+                <S>Get-AdminFlowUserDetails</S>
+                <S>Remove-AdminFlowUserDetails</S>
+                <S>Set-AdminPowerAppAsFeatured</S>
+                <S>Clear-AdminPowerAppAsFeatured</S>
+                <S>Set-AdminPowerAppAsHero</S>
+                <S>Clear-AdminPowerAppAsHero</S>
+                <S>Set-AppAsUnquarantined</S>
+                <S>Set-AppAsQuarantined</S>
+                <S>Get-AppQuarantineState</S>
+                <S>Set-AdminPowerAppApisToBypassConsent</S>
+                <S>Clear-AdminPowerAppApisToBypassConsent</S>
+                <S>Get-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Set-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Remove-AdminPowerAppConditionalAccessAuthenticationContextIds</S>
+                <S>Get-AdminDlpPolicy</S>
+                <S>New-AdminDlpPolicy</S>
+                <S>Remove-AdminDlpPolicy</S>
+                <S>Set-AdminDlpPolicy</S>
+                <S>Add-ConnectorToBusinessDataGroup</S>
+                <S>Remove-ConnectorFromBusinessDataGroup</S>
+                <S>Get-AdminPowerAppConnectionReferences</S>
+                <S>Add-CustomConnectorToPolicy</S>
+                <S>Add-ConnectorsToPolicy</S>
+                <S>Remove-CustomConnectorFromPolicy</S>
+                <S>Remove-LegacyCDSDatabase</S>
+                <S>Get-AdminDeletedPowerAppsList</S>
+                <S>Get-AdminRecoverDeletedPowerApp</S>
+                <S>Add-AdminAllowedThirdPartyApps</S>
+                <S>Get-AdminAllowedThirdPartyApps</S>
+                <S>Remove-AdminAllowedThirdPartyApps</S>
+                <S>Set-PowerPlatformGenerativeAiSettings</S>
+                <S>Set-AdminPowerAppEnvironmentMakerAnalyticsSettings</S>
+                <S>Select-CurrentEnvironment</S>
+                <S>Add-PowerAppsAccount</S>
+                <S>Remove-PowerAppsAccount</S>
+                <S>Test-PowerAppsAccount</S>
+                <S>Get-TenantDetailsFromGraph</S>
+                <S>Get-UsersOrGroupsFromGraph</S>
+                <S>Get-JwtToken</S>
+                <S>ReplaceMacro</S>
+                <S>Set-TenantSettings</S>
+                <S>Get-TenantSettings</S>
+                <S>Get-AdminPowerAppTenantConsumedQuota</S>
+                <S>InvokeApi</S>
+                <S>InvokeApiNoParseContent</S>
+                <S>Add-AdminPowerAppsSyncUser</S>
+                <S>Remove-AllowedConsentPlans</S>
+                <S>Add-AllowedConsentPlans</S>
+                <S>Get-AllowedConsentPlans</S>
+                <S>Get-AdminPowerAppCdsAdditionalNotificationEmails</S>
+                <S>Set-AdminPowerAppCdsAdditionalNotificationEmails</S>
+                <S>Get-AdminPowerAppLicenses</S>
+                <S>Set-AdminPowerAppDesiredLogicalName</S>
+                <S>Get-DlpPolicy</S>
+                <S>New-DlpPolicy</S>
+                <S>Remove-DlpPolicy</S>
+                <S>Set-DlpPolicy</S>
+                <S>Get-PowerAppTenantUrlPatterns</S>
+                <S>New-PowerAppTenantUrlPatterns</S>
+                <S>Remove-PowerAppTenantUrlPatterns</S>
+                <S>Get-PowerAppPolicyUrlPatterns</S>
+                <S>New-PowerAppPolicyUrlPatterns</S>
+                <S>Remove-PowerAppPolicyUrlPatterns</S>
+                <S>Get-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>New-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Remove-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Set-PowerAppDlpPolicyConnectorConfigurations</S>
+                <S>Copy-PowerAppEnvironment</S>
+                <S>Backup-PowerAppEnvironment</S>
+                <S>Get-PowerAppEnvironmentBackups</S>
+                <S>Restore-PowerAppEnvironment</S>
+                <S>Remove-PowerAppEnvironmentBackup</S>
+                <S>TenantToTenant-PrepareMigration</S>
+                <S>TenantToTenant-GetMigrationStatus</S>
+                <S>TenantToTenant-MigratePowerAppEnvironment</S>
+                <S>TenantToTenant-SubmitMigrationRequest</S>
+                <S>TenantToTenant-ManageMigrationRequest</S>
+                <S>TenantToTenant-ViewMigrationRequest</S>
+                <S>TenantToTenant-ViewApprovalRequest</S>
+                <S>TenantToTenant-DeleteMigrationRequest</S>
+                <S>TenantToTenant-UploadUserMappingFile</S>
+                <S>GenerateResourceStorage-PowerAppEnvironment</S>
+                <S>Get-PowerAppManagementApp</S>
+                <S>Get-PowerAppManagementApps</S>
+                <S>New-PowerAppManagementApp</S>
+                <S>Remove-PowerAppManagementApp</S>
+                <S>Get-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Set-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Reset-AdminPowerAppSharepointFormEnvironment</S>
+                <S>Get-PowerAppGenerateProtectionKey</S>
+                <S>Get-PowerAppRetrieveTenantProtectionKey</S>
+                <S>Get-PowerAppRetrieveAvailableTenantProtectionKeys</S>
+                <S>New-PowerAppImportProtectionKey</S>
+                <S>Set-PowerAppProtectionStatus</S>
+                <S>Set-PowerAppTenantProtectionKey</S>
+                <S>Set-PowerAppLockAllEnvironments</S>
+                <S>Set-PowerAppUnlockEnvironment</S>
+                <S>Get-PowerAppTenantIsolationPolicy</S>
+                <S>Set-PowerAppTenantIsolationPolicy</S>
+                <S>Get-PowerAppTenantIsolationOperationStatus</S>
+                <S>Get-PowerAppDlpErrorSettings</S>
+                <S>New-PowerAppDlpErrorSettings</S>
+                <S>Set-PowerAppDlpErrorSettings</S>
+                <S>Remove-PowerAppDlpErrorSettings</S>
+                <S>Get-GovernanceErrorSettings</S>
+                <S>New-GovernanceErrorSettings</S>
+                <S>Set-GovernanceErrorSettings</S>
+                <S>Remove-GovernanceErrorSettings</S>
+                <S>Get-PowerAppDlpPolicyExemptResources</S>
+                <S>New-PowerAppDlpPolicyExemptResources</S>
+                <S>Remove-PowerAppDlpPolicyExemptResources</S>
+                <S>Set-PowerAppDlpPolicyExemptResources</S>
+                <S>Get-AdminVirtualConnectors</S>
+                <S>Start-DLPEnforcementOnConnectionsInTenant</S>
+                <S>Start-DLPEnforcementOnConnectionsInEnvironment</S>
+                <S>Get-PowerAppDlpConnectorBlockingPolicies</S>
+                <S>Get-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>New-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Set-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Remove-PowerAppDlpConnectorBlockingPolicy</S>
+                <S>Get-AdminPowerPlatformRequestsConsumptionOfFlows</S>
+                <S>Get-AdminNonZoneRedundantFlows</S>
+                <S>Get-AdminEnableZoneRedundancyPreflightCheck</S>
+                <S>Start-AdminFlowEnableZoneRedundancy</S>
+                <S>Get-AdminEnableZoneRedundancyStatus</S>
+              </LST>
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">Workflow</S>
+            <Ref N="Value" RefId="3" />
+          </En>
+          <En>
+            <S N="Key">RoleCapability</S>
+            <Ref N="Value" RefId="3" />
+          </En>
+        </DCT>
+      </Obj>
+      <Nil N="PowerShellGetFormatVersion" />
+      <S N="ReleaseNotes">Current Release:_x000D__x000A_2.0.217_x000D__x000A_    Update example for the Cancel-EUDBMigration cmdlet_x000D__x000A_    Added new apis for support getting flows with trigger urls that require migration._x000D__x000A_    Get-AdminFlowWithMigratingTriggerUrl_x000D__x000A__x000D__x000A_2.0.209_x000D__x000A_    Adding function to upload user mapping file in single command._x000D__x000A_    TenantToTenant-UploadUserMappingFile_x000D__x000A__x000D__x000A_2.0.208_x000D__x000A_    Update examples for the Power Automate EUDB migration_x000D__x000A__x000D__x000A_2.0.206_x000D__x000A_    Add support for the EUDB cancel experience._x000D__x000A_    Cancel-EUDBMigration_x000D__x000A__x0009_Added new apis for support getting flows with http action in an environment._x000D__x000A_    Get-AdminFlowWithHttpAction_x000D__x000A__x000D__x000A_2.0.205_x000D__x000A_    Add support for migrating flows into EUDB compliant resource groups_x000D__x000A__x0009_Start-EUDBMigration_x000D__x000A__x0009_Get-EUDBMigrationStatus_x000D__x000A__x000D__x000A_2.0.203_x000D__x000A_    Added new apis for support getting flows that remain encrypted by Microsoft Managed Key in an environment._x000D__x000A_    Get-AdminFlowEncryptedByMicrosoftKey_x000D__x000A__x000D__x000A_2.0.198_x000D__x000A_    Update required params in TenantToTenant-PrepareMigration and TenantToTenant-MigratePowerAppEnvironment. We need MigrationID to initiate a Tenant To Tenant Migrations._x000D__x000A_    Added new APIs to support the submission and approval process for Tenant to Tenant Migrations._x000D__x000A_    Removed TenantToTenant-GetStatus Command which is not supported anymore._x000D__x000A_    TenantToTenant-ViewApprovalRequest_x000D__x000A_    TenantToTenant-GetMigrationStatus_x000D__x000A_    TenantToTenant-DeleteMigrationRequest_x000D__x000A__x000D__x000A_2.0.197_x000D__x000A_    Added new apis for Submitting and Approving Tenant To Tenant Migrations._x000D__x000A_    TenantToTenant-SubmitMigrationRequest_x000D__x000A_    TenantToTenant-ManageMigrationRequest_x000D__x000A_    TenantToTenant-ViewMigrationRequest_x000D__x000A__x000D__x000A_2.0.170_x000D__x000A_    Add Support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_    TenantToTenant-SubmitMigrationRequest_x000D__x000A_    TenantToTenant-ManageMigrationRequest_x000D__x000A_    TenantToTenant-ViewMigrationRequest_x000D__x000A__x000D__x000A_2.0.169_x000D__x000A_    Add Support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_     TenantToTenant-GetStatus_x000D__x000A_     TenantToTenant-MigratePowerAppEnvironment_x000D__x000A_     TenantToTenant-PrepareMigration_x000D__x000A_     GenerateResourceStorage-PowerAppEnvironment_x000D__x000A__x000D__x000A_2.0.168_x000D__x000A__x0009_Add support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_     TenantToTenant-GetStatus_x000D__x000A_     TenantToTenant-MigratePowerAppEnvironment_x000D__x000A_     TenantToTenant-PrepareMigration_x000D__x000A_     GenerateResourceStorage-PowerAppEnvironment_x000D__x000A__x000D__x000A_2.0.167_x000D__x000A_    Add support for migrating non-solution flows to solution as admin._x000D__x000A_        Add-AdminFlowsToSolution_x000D__x000A_    Support 'CreatedBy' filter which was removed in 2.0.166. We can support this filter now as backend API has been fixed to return the CreatedBy metadata._x000D__x000A__x000D__x000A_2.0.166_x000D__x000A_    Update Get-AdminFlow to use v2 route for fetching flows. This v2 route returns less information about flows._x000D__x000A_    Response will contain the following flow properties: Id, display name, created time, last modified time, state and workflow entity Id._x000D__x000A_    BREAKING CHANGE: Removed support for 'CreatedBy' filter as v2 route does not return the creator of the flow._x000D__x000A__x000D__x000A_2.0.165_x000D__x000A_    Add support for setting the background operations state on an environment._x000D__x000A_        Set-AdminPowerAppEnvironmentRuntimeState_x000D__x000A__x000D__x000A_2.0.163_x000D__x000A_    Fix polling support in Set-AdminPowerAppEnvironmentRuntimeState_x000D__x000A_        Set-AdminPowerAppEnvironmentRuntimeState        _x000D__x000A__x000D__x000A_2.0.157_x000D__x000A_    Added new Apis to get environment cmk status in PowerAutomate. _x000D__x000A_        Get-AdminFlowEnvironmentCmkStatus_x000D__x000A__x000D__x000A_2.0.156_x000D__x000A_    Add support for setting backup retention period on an environment._x000D__x000A_        Set-AdminPowerAppEnvironmentBackupRetentionPeriod_x000D__x000A__x000D__x000A_2.0.155_x000D__x000A_    Add flow at risk of suspension function._x000D__x000A_        Get-AdminFlowAtRiskOfSuspension_x000D__x000A__x000D__x000A_2.0.155_x000D__x000A_    Add support for Developer environment provisioning and TemplateMetadata parameter for Dataverse provisioning._x000D__x000A__x000D__x000A_2.0.154_x000D__x000A_    Update license uri link_x000D__x000A__x000D__x000A_2.0.153_x000D__x000A__x0009_Add new governance error settings functions_x000D__x000A__x0009__x0009_Get-GovernanceErrorSettings_x000D__x000A__x0009__x0009_New-GovernanceErrorSettings_x000D__x000A__x0009__x0009_Set-GovernanceErrorSettings_x000D__x000A__x0009__x0009_Remove-GovernanceErrorSettingss_x000D__x000A__x0009_PowerAppDlpErrorSettings will be deprecated in a future version._x000D__x000A__x000D__x000A_2.0.150_x000D__x000A_    Remove warning from Set-AdminPowerAppEnvironmentGovernanceConfiguration</S>
+      <Obj N="Dependencies" RefId="6">
+        <TNRef RefId="1" />
+        <LST />
+      </Obj>
+      <S N="RepositorySourceLocation">https://www.powershellgallery.com/api/v2</S>
+      <S N="Repository">PSGallery</S>
+      <S N="PackageManagementProvider">NuGet</S>
+      <Obj N="AdditionalMetadata" RefId="7">
+        <TN RefId="3">
+          <T>System.Management.Automation.PSCustomObject</T>
+          <T>System.Object</T>
+        </TN>
+        <MS>
+          <S N="copyright">© 2020 Microsoft Corporation. All rights reserved</S>
+          <S N="description">PowerShell interface for Microsoft PowerApps and Flow Administrative features</S>
+          <S N="requireLicenseAcceptance">False</S>
+          <S N="releaseNotes">Current Release:_x000D__x000A_2.0.217_x000D__x000A_    Update example for the Cancel-EUDBMigration cmdlet_x000D__x000A_    Added new apis for support getting flows with trigger urls that require migration._x000D__x000A_    Get-AdminFlowWithMigratingTriggerUrl_x000D__x000A__x000D__x000A_2.0.209_x000D__x000A_    Adding function to upload user mapping file in single command._x000D__x000A_    TenantToTenant-UploadUserMappingFile_x000D__x000A__x000D__x000A_2.0.208_x000D__x000A_    Update examples for the Power Automate EUDB migration_x000D__x000A__x000D__x000A_2.0.206_x000D__x000A_    Add support for the EUDB cancel experience._x000D__x000A_    Cancel-EUDBMigration_x000D__x000A__x0009_Added new apis for support getting flows with http action in an environment._x000D__x000A_    Get-AdminFlowWithHttpAction_x000D__x000A__x000D__x000A_2.0.205_x000D__x000A_    Add support for migrating flows into EUDB compliant resource groups_x000D__x000A__x0009_Start-EUDBMigration_x000D__x000A__x0009_Get-EUDBMigrationStatus_x000D__x000A__x000D__x000A_2.0.203_x000D__x000A_    Added new apis for support getting flows that remain encrypted by Microsoft Managed Key in an environment._x000D__x000A_    Get-AdminFlowEncryptedByMicrosoftKey_x000D__x000A__x000D__x000A_2.0.198_x000D__x000A_    Update required params in TenantToTenant-PrepareMigration and TenantToTenant-MigratePowerAppEnvironment. We need MigrationID to initiate a Tenant To Tenant Migrations._x000D__x000A_    Added new APIs to support the submission and approval process for Tenant to Tenant Migrations._x000D__x000A_    Removed TenantToTenant-GetStatus Command which is not supported anymore._x000D__x000A_    TenantToTenant-ViewApprovalRequest_x000D__x000A_    TenantToTenant-GetMigrationStatus_x000D__x000A_    TenantToTenant-DeleteMigrationRequest_x000D__x000A__x000D__x000A_2.0.197_x000D__x000A_    Added new apis for Submitting and Approving Tenant To Tenant Migrations._x000D__x000A_    TenantToTenant-SubmitMigrationRequest_x000D__x000A_    TenantToTenant-ManageMigrationRequest_x000D__x000A_    TenantToTenant-ViewMigrationRequest_x000D__x000A__x000D__x000A_2.0.170_x000D__x000A_    Add Support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_    TenantToTenant-SubmitMigrationRequest_x000D__x000A_    TenantToTenant-ManageMigrationRequest_x000D__x000A_    TenantToTenant-ViewMigrationRequest_x000D__x000A__x000D__x000A_2.0.169_x000D__x000A_    Add Support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_     TenantToTenant-GetStatus_x000D__x000A_     TenantToTenant-MigratePowerAppEnvironment_x000D__x000A_     TenantToTenant-PrepareMigration_x000D__x000A_     GenerateResourceStorage-PowerAppEnvironment_x000D__x000A__x000D__x000A_2.0.168_x000D__x000A__x0009_Add support for Tenant To Tenant Migration and for generating resource storage._x000D__x000A_     TenantToTenant-GetStatus_x000D__x000A_     TenantToTenant-MigratePowerAppEnvironment_x000D__x000A_     TenantToTenant-PrepareMigration_x000D__x000A_     GenerateResourceStorage-PowerAppEnvironment_x000D__x000A__x000D__x000A_2.0.167_x000D__x000A_    Add support for migrating non-solution flows to solution as admin._x000D__x000A_        Add-AdminFlowsToSolution_x000D__x000A_    Support 'CreatedBy' filter which was removed in 2.0.166. We can support this filter now as backend API has been fixed to return the CreatedBy metadata._x000D__x000A__x000D__x000A_2.0.166_x000D__x000A_    Update Get-AdminFlow to use v2 route for fetching flows. This v2 route returns less information about flows._x000D__x000A_    Response will contain the following flow properties: Id, display name, created time, last modified time, state and workflow entity Id._x000D__x000A_    BREAKING CHANGE: Removed support for 'CreatedBy' filter as v2 route does not return the creator of the flow._x000D__x000A__x000D__x000A_2.0.165_x000D__x000A_    Add support for setting the background operations state on an environment._x000D__x000A_        Set-AdminPowerAppEnvironmentRuntimeState_x000D__x000A__x000D__x000A_2.0.163_x000D__x000A_    Fix polling support in Set-AdminPowerAppEnvironmentRuntimeState_x000D__x000A_        Set-AdminPowerAppEnvironmentRuntimeState        _x000D__x000A__x000D__x000A_2.0.157_x000D__x000A_    Added new Apis to get environment cmk status in PowerAutomate. _x000D__x000A_        Get-AdminFlowEnvironmentCmkStatus_x000D__x000A__x000D__x000A_2.0.156_x000D__x000A_    Add support for setting backup retention period on an environment._x000D__x000A_        Set-AdminPowerAppEnvironmentBackupRetentionPeriod_x000D__x000A__x000D__x000A_2.0.155_x000D__x000A_    Add flow at risk of suspension function._x000D__x000A_        Get-AdminFlowAtRiskOfSuspension_x000D__x000A__x000D__x000A_2.0.155_x000D__x000A_    Add support for Developer environment provisioning and TemplateMetadata parameter for Dataverse provisioning._x000D__x000A__x000D__x000A_2.0.154_x000D__x000A_    Update license uri link_x000D__x000A__x000D__x000A_2.0.153_x000D__x000A__x0009_Add new governance error settings functions_x000D__x000A__x0009__x0009_Get-GovernanceErrorSettings_x000D__x000A__x0009__x0009_New-GovernanceErrorSettings_x000D__x000A__x0009__x0009_Set-GovernanceErrorSettings_x000D__x000A__x0009__x0009_Remove-GovernanceErrorSettingss_x000D__x000A__x0009_PowerAppDlpErrorSettings will be deprecated in a future version._x000D__x000A__x000D__x000A_2.0.150_x000D__x000A_    Remove warning from Set-AdminPowerAppEnvironmentGovernanceConfiguration</S>
+          <S N="isLatestVersion">True</S>
+          <S N="isAbsoluteLatestVersion">True</S>
+          <S N="versionDownloadCount">55428</S>
+          <S N="downloadCount">10927947</S>
+          <S N="packageSize">885588</S>
+          <S N="published">3/30/2026 5:52:09 PM +08:00</S>
+          <S N="created">3/30/2026 5:52:09 PM +08:00</S>
+          <S N="lastUpdated">5/15/2026 7:00:00 PM +08:00</S>
+          <S N="tags">PSModule PSFunction_New-AdminPowerAppCdsDatabase PSCommand_New-AdminPowerAppCdsDatabase PSFunction_Get-AdminPowerAppCdsDatabaseLanguages PSCommand_Get-AdminPowerAppCdsDatabaseLanguages PSFunction_Get-AdminPowerAppCdsDatabaseCurrencies PSCommand_Get-AdminPowerAppCdsDatabaseCurrencies PSFunction_Get-AdminPowerAppEnvironmentLocations PSCommand_Get-AdminPowerAppEnvironmentLocations PSFunction_Get-AdminPowerAppCdsDatabaseTemplates PSCommand_Get-AdminPowerAppCdsDatabaseTemplates PSFunction_New-AdminPowerAppEnvironment PSCommand_New-AdminPowerAppEnvironment PSFunction_Set-AdminPowerAppEnvironmentDisplayName PSCommand_Set-AdminPowerAppEnvironmentDisplayName PSFunction_Set-AdminPowerAppEnvironmentBackupRetentionPeriod PSCommand_Set-AdminPowerAppEnvironmentBackupRetentionPeriod PSFunction_Set-AdminPowerAppEnvironmentRuntimeState PSCommand_Set-AdminPowerAppEnvironmentRuntimeState PSFunction_Set-AdminPowerAppEnvironmentGovernanceConfiguration PSCommand_Set-AdminPowerAppEnvironmentGovernanceConfiguration PSFunction_Get-AdminPowerAppEnvironment PSCommand_Get-AdminPowerAppEnvironment PSFunction_Get-AdminPowerAppSoftDeletedEnvironment PSCommand_Get-AdminPowerAppSoftDeletedEnvironment PSFunction_Get-AdminPowerAppOperationStatus PSCommand_Get-AdminPowerAppOperationStatus PSFunction_Remove-AdminPowerAppEnvironment PSCommand_Remove-AdminPowerAppEnvironment PSFunction_Recover-AdminPowerAppEnvironment PSCommand_Recover-AdminPowerAppEnvironment PSFunction_Reset-PowerAppEnvironment PSCommand_Reset-PowerAppEnvironment PSFunction_Get-AdminPowerAppEnvironmentRoleAssignment PSCommand_Get-AdminPowerAppEnvironmentRoleAssignment PSFunction_Set-AdminPowerAppEnvironmentRoleAssignment PSCommand_Set-AdminPowerAppEnvironmentRoleAssignment PSFunction_Remove-AdminPowerAppEnvironmentRoleAssignment PSCommand_Remove-AdminPowerAppEnvironmentRoleAssignment PSFunction_Get-AdminPowerApp PSCommand_Get-AdminPowerApp PSFunction_Remove-AdminPowerApp PSCommand_Remove-AdminPowerApp PSFunction_Get-AdminPowerAppRoleAssignment PSCommand_Get-AdminPowerAppRoleAssignment PSFunction_Remove-AdminPowerAppRoleAssignment PSCommand_Remove-AdminPowerAppRoleAssignment PSFunction_Set-AdminPowerAppRoleAssignment PSCommand_Set-AdminPowerAppRoleAssignment PSFunction_Set-AdminPowerAppOwner PSCommand_Set-AdminPowerAppOwner PSFunction_Get-AdminFlow PSCommand_Get-AdminFlow PSFunction_Add-PowerAppsCustomBrandingAssets PSCommand_Add-PowerAppsCustomBrandingAssets PSFunction_Enable-AdminFlow PSCommand_Enable-AdminFlow PSFunction_Disable-AdminFlow PSCommand_Disable-AdminFlow PSFunction_Remove-AdminFlow PSCommand_Remove-AdminFlow PSFunction_Restore-AdminFlow PSCommand_Restore-AdminFlow PSFunction_Remove-AdminFlowApprovals PSCommand_Remove-AdminFlowApprovals PSFunction_Set-AdminFlowOwnerRole PSCommand_Set-AdminFlowOwnerRole PSFunction_Remove-AdminFlowOwnerRole PSCommand_Remove-AdminFlowOwnerRole PSFunction_Get-AdminFlowOwnerRole PSCommand_Get-AdminFlowOwnerRole PSFunction_Get-AdminPowerAppConnector PSCommand_Get-AdminPowerAppConnector PSFunction_Get-AdminFlowEnvironmentCmkStatus PSCommand_Get-AdminFlowEnvironmentCmkStatus PSFunction_Get-AdminFlowEncryptedByMicrosoftKey PSCommand_Get-AdminFlowEncryptedByMicrosoftKey PSFunction_Get-AdminFlowWithHttpAction PSCommand_Get-AdminFlowWithHttpAction PSFunction_Get-AdminFlowWithMigratingTriggerUrl PSCommand_Get-AdminFlowWithMigratingTriggerUrl PSFunction_Get-DesktopFlowModules PSCommand_Get-DesktopFlowModules PSFunction_Add-AdminFlowsToSolution PSCommand_Add-AdminFlowsToSolution PSFunction_Start-EUDBMigration PSCommand_Start-EUDBMigration PSFunction_Cancel-EUDBMigration PSCommand_Cancel-EUDBMigration PSFunction_Get-EUDBMigrationStatus PSCommand_Get-EUDBMigrationStatus PSFunction_Add-AdminFlowPowerAppContext PSCommand_Add-AdminFlowPowerAppContext PSFunction_Remove-AdminFlowPowerAppContext PSCommand_Remove-AdminFlowPowerAppContext PSFunction_Get-AdminFlowAtRiskOfSuspension PSCommand_Get-AdminFlowAtRiskOfSuspension PSFunction_Get-AdminPowerAppConnectorAction PSCommand_Get-AdminPowerAppConnectorAction PSFunction_Get-AdminPowerAppConnectorRoleAssignment PSCommand_Get-AdminPowerAppConnectorRoleAssignment PSFunction_Set-AdminPowerAppConnectorRoleAssignment PSCommand_Set-AdminPowerAppConnectorRoleAssignment PSFunction_Remove-AdminPowerAppConnectorRoleAssignment PSCommand_Remove-AdminPowerAppConnectorRoleAssignment PSFunction_Get-AdminGenerateDataverseEnforceReport PSCommand_Get-AdminGenerateDataverseEnforceReport PSFunction_Remove-AdminPowerAppConnector PSCommand_Remove-AdminPowerAppConnector PSFunction_Get-AdminPowerAppConnection PSCommand_Get-AdminPowerAppConnection PSFunction_Remove-AdminPowerAppConnection PSCommand_Remove-AdminPowerAppConnection PSFunction_Get-AdminPowerAppConnectionRoleAssignment PSCommand_Get-AdminPowerAppConnectionRoleAssignment PSFunction_Set-AdminPowerAppConnectionRoleAssignment PSCommand_Set-AdminPowerAppConnectionRoleAssignment PSFunction_Remove-AdminPowerAppConnectionRoleAssignment PSCommand_Remove-AdminPowerAppConnectionRoleAssignment PSFunction_Get-AdminPowerAppsUserDetails PSCommand_Get-AdminPowerAppsUserDetails PSFunction_Get-AdminFlowUserDetails PSCommand_Get-AdminFlowUserDetails PSFunction_Remove-AdminFlowUserDetails PSCommand_Remove-AdminFlowUserDetails PSFunction_Set-AdminPowerAppAsFeatured PSCommand_Set-AdminPowerAppAsFeatured PSFunction_Clear-AdminPowerAppAsFeatured PSCommand_Clear-AdminPowerAppAsFeatured PSFunction_Set-AdminPowerAppAsHero PSCommand_Set-AdminPowerAppAsHero PSFunction_Clear-AdminPowerAppAsHero PSCommand_Clear-AdminPowerAppAsHero PSFunction_Set-AppAsUnquarantined PSCommand_Set-AppAsUnquarantined PSFunction_Set-AppAsQuarantined PSCommand_Set-AppAsQuarantined PSFunction_Get-AppQuarantineState PSCommand_Get-AppQuarantineState PSFunction_Set-AdminPowerAppApisToBypassConsent PSCommand_Set-AdminPowerAppApisToBypassConsent PSFunction_Clear-AdminPowerAppApisToBypassConsent PSCommand_Clear-AdminPowerAppApisToBypassConsent PSFunction_Get-AdminPowerAppConditionalAccessAuthenticationContextIds PSCommand_Get-AdminPowerAppConditionalAccessAuthenticationContextIds PSFunction_Set-AdminPowerAppConditionalAccessAuthenticationContextIds PSCommand_Set-AdminPowerAppConditionalAccessAuthenticationContextIds PSFunction_Remove-AdminPowerAppConditionalAccessAuthenticationContextIds PSCommand_Remove-AdminPowerAppConditionalAccessAuthenticationContextIds PSFunction_Get-AdminDlpPolicy PSCommand_Get-AdminDlpPolicy PSFunction_New-AdminDlpPolicy PSCommand_New-AdminDlpPolicy PSFunction_Remove-AdminDlpPolicy PSCommand_Remove-AdminDlpPolicy PSFunction_Set-AdminDlpPolicy PSCommand_Set-AdminDlpPolicy PSFunction_Add-ConnectorToBusinessDataGroup PSCommand_Add-ConnectorToBusinessDataGroup PSFunction_Remove-ConnectorFromBusinessDataGroup PSCommand_Remove-ConnectorFromBusinessDataGroup PSFunction_Get-AdminPowerAppConnectionReferences PSCommand_Get-AdminPowerAppConnectionReferences PSFunction_Add-CustomConnectorToPolicy PSCommand_Add-CustomConnectorToPolicy PSFunction_Add-ConnectorsToPolicy PSCommand_Add-ConnectorsToPolicy PSFunction_Remove-CustomConnectorFromPolicy PSCommand_Remove-CustomConnectorFromPolicy PSFunction_Remove-LegacyCDSDatabase PSCommand_Remove-LegacyCDSDatabase PSFunction_Get-AdminDeletedPowerAppsList PSCommand_Get-AdminDeletedPowerAppsList PSFunction_Get-AdminRecoverDeletedPowerApp PSCommand_Get-AdminRecoverDeletedPowerApp PSFunction_Add-AdminAllowedThirdPartyApps PSCommand_Add-AdminAllowedThirdPartyApps PSFunction_Get-AdminAllowedThirdPartyApps PSCommand_Get-AdminAllowedThirdPartyApps PSFunction_Remove-AdminAllowedThirdPartyApps PSCommand_Remove-AdminAllowedThirdPartyApps PSFunction_Set-PowerPlatformGenerativeAiSettings PSCommand_Set-PowerPlatformGenerativeAiSettings PSFunction_Set-AdminPowerAppEnvironmentMakerAnalyticsSettings PSCommand_Set-AdminPowerAppEnvironmentMakerAnalyticsSettings PSFunction_Select-CurrentEnvironment PSCommand_Select-CurrentEnvironment PSFunction_Add-PowerAppsAccount PSCommand_Add-PowerAppsAccount PSFunction_Remove-PowerAppsAccount PSCommand_Remove-PowerAppsAccount PSFunction_Test-PowerAppsAccount PSCommand_Test-PowerAppsAccount PSFunction_Get-TenantDetailsFromGraph PSCommand_Get-TenantDetailsFromGraph PSFunction_Get-UsersOrGroupsFromGraph PSCommand_Get-UsersOrGroupsFromGraph PSFunction_Get-JwtToken PSCommand_Get-JwtToken PSFunction_ReplaceMacro PSCommand_ReplaceMacro PSFunction_Set-TenantSettings PSCommand_Set-TenantSettings PSFunction_Get-TenantSettings PSCommand_Get-TenantSettings PSFunction_Get-AdminPowerAppTenantConsumedQuota PSCommand_Get-AdminPowerAppTenantConsumedQuota PSFunction_InvokeApi PSCommand_InvokeApi PSFunction_InvokeApiNoParseContent PSCommand_InvokeApiNoParseContent PSFunction_Add-AdminPowerAppsSyncUser PSCommand_Add-AdminPowerAppsSyncUser PSFunction_Remove-AllowedConsentPlans PSCommand_Remove-AllowedConsentPlans PSFunction_Add-AllowedConsentPlans PSCommand_Add-AllowedConsentPlans PSFunction_Get-AllowedConsentPlans PSCommand_Get-AllowedConsentPlans PSFunction_Get-AdminPowerAppCdsAdditionalNotificationEmails PSCommand_Get-AdminPowerAppCdsAdditionalNotificationEmails PSFunction_Set-AdminPowerAppCdsAdditionalNotificationEmails PSCommand_Set-AdminPowerAppCdsAdditionalNotificationEmails PSFunction_Get-AdminPowerAppLicenses PSCommand_Get-AdminPowerAppLicenses PSFunction_Set-AdminPowerAppDesiredLogicalName PSCommand_Set-AdminPowerAppDesiredLogicalName PSFunction_Get-DlpPolicy PSCommand_Get-DlpPolicy PSFunction_New-DlpPolicy PSCommand_New-DlpPolicy PSFunction_Remove-DlpPolicy PSCommand_Remove-DlpPolicy PSFunction_Set-DlpPolicy PSCommand_Set-DlpPolicy PSFunction_Get-PowerAppTenantUrlPatterns PSCommand_Get-PowerAppTenantUrlPatterns PSFunction_New-PowerAppTenantUrlPatterns PSCommand_New-PowerAppTenantUrlPatterns PSFunction_Remove-PowerAppTenantUrlPatterns PSCommand_Remove-PowerAppTenantUrlPatterns PSFunction_Get-PowerAppPolicyUrlPatterns PSCommand_Get-PowerAppPolicyUrlPatterns PSFunction_New-PowerAppPolicyUrlPatterns PSCommand_New-PowerAppPolicyUrlPatterns PSFunction_Remove-PowerAppPolicyUrlPatterns PSCommand_Remove-PowerAppPolicyUrlPatterns PSFunction_Get-PowerAppDlpPolicyConnectorConfigurations PSCommand_Get-PowerAppDlpPolicyConnectorConfigurations PSFunction_New-PowerAppDlpPolicyConnectorConfigurations PSCommand_New-PowerAppDlpPolicyConnectorConfigurations PSFunction_Remove-PowerAppDlpPolicyConnectorConfigurations PSCommand_Remove-PowerAppDlpPolicyConnectorConfigurations PSFunction_Set-PowerAppDlpPolicyConnectorConfigurations PSCommand_Set-PowerAppDlpPolicyConnectorConfigurations PSFunction_Copy-PowerAppEnvironment PSCommand_Copy-PowerAppEnvironment PSFunction_Backup-PowerAppEnvironment PSCommand_Backup-PowerAppEnvironment PSFunction_Get-PowerAppEnvironmentBackups PSCommand_Get-PowerAppEnvironmentBackups PSFunction_Restore-PowerAppEnvironment PSCommand_Restore-PowerAppEnvironment PSFunction_Remove-PowerAppEnvironmentBackup PSCommand_Remove-PowerAppEnvironmentBackup PSFunction_TenantToTenant-PrepareMigration PSCommand_TenantToTenant-PrepareMigration PSFunction_TenantToTenant-GetMigrationStatus PSCommand_TenantToTenant-GetMigrationStatus PSFunction_TenantToTenant-MigratePowerAppEnvironment PSCommand_TenantToTenant-MigratePowerAppEnvironment PSFunction_TenantToTenant-SubmitMigrationRequest PSCommand_TenantToTenant-SubmitMigrationRequest PSFunction_TenantToTenant-ManageMigrationRequest PSCommand_TenantToTenant-ManageMigrationRequest PSFunction_TenantToTenant-ViewMigrationRequest PSCommand_TenantToTenant-ViewMigrationRequest PSFunction_TenantToTenant-ViewApprovalRequest PSCommand_TenantToTenant-ViewApprovalRequest PSFunction_TenantToTenant-DeleteMigrationRequest PSCommand_TenantToTenant-DeleteMigrationRequest PSFunction_TenantToTenant-UploadUserMappingFile PSCommand_TenantToTenant-UploadUserMappingFile PSFunction_GenerateResourceStorage-PowerAppEnvironment PSCommand_GenerateResourceStorage-PowerAppEnvironment PSFunction_Get-PowerAppManagementApp PSCommand_Get-PowerAppManagementApp PSFunction_Get-PowerAppManagementApps PSCommand_Get-PowerAppManagementApps PSFunction_New-PowerAppManagementApp PSCommand_New-PowerAppManagementApp PSFunction_Remove-PowerAppManagementApp PSCommand_Remove-PowerAppManagementApp PSFunction_Get-AdminPowerAppSharepointFormEnvironment PSCommand_Get-AdminPowerAppSharepointFormEnvironment PSFunction_Set-AdminPowerAppSharepointFormEnvironment PSCommand_Set-AdminPowerAppSharepointFormEnvironment PSFunction_Reset-AdminPowerAppSharepointFormEnvironment PSCommand_Reset-AdminPowerAppSharepointFormEnvironment PSFunction_Get-PowerAppGenerateProtectionKey PSCommand_Get-PowerAppGenerateProtectionKey PSFunction_Get-PowerAppRetrieveTenantProtectionKey PSCommand_Get-PowerAppRetrieveTenantProtectionKey PSFunction_Get-PowerAppRetrieveAvailableTenantProtectionKeys PSCommand_Get-PowerAppRetrieveAvailableTenantProtectionKeys PSFunction_New-PowerAppImportProtectionKey PSCommand_New-PowerAppImportProtectionKey PSFunction_Set-PowerAppProtectionStatus PSCommand_Set-PowerAppProtectionStatus PSFunction_Set-PowerAppTenantProtectionKey PSCommand_Set-PowerAppTenantProtectionKey PSFunction_Set-PowerAppLockAllEnvironments PSCommand_Set-PowerAppLockAllEnvironments PSFunction_Set-PowerAppUnlockEnvironment PSCommand_Set-PowerAppUnlockEnvironment PSFunction_Get-PowerAppTenantIsolationPolicy PSCommand_Get-PowerAppTenantIsolationPolicy PSFunction_Set-PowerAppTenantIsolationPolicy PSCommand_Set-PowerAppTenantIsolationPolicy PSFunction_Get-PowerAppTenantIsolationOperationStatus PSCommand_Get-PowerAppTenantIsolationOperationStatus PSFunction_Get-PowerAppDlpErrorSettings PSCommand_Get-PowerAppDlpErrorSettings PSFunction_New-PowerAppDlpErrorSettings PSCommand_New-PowerAppDlpErrorSettings PSFunction_Set-PowerAppDlpErrorSettings PSCommand_Set-PowerAppDlpErrorSettings PSFunction_Remove-PowerAppDlpErrorSettings PSCommand_Remove-PowerAppDlpErrorSettings PSFunction_Get-GovernanceErrorSettings PSCommand_Get-GovernanceErrorSettings PSFunction_New-GovernanceErrorSettings PSCommand_New-GovernanceErrorSettings PSFunction_Set-GovernanceErrorSettings PSCommand_Set-GovernanceErrorSettings PSFunction_Remove-GovernanceErrorSettings PSCommand_Remove-GovernanceErrorSettings PSFunction_Get-PowerAppDlpPolicyExemptResources PSCommand_Get-PowerAppDlpPolicyExemptResources PSFunction_New-PowerAppDlpPolicyExemptResources PSCommand_New-PowerAppDlpPolicyExemptResources PSFunction_Remove-PowerAppDlpPolicyExemptResources PSCommand_Remove-PowerAppDlpPolicyExemptResources PSFunction_Set-PowerAppDlpPolicyExemptResources PSCommand_Set-PowerAppDlpPolicyExemptResources PSFunction_Get-AdminVirtualConnectors PSCommand_Get-AdminVirtualConnectors PSFunction_Start-DLPEnforcementOnConnectionsInTenant PSCommand_Start-DLPEnforcementOnConnectionsInTenant PSFunction_Start-DLPEnforcementOnConnectionsInEnvironment PSCommand_Start-DLPEnforcementOnConnectionsInEnvironment PSFunction_Get-PowerAppDlpConnectorBlockingPolicies PSCommand_Get-PowerAppDlpConnectorBlockingPolicies PSFunction_Get-PowerAppDlpConnectorBlockingPolicy PSCommand_Get-PowerAppDlpConnectorBlockingPolicy PSFunction_New-PowerAppDlpConnectorBlockingPolicy PSCommand_New-PowerAppDlpConnectorBlockingPolicy PSFunction_Set-PowerAppDlpConnectorBlockingPolicy PSCommand_Set-PowerAppDlpConnectorBlockingPolicy PSFunction_Remove-PowerAppDlpConnectorBlockingPolicy PSCommand_Remove-PowerAppDlpConnectorBlockingPolicy PSFunction_Get-AdminPowerPlatformRequestsConsumptionOfFlows PSCommand_Get-AdminPowerPlatformRequestsConsumptionOfFlows PSFunction_Get-AdminNonZoneRedundantFlows PSCommand_Get-AdminNonZoneRedundantFlows PSFunction_Get-AdminEnableZoneRedundancyPreflightCheck PSCommand_Get-AdminEnableZoneRedundancyPreflightCheck PSFunction_Start-AdminFlowEnableZoneRedundancy PSCommand_Start-AdminFlowEnableZoneRedundancy PSFunction_Get-AdminEnableZoneRedundancyStatus PSCommand_Get-AdminEnableZoneRedundancyStatus PSIncludes_Function</S>
+          <S N="developmentDependency">False</S>
+          <S N="updated">2026-05-15T19:00:00Z</S>
+          <S N="NormalizedVersion">2.0.217</S>
+          <S N="Authors">Microsoft Common Data Service Team</S>
+          <S N="IsPrerelease">false</S>
+          <S N="ItemType">Module</S>
+          <S N="FileList">Microsoft.PowerApps.Administration.PowerShell.nuspec|Microsoft.Identity.Client.dll|Microsoft.IdentityModel.Abstractions.dll|Microsoft.PowerApps.Administration.PowerShell.cat|Microsoft.PowerApps.Administration.PowerShell.psd1|Microsoft.PowerApps.Administration.PowerShell.psm1|Microsoft.PowerApps.AuthModule.psm1|Microsoft.PowerApps.RestClientModule.psm1|System.Buffers.dll|System.Diagnostics.DiagnosticSource.dll|System.Memory.dll|System.Numerics.Vectors.dll|System.Runtime.CompilerServices.Unsafe.dll</S>
+          <S N="GUID">1c40b0da-ee6a-4226-9a3d-e60092e1daae</S>
+          <S N="PowerShellVersion">3.0</S>
+          <S N="PowerShellHostVersion">1.0</S>
+          <S N="DotNetFrameworkVersion">4.0.0.0</S>
+          <S N="CompanyName">Microsoft</S>
+        </MS>
+      </Obj>
+      <S N="InstalledLocation">C:\Users\tisun\OofManager-WPF\Modules\Microsoft.PowerApps.Administration.PowerShell\2.0.217</S>
+    </MS>
+  </Obj>
+</Objs>

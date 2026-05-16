@@ -10,6 +10,7 @@ namespace OofManager.Wpf.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly IExchangeService _exchangeService;
+    private readonly IPowerAutomateService _powerAutomate;
     private readonly ITemplateService _templateService;
     private readonly IDialogService _dialog;
     private readonly INavigationService _navigation;
@@ -52,7 +53,7 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private bool _isBusy;
     // Operation/status feedback for button-driven work (Sync now, package
-    // generation, save failures, etc.). This is shown inside the OOF Sync
+    // generation, save failures, etc.). This is shown inside the OOF Settings
     // card, not in the persistent top status bar.
     [ObservableProperty] private string _statusMessage = string.Empty;
     // Persistent top status bar: always describes the real/current OOF state
@@ -127,24 +128,6 @@ public partial class MainViewModel : ObservableObject
     public bool CanToggleVacationWindow => IsOofEnabled || IsVacationWindowActive || IsOnLongVacation;
 
     /// <summary>
-    /// Caption shown under the OOF card title. Replaces the old
-    /// "Enabled / Disabled / Scheduled" subtitle (which duplicated the
-    /// switch on its right) with a single contextual hint that tells the
-    /// user what the switch and sync controls will actually do right now.
-    /// </summary>
-    public string OofCardSubtitle
-    {
-        get
-        {
-            if (IsOofAutoManaged)
-                return "Auto-managed by Schedule mode below. Switch to Manual mode if you want to flip OOF yourself.";
-            if (CurrentStatus == OofStatus.Scheduled)
-                return "Currently in a scheduled window. Flip the switch to choose a manual on/off state, then click ⚡ Sync now or enable Auto-sync to push it.";
-            return "Manual control — flip the switch locally, then click ⚡ Sync now or enable Auto-sync to push the new state to Outlook.";
-        }
-    }
-
-    /// <summary>
     /// Caption shown under the Sync card title. Tells the user what the
     /// shared Auto-sync checkbox and ⚡ Sync now button will actually do in
     /// the currently-selected mode, so they don't have to guess whether
@@ -155,14 +138,31 @@ public partial class MainViewModel : ObservableObject
         get
         {
             if (IsScheduleMode)
-                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. Auto-sync re-pushes the next off-hours window on every 5-minute tick; ⚡ Sync now force-pushes it immediately.";
-            return "Manual mode: you flip OOF on/off yourself above. Auto-sync re-asserts your current state on Outlook every 5 minutes (corrects drift from other clients); ⚡ Sync now re-pushes it immediately.";
+                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. ⚡ Sync to Outlook pushes the next off-hours window immediately; Auto-sync re-pushes it every 5 minutes.";
+            return "Manual mode: you flip OOF on/off yourself below. ⚡ Sync to Outlook pushes your current state to Outlook immediately; Auto-sync re-pushes it every 5 minutes.";
+        }
+    }
+
+    public string SyncButtonText
+        => IsScheduleMode && HasUnsavedScheduleChanges
+            ? "⚡ Save & sync to Outlook"
+            : "⚡ Sync to Outlook";
+
+    public string SyncButtonToolTip
+    {
+        get
+        {
+            if (IsScheduleMode && HasUnsavedScheduleChanges)
+                return "Save your schedule edits, then push the next off-hours window to Outlook.";
+            if (IsScheduleMode)
+                return "Push the next off-hours window to Outlook right now.";
+            return "Push the current OOF on/off state and reply text to Outlook right now.";
         }
     }
     [ObservableProperty] private bool _isStartWithWindowsEnabled;
     // True when any work-schedule field on the panel has been edited since the
-    // last successful Save. Drives the Save button's enabled state and label so
-    // the user can tell at a glance whether they have unpersisted changes.
+    // last successful schedule sync. Drives the shared Sync button's label so
+    // the user can tell at a glance when it will save edits first.
     [ObservableProperty] private bool _hasUnsavedScheduleChanges;
     // Suppresses the dirty-flag flip while we're loading prefs from disk or
     // applying a successful save — those property writes are not user edits.
@@ -234,6 +234,7 @@ public partial class MainViewModel : ObservableObject
 
     public MainViewModel(
         IExchangeService exchangeService,
+        IPowerAutomateService powerAutomate,
         ITemplateService templateService,
         IDialogService dialog,
         INavigationService navigation,
@@ -242,6 +243,7 @@ public partial class MainViewModel : ObservableObject
         IStartupService startup)
     {
         _exchangeService = exchangeService;
+        _powerAutomate = powerAutomate;
         _templateService = templateService;
         _dialog = dialog;
         _navigation = navigation;
@@ -289,13 +291,13 @@ public partial class MainViewModel : ObservableObject
         if (IsOnLongVacation)
         {
             StatusMessage = value
-                ? "Vacation / Holiday remains selected in Outlook. Click ⚡ Sync now or enable Auto-sync to re-assert it."
-                : "Vacation / Holiday cleared locally. Click ⚡ Sync now or enable Auto-sync to clear the vacation OOF in Outlook.";
+                ? "Vacation / Holiday remains selected in Outlook. Click ⚡ Sync to Outlook or enable Auto-sync to re-assert it."
+                : "Vacation / Holiday cleared locally. Click ⚡ Sync to Outlook or enable Auto-sync to clear the vacation OOF in Outlook.";
             return;
         }
         StatusMessage = value
-            ? "OOF switch set to ON locally. Click ⚡ Sync now or enable Auto-sync to push it to Outlook."
-            : "OOF switch set to OFF locally. Click ⚡ Sync now or enable Auto-sync to push it to Outlook.";
+            ? "OOF switch set to ON locally. Click ⚡ Sync to Outlook or enable Auto-sync to push it to Outlook."
+            : "OOF switch set to OFF locally. Click ⚡ Sync to Outlook or enable Auto-sync to push it to Outlook.";
     }
 
     partial void OnIsScheduledChanged(bool value)
@@ -317,8 +319,9 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsOofAutoManaged));
         OnPropertyChanged(nameof(IsScheduleMode));
         OnPropertyChanged(nameof(IsManualMode));
-        OnPropertyChanged(nameof(OofCardSubtitle));
         OnPropertyChanged(nameof(SyncCardSubtitle));
+        OnPropertyChanged(nameof(SyncButtonText));
+        OnPropertyChanged(nameof(SyncButtonToolTip));
         RefreshOofStatusBar();
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
@@ -355,7 +358,6 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnCurrentStatusChanged(OofStatus value)
     {
-        OnPropertyChanged(nameof(OofCardSubtitle));
         RefreshOofStatusBar();
     }
 
@@ -456,6 +458,12 @@ public partial class MainViewModel : ObservableObject
         if (_suppressDirtyTracking) return;
         HasUnsavedScheduleChanges = true;
         RefreshOofStatusBar();
+    }
+
+    partial void OnHasUnsavedScheduleChangesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(SyncButtonText));
+        OnPropertyChanged(nameof(SyncButtonToolTip));
     }
 
     partial void OnIsStartWithWindowsEnabledChanged(bool value)
@@ -715,15 +723,10 @@ public partial class MainViewModel : ObservableObject
         if (turnOn)
         {
             StartAutomationLoop();
-            // ON is a "gate" flip — it enables auto-managed mode but does
-            // not by itself push anything to Outlook. The user opts in to
-            // pushing either by clicking ⚡ Sync now, by enabling Auto-
-            // sync (the 5-min ticker will push on its next boundary), or
-            // by editing the grid and clicking 💾 Save changes. Status hints
-            // at all three so the next step is obvious.
-            StatusMessage = IsAutoRefreshEnabled
-                ? "✅ Schedule mode on. Auto-sync will push the schedule to Outlook on the next tick."
-                : "✅ Schedule mode on. Click ⚡ Sync now to push the schedule to Outlook, or enable Auto-sync.";
+            // Mode changes are local UI/model changes. The OOF Settings subtitle
+            // already explains what Sync to Outlook and Auto-sync will do, so
+            // don't echo another status line underneath it.
+            StatusMessage = string.Empty;
             await Task.CompletedTask;
         }
         else
@@ -741,39 +744,17 @@ public partial class MainViewModel : ObservableObject
             // not collapse an existing Scheduled window to flat Enabled /
             // Disabled here; that was the path that made the top status jump
             // to "OOF is ON — no end time" before the user clicked Sync now.
-            StatusMessage = IsAutoRefreshEnabled
-                ? "Manual mode selected. Outlook was not changed yet; Auto-sync will push the current manual state on the next tick."
-                : "Manual mode selected. Outlook was not changed. Use the switch, then click ⚡ Sync now to push it.";
+            StatusMessage = string.Empty;
         }
     }
 
     [RelayCommand]
     private async Task SaveWorkScheduleAsync()
     {
-        // Validate every enabled day individually — disabled days don't participate
-        // in the automation loop, so their time values are ignored.
-        foreach (var day in WeekDays)
-        {
-            if (!IsWorkday(day)) continue;
-            var start = GetStartTimeForDay(day);
-            var end = GetEndTimeForDay(day);
-            if (end <= start)
-            {
-                await _dialog.AlertAsync(
-                    "Invalid Work Hours",
-                    $"{GetDayDisplayName(day)}: end time must be later than start time.");
-                return;
-            }
-        }
-
-        SaveWorkSchedulePreferences();
-        // Mark prefs as in-sync with the panel; the Save button will go grey
-        // again until the user makes another edit.
-        HasUnsavedScheduleChanges = false;
+        if (!await TrySavePendingScheduleChangesAsync()) return;
 
         if (IsWorkScheduleEnabled)
         {
-            StartAutomationLoop();
             await ApplyWorkScheduleAsync(showSuccessMessage: true, suppressTrayNotification: true);
             await SyncToOutlookCoreAsync(isUserInitiated: false);
         }
@@ -807,6 +788,8 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsScheduleMode)
         {
+            if (!await TrySavePendingScheduleChangesAsync()) return;
+
             if (IsOnLongVacation)
             {
                 StatusMessage = "Clearing Vacation / Holiday override and syncing the schedule...";
@@ -834,6 +817,31 @@ public partial class MainViewModel : ObservableObject
 
         // Manual mode: re-push current local state straight to Exchange.
         await ReassertManualStateAsync(isUserInitiated: true);
+    }
+
+    private async Task<bool> TrySavePendingScheduleChangesAsync()
+    {
+        if (!HasUnsavedScheduleChanges) return true;
+
+        // Validate every enabled day individually — disabled days don't participate
+        // in the automation loop, so their time values are ignored.
+        foreach (var day in WeekDays)
+        {
+            if (!IsWorkday(day)) continue;
+            var start = GetStartTimeForDay(day);
+            var end = GetEndTimeForDay(day);
+            if (end <= start)
+            {
+                await _dialog.AlertAsync(
+                    "Invalid Work Hours",
+                    $"{GetDayDisplayName(day)}: end time must be later than start time.");
+                return false;
+            }
+        }
+
+        SaveWorkSchedulePreferences();
+        HasUnsavedScheduleChanges = false;
+        return true;
     }
 
     /// <summary>
@@ -937,89 +945,100 @@ public partial class MainViewModel : ObservableObject
     /// Generates a personalised Power Automate setup guide (HTML) that the
     /// user can follow to create a cloud flow which keeps their OOF window
     /// in sync even when every local computer is off. Bound to the
-    /// "Generate cloud sync setup guide" button in the Work Schedule card.
+    /// "Generate cloud schedule setup guide" button in the Work Schedule card.
     /// </summary>
     [RelayCommand]
-    private async Task OpenCloudSyncGuideAsync()
+    private async Task OpenCloudScheduleGuideAsync()
     {
         try
         {
             var snapshot = new WorkScheduleSnapshot(_prefs);
-            var path = CloudSyncGuideGenerator.GenerateAndOpen(
+            var path = CloudScheduleGuideGenerator.GenerateAndOpen(
                 snapshot,
                 userEmail: MailboxIdentity,
                 internalReply: InternalReply,
                 externalReply: ExternalReply,
                 externalAudienceAll: true);
-            StatusMessage = $"🌐 Cloud sync setup guide opened in your browser ({System.IO.Path.GetFileName(path)})";
+            StatusMessage = $"🌐 Cloud schedule setup guide opened in your browser ({System.IO.Path.GetFileName(path)})";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to generate cloud sync guide: {ex.Message}";
-            await _dialog.AlertAsync("Cloud Sync Guide", ex.Message);
+            StatusMessage = $"Failed to generate cloud schedule guide: {ex.Message}";
+            await _dialog.AlertAsync("Cloud Schedule Guide", ex.Message);
         }
     }
 
     /// <summary>
-    /// Builds a Power Automate Solution .zip the user can upload at
-    /// <em>Solutions &rarr; Import solution</em> in make.powerautomate.com.
-    /// This gets the user from "I want a cloud flow" to "the flow exists" with
-    /// just an upload step instead of the 5-page manual wizard. The zip is
-    /// dropped on the desktop so the user can find it easily, and the
-    /// containing folder is opened in Explorer with the file pre-selected.
+    /// Builds the OofManager Cloud Schedule solution package on the user's
+    /// Desktop and opens make.powerautomate.com/solutions in their browser
+    /// so they can drop the zip into the Import dialog. We previously
+    /// auto-imported via Dataverse Web API, but locked-down tenants (e.g.
+    /// Microsoft corp) block the bundled PowerApps PowerShell module's
+    /// client ID from minting Dataverse tokens (AADSTS65002), so the
+    /// reliable path is to hand the zip to the user and let the maker
+    /// portal's own import dialog do the upload.
     /// </summary>
     [RelayCommand]
-    private async Task GenerateCloudSyncPackageAsync()
+    private async Task GenerateCloudSchedulePackageAsync()
     {
+        if (IsBusy) return;
+        IsBusy = true;
         try
         {
             var snapshot = new WorkScheduleSnapshot(_prefs);
-            // Desktop is the most discoverable location for a download-style
-            // artifact. If we ever ship this on machines with redirected /
-            // OneDrive desktops, GetFolderPath returns the redirected path
-            // automatically, so this stays correct.
+            // Drop the zip on the Desktop so it's easy to find from the
+            // Power Automate import file picker.
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var outPath = System.IO.Path.Combine(desktop, "OofManager-CloudSync.zip");
+            var outPath = System.IO.Path.Combine(desktop, "OofManager-CloudSchedule.zip");
 
-            var path = CloudSyncPackageGenerator.Generate(
+            StatusMessage = "📦 Generating cloud schedule solution…";
+            var pkg = await Task.Run(() => CloudSchedulePackageGenerator.GenerateWithIdentity(
                 snapshot,
                 userEmail: MailboxIdentity,
                 internalReply: InternalReply,
                 externalReply: ExternalReply,
                 externalAudienceAll: true,
                 generateManaged: false,
-                outputPath: outPath);
+                outputPath: outPath));
 
-            // Open the Power Automate Solutions page. We don't pin an env
-            // GUID — there's no public way to detect the user's personal
-            // environment without pulling in MSAL or the PowerApps PS module,
-            // and ~default routes everyone to the tenant Default Environment.
-            // The plain /solutions URL lands the user wherever Power Automate
-            // last had them (top-right env picker), which is usually right;
-            // when it isn't, the user just switches env once via that picker.
-            try
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
-                    "https://make.powerautomate.com/solutions")
-                {
-                    UseShellExecute = true,
-                });
-            }
-            catch { /* best-effort */ }
-
-            StatusMessage = $"📦 Cloud sync solution saved to {path}. In Power Automate, open Solutions → Import solution and pick this zip.";
+            OpenSolutionsPage();
+            StatusMessage = "✅ Saved OofManager-CloudSchedule.zip to your Desktop. Power Automate opened — switch to the environment named after you, click 'Import solution', and pick the zip from your Desktop.";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to generate cloud sync solution: {ex.Message}";
-            await _dialog.AlertAsync("Cloud Sync Solution", ex.Message);
+            StatusMessage = $"Failed to generate cloud schedule solution: {ex.Message}";
+            await _dialog.AlertAsync("Cloud Schedule Solution", ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
     /// <summary>
+    /// Opens the Solutions page in the user's browser. When the env id is
+    /// known we deep-link to that env's solutions page so the user doesn't
+    /// have to pick from the env switcher.
+    /// </summary>
+    private static void OpenSolutionsPage(string? environmentId = null)
+    {
+        var url = !string.IsNullOrWhiteSpace(environmentId)
+            ? $"https://make.powerautomate.com/environments/{environmentId}/solutions"
+            : "https://make.powerautomate.com/solutions";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
     /// Opens make.powerautomate.com/flows so the user can locate the imported
-    /// OofManager Cloud Sync flow and toggle it Off. Lightweight companion to
-    /// the Manual-mode "⚠️ Cloud Sync flow runs in M365" reminder banner —
+    /// OofManager Cloud Schedule flow and toggle it Off. Lightweight companion to
+    /// the Manual-mode "⚠️ Cloud Schedule flow runs in M365" reminder banner —
     /// saves the user from copy-pasting the URL into a browser by hand. We
     /// don't pin an environment or flow id in the URL: the user could be in
     /// any environment, and the plain /flows page lands them in whichever env
@@ -1041,6 +1060,91 @@ public partial class MainViewModel : ObservableObject
         {
             // Best-effort: if the OS has no default browser handler we just
             // swallow — the banner text still tells the user where to go.
+        }
+    }
+
+    /// <summary>
+    /// One-click "turn off the cloud schedule flow" — calls the bundled
+    /// Microsoft.PowerApps.PowerShell module via a hidden child process and
+    /// flips the flow's Off switch the same way the Power Automate UI does.
+    /// First invocation pops the module's auth dialog; subsequent runs are
+    /// silent because the module caches its own refresh token. Any
+    /// non-Success outcome falls back to opening make.powerautomate.com so
+    /// the user can finish the job manually.
+    /// </summary>
+    [RelayCommand]
+    private Task DisableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: true);
+
+    /// <summary>
+    /// Symmetric counterpart to <see cref="DisableCloudScheduleFlowAsync"/>.
+    /// Re-enables the flow after the user toggled it off (manual mode banner
+    /// button) and wants the cloud schedule running again.
+    /// </summary>
+    [RelayCommand]
+    private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
+
+    private async Task RunCloudScheduleFlowToggleAsync(bool disable)
+    {
+        if (IsBusy) return;
+        var verbLabel = disable ? "Turning off" : "Turning on";
+        IsBusy = true;
+        StatusMessage = $"{verbLabel} Power Automate flow… using cached Power Automate sign-in if available. First run may show a sign-in dialog; otherwise this runs quietly and can take a few seconds.";
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            // Display name is used to prioritise environments named after the
+            // user (e.g. 'Sandy Sun's Environment') before falling back to
+            // Default / capped scan — Microsoft-style tenants typically have
+            // hundreds of envs the signed-in account is merely visible to.
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            // Recompute the per-user flow display name locally — same formula
+            // the package generator uses at import time — so the PS script can
+            // match Get-Flow's DisplayName exactly (e.g. 'OofManager Cloud Schedule
+            // (TianyueSun)') instead of relying on a prefix that could collide
+            // with unrelated flows. Power Automate doesn't preserve the
+            // workflow GUID we stamp into solution.xml at import, so the
+            // display-name suffix is the most reliable per-user key.
+            var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
+            var result = disable
+                ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName)
+                : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName);
+            var flowDisplayNames = result.FlowDisplayNames.Count > 0
+                ? string.Join(", ", result.FlowDisplayNames)
+                : expectedFlowDisplayName;
+
+            switch (result.Outcome)
+            {
+                case PowerAutomateOutcome.Success:
+                    StatusMessage = string.IsNullOrWhiteSpace(flowDisplayNames)
+                        ? "✅ " + result.Message
+                        : $"✅ {result.Message}: {flowDisplayNames}";
+                    break;
+                case PowerAutomateOutcome.NoFlowFound:
+                    StatusMessage = "⚠️ " + result.Message;
+                    OpenPowerAutomateFlows();
+                    break;
+                case PowerAutomateOutcome.SignInFailed:
+                    StatusMessage = "⚠️ Couldn't sign in to Power Automate. Opening the website so you can toggle the flow manually.";
+                    OpenPowerAutomateFlows();
+                    break;
+                case PowerAutomateOutcome.SolutionAwareBlocked:
+                    StatusMessage = "⚠️ Power Automate refused the toggle (solution-aware flow). Opening the website so you can use the Off switch directly.";
+                    OpenPowerAutomateFlows();
+                    break;
+                default:
+                    StatusMessage = "⚠️ " + result.Message + " — opening Power Automate so you can finish manually.";
+                    OpenPowerAutomateFlows();
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to toggle Power Automate flow: {ex.Message}";
+            OpenPowerAutomateFlows();
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 

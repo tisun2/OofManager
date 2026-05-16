@@ -21,6 +21,7 @@ public partial class App : Application
 
         // Services
         services.AddSingleton<IExchangeService, ExchangeService>();
+        services.AddSingleton<IPowerAutomateService, PowerAutomateService>();
         services.AddSingleton<ITemplateService, TemplateService>();
         services.AddSingleton<IPreferencesService, PreferencesService>();
         services.AddSingleton<IDialogService, DialogService>();

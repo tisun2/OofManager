@@ -21,7 +21,7 @@ namespace OofManager.Wpf.Services;
 /// path needs Power Apps connection-reference fix-ups that aren't worth the
 /// brittleness for a setup-once feature.
 /// </summary>
-public static class CloudSyncGuideGenerator
+public static class CloudScheduleGuideGenerator
 {
     /// <summary>
     /// Builds the guide for the given snapshot + reply settings, writes it to
@@ -38,7 +38,7 @@ public static class CloudSyncGuideGenerator
     {
         var html = Build(schedule, userEmail, internalReply, externalReply, externalAudienceAll);
 
-        var path = Path.Combine(Path.GetTempPath(), "OofManager-CloudSync-Setup.html");
+        var path = Path.Combine(Path.GetTempPath(), "OofManager-CloudSchedule-Setup.html");
         File.WriteAllText(path, html, Encoding.UTF8);
 
         try
@@ -145,7 +145,7 @@ public static class CloudSyncGuideGenerator
 <html lang=""en"">
 <head>
 <meta charset=""utf-8""/>
-<title>OofManager — Cloud Sync Setup Guide</title>
+<title>OofManager — Cloud Schedule Setup Guide</title>
 <style>
   :root { --accent: #0078D4; --accent-dark: #005A9E; --bg: #FAFAFA; --card: #fff; --border: #E5E5E5; --muted: #666; --code-bg: #F4F4F4; }
   * { box-sizing: border-box; }
@@ -184,7 +184,7 @@ public static class CloudSyncGuideGenerator
 </head>
 <body>
 <div class=""container"">
-  <h1>🌐 OofManager &mdash; Cloud Sync Setup</h1>
+  <h1>🌐 OofManager &mdash; Cloud Schedule Setup</h1>
   <p class=""lede"">Set up a Power Automate scheduled cloud flow so your Out-of-Office window is pushed to Outlook every morning automatically &mdash; even when all of your computers are powered off. Takes about 5 minutes.</p>
 
   <div class=""card"">
@@ -224,7 +224,7 @@ public static class CloudSyncGuideGenerator
     <p>Use these exact values:</p>
     <table>
       <tr><th>Field</th><th>Value</th></tr>
-      <tr><td>Flow name</td><td><code>OofManager Cloud Sync</code></td></tr>
+      <tr><td>Flow name</td><td><code>OofManager Cloud Schedule</code></td></tr>
       <tr><td>Starting</td><td>(leave today's date, choose a time slightly after now)</td></tr>
       <tr><td>Repeat every</td><td><code>1 Day</code></td></tr>
       <tr><td>At these hours</td><td><code>");
@@ -440,7 +440,7 @@ public static class CloudSyncGuideGenerator
 
     /// <summary>
     /// Wraps a plain-text reply in the same minimal HTML envelope
-    /// CloudSyncPackageGenerator emits for the package path and that
+    /// CloudSchedulePackageGenerator emits for the package path and that
     /// ExchangeService produces on the local PowerShell path. Without
     /// this, the Office 365 Outlook connector accepts the value but
     /// Outlook flattens newlines into a single paragraph because the
