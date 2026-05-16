@@ -285,10 +285,9 @@
                                 Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0">
                                 <TextBlock FontSize="11" TextWrapping="Wrap" MaxWidth="700"
+                                           Text="{Binding CloudScheduleFlowBannerText}"
                                            VerticalAlignment="Center"
-                                           Margin="0,0,10,0">
-                                    Power Automate flow runs in M365, it can override your manual mode setting. Turn it off first.
-                                </TextBlock>
+                                           Margin="0,0,10,0"/>
                                 <Button Padding="10,4" FontSize="11"
                                         Content="🛑 Turn off Power Automate flow"
                                         Command="{Binding DisableCloudScheduleFlowCommand}"

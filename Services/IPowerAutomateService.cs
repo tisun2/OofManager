@@ -25,6 +25,34 @@ public sealed class PowerAutomateResult
     public IReadOnlyList<string> FlowDisplayNames { get; }
 }
 
+public enum PowerAutomateFlowState
+{
+    Unknown,
+    On,
+    Off,
+    NotFound,
+}
+
+public sealed class PowerAutomateStatusResult
+{
+    public PowerAutomateStatusResult(
+        PowerAutomateOutcome outcome,
+        PowerAutomateFlowState state,
+        string message,
+        IReadOnlyList<string> flowDisplayNames)
+    {
+        Outcome = outcome;
+        State = state;
+        Message = message;
+        FlowDisplayNames = flowDisplayNames;
+    }
+
+    public PowerAutomateOutcome Outcome { get; }
+    public PowerAutomateFlowState State { get; }
+    public string Message { get; }
+    public IReadOnlyList<string> FlowDisplayNames { get; }
+}
+
 public enum CloudScheduleImportOutcome
 {
     Success,
@@ -74,6 +102,7 @@ public sealed class CloudScheduleImportResult
 
 public interface IPowerAutomateService
 {
+    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
     Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
     Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
 

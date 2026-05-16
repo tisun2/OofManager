@@ -23,6 +23,9 @@ public sealed class PowerAutomateService : IPowerAutomateService
     // is robust to alias differences and to re-imports.
     private const string FlowDisplayNamePrefix = "OofManager Cloud Schedule";
 
+    public Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default)
+        => RunStatusAsync(upnHint, displayNameHint, expectedFlowDisplayName, ct);
+
     public Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default)
         => RunOperationAsync("Disable-Flow", upnHint, displayNameHint, expectedFlowDisplayName, ct);
 
@@ -69,7 +72,19 @@ public sealed class PowerAutomateService : IPowerAutomateService
         return ParseImportResult(json.Json, json.ExitCode);
     }
 
+    private async Task<PowerAutomateStatusResult> RunStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct)
+    {
+        var json = await RunFlowScriptAsync("Get-Status", upnHint, displayNameHint, expectedFlowDisplayName, ct).ConfigureAwait(false);
+        return ParseStatusResult(json.Json, json.ExitCode);
+    }
+
     private async Task<PowerAutomateResult> RunOperationAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct)
+    {
+        var json = await RunFlowScriptAsync(verb, upnHint, displayNameHint, expectedFlowDisplayName, ct).ConfigureAwait(false);
+        return ParseResult(json.Json, json.ExitCode);
+    }
+
+    private Task<ChildResult> RunFlowScriptAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct)
     {
         var envVars = new Dictionary<string, string>
         {
@@ -88,12 +103,11 @@ public sealed class PowerAutomateService : IPowerAutomateService
             // into solution.xml.
             ["OOFMGR_PA_FLOWDISPLAYNAME"]   = expectedFlowDisplayName ?? string.Empty,
         };
-        var json = await RunPowerShellChildAsync(
+        return RunPowerShellChildAsync(
             BuildScript(),
             envVars,
             timeout: TimeSpan.FromMinutes(5),
-            ct).ConfigureAwait(false);
-        return ParseResult(json.Json, json.ExitCode);
+            ct);
     }
 
     private readonly struct ChildResult
@@ -280,6 +294,64 @@ public sealed class PowerAutomateService : IPowerAutomateService
         }
     }
 
+    private static PowerAutomateStatusResult ParseStatusResult(string? resultJson, int exitCode)
+    {
+        if (exitCode == -1 && resultJson is null)
+        {
+            return new PowerAutomateStatusResult(
+                PowerAutomateOutcome.SignInFailed,
+                PowerAutomateFlowState.Unknown,
+                "Power Automate sign-in did not complete within 5 minutes.",
+                Array.Empty<string>());
+        }
+        if (string.IsNullOrWhiteSpace(resultJson))
+        {
+            return new PowerAutomateStatusResult(
+                PowerAutomateOutcome.OtherError,
+                PowerAutomateFlowState.Unknown,
+                $"PowerShell child process exited with code {exitCode} but produced no result file. The Power Automate modules may have failed to load.",
+                Array.Empty<string>());
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(resultJson!);
+            var root = doc.RootElement;
+            var outcomeStr = root.TryGetProperty("Outcome", out var oEl) ? oEl.GetString() : null;
+            var message = root.TryGetProperty("Message", out var mEl) ? mEl.GetString() ?? "" : "";
+            var stateStr = root.TryGetProperty("State", out var sEl) ? sEl.GetString() : null;
+            var flows = root.TryGetProperty("Flows", out var fEl) && fEl.ValueKind == JsonValueKind.Array
+                ? fEl.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToArray()
+                : Array.Empty<string>();
+
+            var outcome = outcomeStr switch
+            {
+                "Success" => PowerAutomateOutcome.Success,
+                "NoFlowFound" => PowerAutomateOutcome.NoFlowFound,
+                "SignInFailed" => PowerAutomateOutcome.SignInFailed,
+                "SolutionAwareBlocked" => PowerAutomateOutcome.SolutionAwareBlocked,
+                _ => PowerAutomateOutcome.OtherError,
+            };
+            var state = stateStr switch
+            {
+                "On" => PowerAutomateFlowState.On,
+                "Off" => PowerAutomateFlowState.Off,
+                "NotFound" => PowerAutomateFlowState.NotFound,
+                _ when outcome == PowerAutomateOutcome.NoFlowFound => PowerAutomateFlowState.NotFound,
+                _ => PowerAutomateFlowState.Unknown,
+            };
+            return new PowerAutomateStatusResult(outcome, state, message, flows);
+        }
+        catch (Exception ex)
+        {
+            return new PowerAutomateStatusResult(
+                PowerAutomateOutcome.OtherError,
+                PowerAutomateFlowState.Unknown,
+                $"Failed to parse PowerShell status result: {ex.Message}. Raw: {resultJson}",
+                Array.Empty<string>());
+        }
+    }
+
     /// <summary>
     /// The PowerShell payload that runs inside the child process. Reads inputs
     /// from env vars set by the caller and writes a single JSON object to the
@@ -314,16 +386,18 @@ Trace ""start: pid=$PID verb=$verb prefix='$prefix' flowDisplayName='$flowDispla
 # accept a temporarily visible console as the price of working auth.
 $Host.UI.RawUI.WindowTitle = 'OofManager - Power Automate sign-in'
 Write-Host ''
-Write-Host '  OofManager is signing you in to Power Automate to toggle your Cloud Schedule flow.' -ForegroundColor Cyan
+$operationLabel = if ($verb -eq 'Get-Status') { 'check' } else { 'toggle' }
+Write-Host ""  OofManager is signing you in to Power Automate to $operationLabel your Cloud Schedule flow."" -ForegroundColor Cyan
 Write-Host '  If a sign-in dialog appears, complete it. This window closes automatically.' -ForegroundColor Cyan
 Write-Host ''
 Trace 'banner shown'
 
-function Emit($outcome, $message, $flows) {
+function Emit($outcome, $message, $flows, $state = $null) {
     $obj = [ordered]@{
         Outcome = $outcome
         Message = $message
         Flows   = @($flows)
+        State   = $state
     }
     $json = ($obj | ConvertTo-Json -Compress)
     if ($resultFile) {
@@ -721,6 +795,19 @@ try {
             Trace ""fresh flow state read failed for $($flow.DisplayName): $($_.Exception.Message)""
         }
         return $result
+    }
+
+    if ($verb -eq 'Get-Status') {
+        foreach ($f in $matched) {
+            $freshState = Read-CurrentEnabled $f
+            if ($freshState.Known) {
+                $state = if ($freshState.Enabled) { 'On' } else { 'Off' }
+                $lowerState = $state.ToLowerInvariant()
+                Emit 'Success' ('Power Automate flow is ' + $lowerState) @($f.DisplayName) $state
+            }
+        }
+
+        Emit 'OtherError' 'Power Automate flow was found, but its current state could not be read.' @($matched | ForEach-Object { $_.DisplayName }) 'Unknown'
     }
 
     $changed = @()

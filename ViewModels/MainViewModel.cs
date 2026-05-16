@@ -44,6 +44,7 @@ public partial class MainViewModel : ObservableObject
     private OofStatus _confirmedOofStatus = OofStatus.Disabled;
     private DateTimeOffset? _confirmedOofStartTime;
     private DateTimeOffset? _confirmedOofEndTime;
+    private bool _isCloudScheduleFlowStatusChecking;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -56,6 +57,7 @@ public partial class MainViewModel : ObservableObject
     // generation, save failures, etc.). This is shown inside the OOF Settings
     // card, not in the persistent top status bar.
     [ObservableProperty] private string _statusMessage = string.Empty;
+    [ObservableProperty] private string _cloudScheduleFlowBannerText = "Power Automate flow: not checked yet.";
     // Persistent top status bar: always describes the real/current OOF state
     // plus the next known OOF window, never transient button progress.
     [ObservableProperty] private string _oofStatusBarMessage = "Loading OOF status...";
@@ -323,6 +325,11 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(SyncButtonText));
         OnPropertyChanged(nameof(SyncButtonToolTip));
         RefreshOofStatusBar();
+
+        if (!value && !_suppressDirtyTracking && !_suppressWorkScheduleCommit)
+        {
+            _ = RefreshCloudScheduleFlowStatusAsync();
+        }
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
         // pass through the same setter; we only commit for genuine user
@@ -683,6 +690,10 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            if (_hasLoadedOnce && IsManualMode)
+            {
+                _ = RefreshCloudScheduleFlowStatusAsync();
+            }
         }
     }
 
@@ -1083,6 +1094,47 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
 
+    private async Task RefreshCloudScheduleFlowStatusAsync()
+    {
+        if (!IsManualMode || _isCloudScheduleFlowStatusChecking) return;
+
+        _isCloudScheduleFlowStatusChecking = true;
+        CloudScheduleFlowBannerText = "Power Automate flow: checking...";
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
+            var result = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName);
+            if (IsManualMode)
+            {
+                SetCloudScheduleFlowBanner(result.State);
+            }
+        }
+        catch
+        {
+            if (IsManualMode)
+            {
+                SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+            }
+        }
+        finally
+        {
+            _isCloudScheduleFlowStatusChecking = false;
+        }
+    }
+
+    private void SetCloudScheduleFlowBanner(PowerAutomateFlowState state)
+    {
+        CloudScheduleFlowBannerText = state switch
+        {
+            PowerAutomateFlowState.On => "Power Automate flow: On. Turn it off before vacation; turn it back on after.",
+            PowerAutomateFlowState.Off => "Power Automate flow: Off. Turn it back on after vacation to resume the cloud schedule.",
+            PowerAutomateFlowState.NotFound => "Power Automate flow: Not found. Import the Cloud Schedule package first.",
+            _ => "Power Automate flow: Unknown. Sign in to Power Automate to check or use the buttons.",
+        };
+    }
+
     private async Task RunCloudScheduleFlowToggleAsync(bool disable)
     {
         if (IsBusy) return;
@@ -1115,23 +1167,28 @@ public partial class MainViewModel : ObservableObject
             switch (result.Outcome)
             {
                 case PowerAutomateOutcome.Success:
+                    SetCloudScheduleFlowBanner(disable ? PowerAutomateFlowState.Off : PowerAutomateFlowState.On);
                     StatusMessage = string.IsNullOrWhiteSpace(flowDisplayNames)
                         ? "✅ " + result.Message
                         : $"✅ {result.Message}: {flowDisplayNames}";
                     break;
                 case PowerAutomateOutcome.NoFlowFound:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.NotFound);
                     StatusMessage = "⚠️ " + result.Message;
                     OpenPowerAutomateFlows();
                     break;
                 case PowerAutomateOutcome.SignInFailed:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
                     StatusMessage = "⚠️ Couldn't sign in to Power Automate. Opening the website so you can toggle the flow manually.";
                     OpenPowerAutomateFlows();
                     break;
                 case PowerAutomateOutcome.SolutionAwareBlocked:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
                     StatusMessage = "⚠️ Power Automate refused the toggle (solution-aware flow). Opening the website so you can use the Off switch directly.";
                     OpenPowerAutomateFlows();
                     break;
                 default:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
                     StatusMessage = "⚠️ " + result.Message + " — opening Power Automate so you can finish manually.";
                     OpenPowerAutomateFlows();
                     break;
@@ -1139,6 +1196,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
             StatusMessage = $"Failed to toggle Power Automate flow: {ex.Message}";
             OpenPowerAutomateFlows();
         }
