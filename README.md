@@ -61,8 +61,8 @@ dotnet build OofManager.Wpf.csproj -c Release
 # Publish (produces a self-contained folder under .\publish\ ready for the installer)
 dotnet publish OofManager.Wpf.csproj -c Release -o publish
 
-# Build the installer (requires Inno Setup 6: winget install JRSoftware.InnoSetup)
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" .\Installer\OofManager.iss
+# Build the installer (requires Inno Setup 6: winget install --id JRSoftware.InnoSetup -e)
+.\Tools\build-installer.ps1
 # -> .\Installer\Output\OofManagerSetup.exe
 ```
 

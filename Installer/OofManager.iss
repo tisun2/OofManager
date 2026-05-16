@@ -1,5 +1,5 @@
 ; Inno Setup script for OOF Manager
-; Build with: iscc Installer\OofManager.iss
+; Build with: .\Tools\build-installer.ps1
 ; Output: Installer\Output\OofManagerSetup.exe
 
 #define MyAppName "OOF Manager"
