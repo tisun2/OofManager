@@ -33,6 +33,7 @@ public interface IExchangeService
     Task<OofSettings> GetOofSettingsAsync();
     Task SetOofSettingsAsync(OofSettings settings);
     Task<string> GetCurrentUserAsync();
+    Task<string> GetCurrentDisplayNameAsync();
     Task<string> GetCurrentMailboxIdentityAsync();
     bool IsConnected { get; }
 }

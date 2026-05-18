@@ -13,16 +13,33 @@ public sealed class PowerAutomateResult
     public PowerAutomateResult(
         PowerAutomateOutcome outcome,
         string message,
-        IReadOnlyList<string> flowDisplayNames)
+        IReadOnlyList<string> flowDisplayNames,
+        IReadOnlyList<PowerAutomateFlowReference>? flowReferences = null)
     {
         Outcome = outcome;
         Message = message;
         FlowDisplayNames = flowDisplayNames;
+        FlowReferences = flowReferences ?? Array.Empty<PowerAutomateFlowReference>();
     }
 
     public PowerAutomateOutcome Outcome { get; }
     public string Message { get; }
     public IReadOnlyList<string> FlowDisplayNames { get; }
+    public IReadOnlyList<PowerAutomateFlowReference> FlowReferences { get; }
+}
+
+public sealed class PowerAutomateFlowReference
+{
+    public PowerAutomateFlowReference(string environmentName, string flowName, string displayName)
+    {
+        EnvironmentName = environmentName;
+        FlowName = flowName;
+        DisplayName = displayName;
+    }
+
+    public string EnvironmentName { get; }
+    public string FlowName { get; }
+    public string DisplayName { get; }
 }
 
 public enum PowerAutomateFlowState
@@ -39,18 +56,21 @@ public sealed class PowerAutomateStatusResult
         PowerAutomateOutcome outcome,
         PowerAutomateFlowState state,
         string message,
-        IReadOnlyList<string> flowDisplayNames)
+        IReadOnlyList<string> flowDisplayNames,
+        IReadOnlyList<PowerAutomateFlowReference>? flowReferences = null)
     {
         Outcome = outcome;
         State = state;
         Message = message;
         FlowDisplayNames = flowDisplayNames;
+        FlowReferences = flowReferences ?? Array.Empty<PowerAutomateFlowReference>();
     }
 
     public PowerAutomateOutcome Outcome { get; }
     public PowerAutomateFlowState State { get; }
     public string Message { get; }
     public IReadOnlyList<string> FlowDisplayNames { get; }
+    public IReadOnlyList<PowerAutomateFlowReference> FlowReferences { get; }
 }
 
 public enum CloudScheduleImportOutcome
@@ -102,19 +122,18 @@ public sealed class CloudScheduleImportResult
 
 public interface IPowerAutomateService
 {
-    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
-    Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
-    Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default);
+    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
+    Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
+    Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>
     /// Imports the prebuilt OofManager Cloud Schedule solution zip into the
     /// signed-in user's owned Power Platform environment (the one whose
-    /// principal owner email matches <paramref name="upnHint"/>) via the
-    /// Dataverse Web API. Skips the manual "download zip → upload via
-    /// browser" round-trip. Pass <paramref name="forceOverwrite"/>=true to
-    /// allow overwriting an existing same-name solution; otherwise the call
-    /// returns <see cref="CloudScheduleImportOutcome.AlreadyExists"/> without
-    /// importing so the caller can confirm with the user first.
+    /// principal owner email matches <paramref name="upnHint"/>), using the
+    /// Power Platform CLI (<c>pac solution import</c>) after environment
+    /// discovery through the bundled PowerApps PowerShell module. Skips the
+    /// manual "download zip → upload via browser" round-trip when pac is
+    /// installed and authenticated.
     /// </summary>
     Task<CloudScheduleImportResult> ImportCloudScheduleSolutionAsync(
         string solutionZipPath,
@@ -123,5 +142,6 @@ public interface IPowerAutomateService
         string? upnHint,
         string? displayNameHint,
         bool forceOverwrite,
+        IProgress<string>? progress = null,
         CancellationToken ct = default);
 }

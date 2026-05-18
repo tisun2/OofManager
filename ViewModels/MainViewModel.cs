@@ -45,6 +45,7 @@ public partial class MainViewModel : ObservableObject
     private DateTimeOffset? _confirmedOofStartTime;
     private DateTimeOffset? _confirmedOofEndTime;
     private bool _isCloudScheduleFlowStatusChecking;
+    private bool _isCloudSchedulePackageRunning;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -293,8 +294,8 @@ public partial class MainViewModel : ObservableObject
         if (IsOnLongVacation)
         {
             StatusMessage = value
-                ? "Vacation / Holiday remains selected in Outlook. Click ⚡ Sync to Outlook or enable Auto-sync to re-assert it."
-                : "Vacation / Holiday cleared locally. Click ⚡ Sync to Outlook or enable Auto-sync to clear the vacation OOF in Outlook.";
+                ? "Vacation OOF window remains selected in Outlook. Click ⚡ Sync to Outlook or enable Auto-sync to re-assert it."
+                : "Vacation OOF window cleared locally. Click ⚡ Sync to Outlook or enable Auto-sync to clear it in Outlook.";
             return;
         }
         StatusMessage = value
@@ -581,8 +582,11 @@ public partial class MainViewModel : ObservableObject
 
             var signedInUser = await _exchangeService.GetCurrentUserAsync();
             var mailboxIdentity = await _exchangeService.GetCurrentMailboxIdentityAsync();
+            var displayName = await _exchangeService.GetCurrentDisplayNameAsync();
             MailboxIdentity = mailboxIdentity;
-            UserDisplayName = mailboxIdentity;
+            UserDisplayName = string.IsNullOrWhiteSpace(displayName) || displayName.Contains("@")
+                ? mailboxIdentity
+                : displayName;
             UserEmail = string.Equals(mailboxIdentity, signedInUser, StringComparison.OrdinalIgnoreCase)
                 ? signedInUser
                 : $"Signed in as {signedInUser}";
@@ -737,7 +741,7 @@ public partial class MainViewModel : ObservableObject
             // Mode changes are local UI/model changes. The OOF Settings subtitle
             // already explains what Sync to Outlook and Auto-sync will do, so
             // don't echo another status line underneath it.
-            StatusMessage = string.Empty;
+            if (!_isCloudSchedulePackageRunning) StatusMessage = string.Empty;
             await Task.CompletedTask;
         }
         else
@@ -755,7 +759,7 @@ public partial class MainViewModel : ObservableObject
             // not collapse an existing Scheduled window to flat Enabled /
             // Disabled here; that was the path that made the top status jump
             // to "OOF is ON — no end time" before the user clicked Sync now.
-            StatusMessage = string.Empty;
+            if (!_isCloudSchedulePackageRunning) StatusMessage = string.Empty;
         }
     }
 
@@ -803,10 +807,10 @@ public partial class MainViewModel : ObservableObject
 
             if (IsOnLongVacation)
             {
-                StatusMessage = "Clearing Vacation / Holiday override and syncing the schedule...";
+                StatusMessage = "Clearing vacation OOF window and syncing the schedule...";
                 await EndVacationAsync();
                 if (IsOnLongVacation) return;
-                StatusMessage = "Schedule mode synced. Vacation / Holiday override cleared.";
+                StatusMessage = "Schedule mode synced. Vacation OOF window cleared.";
                 return;
             }
 
@@ -980,27 +984,26 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Builds the OofManager Cloud Schedule solution package on the user's
-    /// Desktop and opens make.powerautomate.com/solutions in their browser
-    /// so they can drop the zip into the Import dialog. We previously
-    /// auto-imported via Dataverse Web API, but locked-down tenants (e.g.
-    /// Microsoft corp) block the bundled PowerApps PowerShell module's
-    /// client ID from minting Dataverse tokens (AADSTS65002), so the
-    /// reliable path is to hand the zip to the user and let the maker
-    /// portal's own import dialog do the upload.
+    /// Builds the OofManager Cloud Schedule solution package under local app
+    /// data, then tries the automatic Power Automate import path. If the
+    /// import tool is unavailable, sign-in fails, or the import fails, it still opens
+    /// make.powerautomate.com/solutions so the user can drop the zip into the
+    /// Import dialog manually.
     /// </summary>
     [RelayCommand]
     private async Task GenerateCloudSchedulePackageAsync()
     {
         if (IsBusy) return;
         IsBusy = true;
+        _isCloudSchedulePackageRunning = true;
         try
         {
             var snapshot = new WorkScheduleSnapshot(_prefs);
-            // Drop the zip on the Desktop so it's easy to find from the
-            // Power Automate import file picker.
-            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var outPath = System.IO.Path.Combine(desktop, "OofManager-CloudSchedule.zip");
+            var packageDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OofManager",
+                "CloudSchedule");
+            var outPath = System.IO.Path.Combine(packageDir, "OofManager-CloudSchedule.zip");
 
             StatusMessage = "📦 Generating cloud schedule solution…";
             var pkg = await Task.Run(() => CloudSchedulePackageGenerator.GenerateWithIdentity(
@@ -1012,8 +1015,29 @@ public partial class MainViewModel : ObservableObject
                 generateManaged: false,
                 outputPath: outPath));
 
-            OpenSolutionsPage();
-            StatusMessage = "✅ Saved OofManager-CloudSchedule.zip to your Desktop. Power Automate opened — switch to the environment named after you, click 'Import solution', and pick the zip from your Desktop.";
+            StatusMessage = $"📦 Generated cloud schedule solution v{pkg.SolutionVersion}. Importing to Power Automate…";
+            var importProgress = new Progress<string>(message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    StatusMessage = $"📦 {message}";
+            });
+            var import = await _powerAutomate.ImportCloudScheduleSolutionAsync(
+                pkg.Path,
+                pkg.SolutionUniqueName,
+                pkg.WorkflowId,
+                MailboxIdentity,
+                UserDisplayName,
+                forceOverwrite: false,
+                progress: importProgress);
+
+            if (import.Outcome == CloudScheduleImportOutcome.Success)
+            {
+                StatusMessage = $"✅ {import.Message} Version {pkg.SolutionVersion}; imported at {DateTime.Now:yyyy-MM-dd HH:mm}. Power Automate solution is ready.";
+                return;
+            }
+
+            OpenSolutionsPage(import.EnvironmentId);
+            StatusMessage = $"⚠️ Automatic Power Automate import did not finish: {import.Message} Power Automate opened — import the saved zip manually from {pkg.Path}.";
         }
         catch (Exception ex)
         {
@@ -1022,6 +1046,7 @@ public partial class MainViewModel : ObservableObject
         }
         finally
         {
+            _isCloudSchedulePackageRunning = false;
             IsBusy = false;
         }
     }
@@ -1105,7 +1130,14 @@ public partial class MainViewModel : ObservableObject
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
             var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
             var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
-            var result = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName);
+            var statusProgress = new Progress<string>(message =>
+            {
+                if (!IsManualMode || string.IsNullOrWhiteSpace(message)) return;
+                CloudScheduleFlowBannerText = message.StartsWith("Power Automate", StringComparison.OrdinalIgnoreCase)
+                    ? message
+                    : $"Power Automate flow: {message}";
+            });
+            var result = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
             if (IsManualMode)
             {
                 SetCloudScheduleFlowBanner(result.State);
@@ -1140,7 +1172,7 @@ public partial class MainViewModel : ObservableObject
         if (IsBusy) return;
         var verbLabel = disable ? "Turning off" : "Turning on";
         IsBusy = true;
-        StatusMessage = $"{verbLabel} Power Automate flow… using cached Power Automate sign-in if available. First run may show a sign-in dialog; otherwise this runs quietly and can take a few seconds.";
+        StatusMessage = $"{verbLabel} Power Automate flow. Preparing...";
         try
         {
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
@@ -1157,9 +1189,14 @@ public partial class MainViewModel : ObservableObject
             // workflow GUID we stamp into solution.xml at import, so the
             // display-name suffix is the most reliable per-user key.
             var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
+            var toggleProgress = new Progress<string>(message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    StatusMessage = message;
+            });
             var result = disable
-                ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName)
-                : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName);
+                ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, toggleProgress)
+                : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, toggleProgress);
             var flowDisplayNames = result.FlowDisplayNames.Count > 0
                 ? string.Join(", ", result.FlowDisplayNames)
                 : expectedFlowDisplayName;

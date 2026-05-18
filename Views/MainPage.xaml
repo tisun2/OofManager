@@ -248,7 +248,7 @@
                     <!-- Lower half — Manual mode subsection. Holds the OOF
                          on/off toggle (user-controlled in this mode), the
                          cloud-sync reminder banner, the Update reply
-                         messages button, and the Long Vacation / Holiday
+                             messages button, and the Vacation OOF window
                          override sub-section. The section title used to be
                          "✋ Manual mode" but the radio button above already
                          says that, so it's been dropped. -->
@@ -323,10 +323,10 @@
                                      HorizontalAlignment="Left"
                                      VerticalAlignment="Center"/>
 
-                        <!-- Vacation / Holiday is an OOF override, so it sits
+                            <!-- Vacation OOF window is an OOF override, so it sits
                             after the plain manual OOF toggle in the same
                             manual-control row. -->
-                        <CheckBox Content="🏖️ Vacation / Holiday"
+                            <CheckBox Content="🏖️ Vacation OOF window"
                                 IsChecked="{Binding IsVacationWindowActive, Mode=TwoWay}"
                                 IsEnabled="{Binding CanToggleVacationWindow}"
                                 FocusVisualStyle="{x:Null}"
@@ -341,7 +341,7 @@
                          in Manual mode already re-asserts current OOF state +
                          reply text, so a separate button was redundant. -->
 
-                    <!-- Long Vacation / Holiday sub-section. Used to be its
+                      <!-- Vacation OOF window sub-section. Used to be its
                          own card; folded in here because it writes to the
                          exact same Exchange OOF window as the toggle above,
                          and users were confused that "Out of Office" and
@@ -379,7 +379,7 @@
                                 <TextBlock TextWrapping="Wrap" FontSize="12" Opacity="0.65"
                                            Margin="0,8,0,12"
                                            Visibility="{Binding IsOnLongVacation, Converter={StaticResource InvertBoolToVisibility}}">
-                                    Push a single multi-day Scheduled OOF for a holiday or extended leave. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply.
+                                    Set one From/To Scheduled OOF window for a holiday or extended leave. Tip: load a saved template from <Run FontStyle="Italic">My Templates</Run> first if you want a vacation-specific reply.
                                 </TextBlock>
 
                                 <!-- Date pickers. Disabled while a vacation
@@ -619,11 +619,11 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <Button Grid.Column="0"
-                                        Content="📦 Generate Solution Package"
+                                        Content="📦 Generate &amp; Import Solution"
                                         Command="{Binding GenerateCloudSchedulePackageCommand}"
                                         IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Generates a Power Automate solution zip on your Desktop and opens the Power Automate solutions page in your browser. Switch to the environment named after you, click 'Import solution', and pick OofManager-CloudSchedule.zip from your Desktop. Recommended."/>
+                                    ToolTip="Generates the Power Automate solution package, then tries to import it automatically. If automatic import is unavailable, Power Automate opens so you can import OofManager-CloudSchedule.zip manually. Recommended."/>
                                 <Button Grid.Column="2"
                                         Content="📝 Manual Setup Flow"
                                         Command="{Binding OpenCloudScheduleGuideCommand}"

@@ -25,6 +25,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
 
     private bool _isConnected;
     private string? _userPrincipalName;
+    private string? _userDisplayName;
     private string? _targetMailboxIdentity;
 
     public bool IsConnected => _isConnected;
@@ -147,13 +148,16 @@ Connect-ExchangeOnline `
     -ErrorAction Stop | Out-Null
 $connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
 $primarySmtp = $null
+$displayName = $null
 try {{
-    $primarySmtp = (Get-EXOMailbox -Identity $connUpn -Properties PrimarySmtpAddress -ErrorAction Stop).PrimarySmtpAddress
+    $mailbox = Get-EXOMailbox -Identity $connUpn -Properties PrimarySmtpAddress,DisplayName -ErrorAction Stop
+    $primarySmtp = $mailbox.PrimarySmtpAddress
+    $displayName = $mailbox.DisplayName
 }} catch {{
     # Best-effort: if this user lacks Get-EXOMailbox access (e.g. delegated
     # scenarios) keep the original UPN and let the rest of the app proceed.
 }}
-[PSCustomObject]@{{ UPN = $connUpn; PrimarySmtp = $primarySmtp }} | ConvertTo-Json -Compress
+[PSCustomObject]@{{ UPN = $connUpn; PrimarySmtp = $primarySmtp; DisplayName = $displayName }} | ConvertTo-Json -Compress
 ";
 
         var output = await InvokeAsync(script).ConfigureAwait(false);
@@ -164,6 +168,7 @@ try {{
             .LastOrDefault();
 
         string? primarySmtp = null;
+    string? displayName = null;
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
             try
@@ -174,6 +179,8 @@ try {{
                     _userPrincipalName = upnEl.GetString();
                 if (root.TryGetProperty("PrimarySmtp", out var smtpEl) && smtpEl.ValueKind == JsonValueKind.String)
                     primarySmtp = smtpEl.GetString();
+                if (root.TryGetProperty("DisplayName", out var displayEl) && displayEl.ValueKind == JsonValueKind.String)
+                    displayName = displayEl.GetString();
             }
             catch
             {
@@ -203,6 +210,7 @@ try {{
             _targetMailboxIdentity = upnHint!.Trim();
         else
             _targetMailboxIdentity = _userPrincipalName;
+        _userDisplayName = !string.IsNullOrWhiteSpace(displayName) ? displayName!.Trim() : null;
         _isConnected = true;
     }
 
@@ -220,6 +228,7 @@ try {{
         {
             _isConnected = false;
             _userPrincipalName = null;
+            _userDisplayName = null;
             _targetMailboxIdentity = null;
             _moduleImported = false;
             _prewarmTask = null;
@@ -230,6 +239,11 @@ try {{
     public Task<string> GetCurrentUserAsync()
     {
         return Task.FromResult(_userPrincipalName ?? "Unknown");
+    }
+
+    public Task<string> GetCurrentDisplayNameAsync()
+    {
+        return Task.FromResult(_userDisplayName ?? _userPrincipalName ?? "Unknown");
     }
 
     public Task<string> GetCurrentMailboxIdentityAsync()
