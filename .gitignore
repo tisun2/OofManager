@@ -5,6 +5,7 @@ publish/
 
 # Inno Setup output (binary installer is shipped via GitHub Releases)
 Installer/Output/
+Installer/Prerequisites/
 
 # Visual Studio / Rider / VS Code per-user
 .vs/

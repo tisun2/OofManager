@@ -1658,6 +1658,10 @@ try {
         $msiPacLauncher = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI\pac.launcher.exe'
         if (Test-Path -LiteralPath $msiPacLauncher) { $pacPath = $msiPacLauncher }
     }
+    if (-not $pacPath -and $env:LOCALAPPDATA) {
+        $msiPacExe = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI\pac.exe'
+        if (Test-Path -LiteralPath $msiPacExe) { $pacPath = $msiPacExe }
+    }
     if (-not $pacPath) {
         Emit 'OtherError' (
             ""Automatic Power Automate import is not available on this PC. Install the Microsoft Power Platform CLI to enable it."" + [Environment]::NewLine +

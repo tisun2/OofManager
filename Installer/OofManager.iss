@@ -3,7 +3,7 @@
 ; Output: Installer\Output\OofManagerSetup.exe
 
 #define MyAppName "OOF Manager"
-#define MyAppVersion "1.1.5"
+#define MyAppVersion "1.1.6"
 #define MyAppPublisher "OOF Manager"
 #define MyAppExeName "OofManager.exe"
 
@@ -37,6 +37,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Bundle the entire publish output (app + ExchangeOnlineManagement module).
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Automatic Power Automate Solution import uses pac. The build script downloads
+; this official Microsoft prerequisite before compiling the installer.
+Source: "Prerequisites\powerapps-cli-1.0.msi"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
 
 [InstallDelete]
 ; v1.0.9 renamed the exe from OofManager.Wpf.exe to OofManager.exe. Remove the
@@ -53,4 +56,15 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\powerapps-cli-1.0.msi"" /qn /norestart ALLUSERS=2 MSIINSTALLPERUSER=1"; StatusMsg: "Installing Microsoft PowerApps CLI..."; Check: not PowerAppsCliInstalled; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function PowerAppsCliInstalled: Boolean;
+begin
+	Result :=
+		FileExists(ExpandConstant('{localappdata}\Microsoft\PowerAppsCLI\pac.cmd')) or
+		FileExists(ExpandConstant('{localappdata}\Microsoft\PowerAppsCLI\pac.launcher.exe')) or
+		FileExists(ExpandConstant('{localappdata}\Microsoft\PowerAppsCLI\pac.exe')) or
+		FileExists(ExpandConstant('{%USERPROFILE}\.dotnet\tools\pac.exe'));
+end;

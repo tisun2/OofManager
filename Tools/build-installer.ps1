@@ -1,10 +1,15 @@
 [CmdletBinding()]
 param(
     [string]$IsccPath,
-    [string]$InstallerScript = (Join-Path $PSScriptRoot '..\Installer\OofManager.iss')
+    [string]$InstallerScript = (Join-Path $PSScriptRoot '..\Installer\OofManager.iss'),
+    [string]$PowerAppsCliMsiPath,
+    [switch]$SkipPowerAppsCliMsi
 )
 
 $ErrorActionPreference = 'Stop'
+
+$powerAppsCliMsiUrl = 'https://download.microsoft.com/download/D/B/E/DBE69906-B4DA-471C-8960-092AB955C681/powerapps-cli-1.0.msi'
+$powerAppsCliMsiSha256 = 'AF4C7058AB52E433ED0E18CB5D5E17256187A1B08ADD319F94C06C3EAC5D9190'
 
 function Resolve-IsccPath {
     param([string]$ExplicitPath)
@@ -61,13 +66,56 @@ function Resolve-IsccPath {
     throw "ISCC.exe was not found. Install Inno Setup 6 with: winget install --id JRSoftware.InnoSetup -e`nChecked:`n$checkedText"
 }
 
+function Copy-PowerAppsCliMsi {
+    param(
+        [string]$DestinationPath,
+        [string]$ExplicitPath
+    )
+
+    $destinationDir = Split-Path -Parent $DestinationPath
+    if (-not (Test-Path -LiteralPath $destinationDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $destinationDir | Out-Null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (-not (Test-Path -LiteralPath $ExplicitPath -PathType Leaf)) {
+            throw "PowerApps CLI MSI was not found at the explicit path: $ExplicitPath"
+        }
+
+        Copy-Item -LiteralPath $ExplicitPath -Destination $DestinationPath -Force
+        return
+    }
+
+    $needsDownload = $true
+    if (Test-Path -LiteralPath $DestinationPath -PathType Leaf) {
+        $hash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
+        $needsDownload = -not [string]::Equals($hash, $powerAppsCliMsiSha256, [StringComparison]::OrdinalIgnoreCase)
+    }
+
+    if ($needsDownload) {
+        Write-Host "Downloading Microsoft PowerApps CLI prerequisite..."
+        Invoke-WebRequest -Uri $powerAppsCliMsiUrl -OutFile $DestinationPath -UseBasicParsing
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
+    if (-not [string]::Equals($actualHash, $powerAppsCliMsiSha256, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "PowerApps CLI MSI hash mismatch. Expected $powerAppsCliMsiSha256 but got $actualHash at $DestinationPath"
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $installerScriptPath = (Resolve-Path -LiteralPath $InstallerScript).Path
 $compilerPath = Resolve-IsccPath -ExplicitPath $IsccPath
 $outputPath = Join-Path $repoRoot 'Installer\Output\OofManagerSetup.exe'
+$powerAppsCliMsiOutputPath = Join-Path $repoRoot 'Installer\Prerequisites\powerapps-cli-1.0.msi'
 
 Push-Location $repoRoot
 try {
+    if (-not $SkipPowerAppsCliMsi) {
+        Copy-PowerAppsCliMsi -DestinationPath $powerAppsCliMsiOutputPath -ExplicitPath $PowerAppsCliMsiPath
+        Write-Host "PowerApps CLI prerequisite: $powerAppsCliMsiOutputPath"
+    }
+
     Write-Host "Using Inno Setup compiler: $compilerPath"
     Write-Host "Building installer script: $installerScriptPath"
 

@@ -1119,9 +1119,10 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
 
+    [RelayCommand]
     private async Task RefreshCloudScheduleFlowStatusAsync()
     {
-        if (!IsManualMode || _isCloudScheduleFlowStatusChecking) return;
+        if (_isCloudScheduleFlowStatusChecking) return;
 
         _isCloudScheduleFlowStatusChecking = true;
         CloudScheduleFlowBannerText = "Power Automate flow: checking...";
@@ -1132,23 +1133,17 @@ public partial class MainViewModel : ObservableObject
             var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
             var statusProgress = new Progress<string>(message =>
             {
-                if (!IsManualMode || string.IsNullOrWhiteSpace(message)) return;
+                if (string.IsNullOrWhiteSpace(message)) return;
                 CloudScheduleFlowBannerText = message.StartsWith("Power Automate", StringComparison.OrdinalIgnoreCase)
                     ? message
                     : $"Power Automate flow: {message}";
             });
             var result = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
-            if (IsManualMode)
-            {
-                SetCloudScheduleFlowBanner(result.State);
-            }
+            SetCloudScheduleFlowBanner(result.State);
         }
         catch
         {
-            if (IsManualMode)
-            {
-                SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
-            }
+            SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
         }
         finally
         {
@@ -1981,14 +1976,14 @@ public partial class MainViewModel : ObservableObject
         {
             var end = GetCurrentOofEndTime(now);
             return end.HasValue
-                ? $"✅ OOF is ON until {FormatStatusDateTime(end.Value)}"
-                : "✅ OOF is ON — no end time";
+                ? $"✅ Outlook OOF is ON until {FormatStatusDateTime(end.Value)}"
+                : "✅ Outlook OOF is ON — no end time";
         }
 
         var nextWindow = GetNextOofWindowForStatusBar(now);
         return nextWindow.HasValue
-            ? $"☑️ OOF is OFF — next on {FormatStatusDateTime(nextWindow.Value.start)} to {FormatStatusDateTime(nextWindow.Value.end)}"
-            : "☑️ OOF is OFF — no upcoming automatic OOF";
+            ? $"☑️ Outlook OOF is OFF — next scheduled {FormatStatusDateTime(nextWindow.Value.start)} to {FormatStatusDateTime(nextWindow.Value.end)}"
+            : "☑️ Outlook OOF is OFF — no upcoming Outlook scheduled OOF";
     }
 
     private DateTimeOffset? GetCurrentOofEndTime(DateTimeOffset now)
