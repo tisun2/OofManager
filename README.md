@@ -1,19 +1,20 @@
 # OOF Manager
 
-OOF Manager is a Windows desktop app that helps Microsoft 365 users automate **Out-of-Office / Automatic Replies** without building Power Automate flows by hand.
+OOF Manager is a Windows desktop app that turns your Microsoft 365 **Out-of-Office / Automatic Replies** schedule into a cloud-hosted Power Automate flow.
 
-Its standout feature is the ability to generate and import a ready-to-use **Power Automate Solution package** (`OofManager-CloudSchedule.zip`). OOF Manager imports the package into your Power Automate environment automatically when possible; the zip is kept under the app's local data folder as a manual fallback. Connect your Outlook account, and the generated cloud flow will keep scheduling your automatic replies from Microsoft 365 itself. Users do not need to write complex Power Automate date/time expressions, calculate weekday-specific start and end windows, or hand-format HTML reply bodies.
+Its standout feature is the end-to-end Power Automate setup: OOF Manager generates a personalized **Solution package** (`OofManager-CloudSchedule.zip`), imports it into your Power Automate environment automatically when possible, and can then find the generated flow so you can turn it **on or off directly from the desktop app**. The zip is kept under the app's local data folder as a manual fallback for locked-down tenants.
 
-The desktop app is still useful on its own: it can sign in to Exchange Online, edit your reply messages, manage weekday schedules, and sync your next OOF window directly to Outlook. The generated cloud package takes that schedule one step further by keeping it alive even when your PC is off.
+Once connected, the generated cloud flow keeps your automatic replies scheduled from Microsoft 365 itself, even when OOF Manager and your computer are closed. You do not need to write Power Automate date/time expressions, calculate weekday-specific start and end windows, or hand-format HTML reply bodies.
 
 Built with WPF (.NET Framework 4.8), [ModernWpfUI](https://github.com/Kinnara/ModernWpf), and [CommunityToolkit.Mvvm](https://learn.microsoft.com/dotnet/communitytoolkit/mvvm/). The local Exchange sync path hosts the [`ExchangeOnlineManagement`](https://www.powershellgallery.com/packages/ExchangeOnlineManagement) PowerShell module in-process, so no `powershell.exe` window pops up.
 
 ## Features
 
-- **Generate & import a Power Automate Solution** — creates `OofManager-CloudSchedule.zip` under the app's local data folder and imports it automatically when possible; if automatic import is blocked, the app opens Power Automate for manual import.
+- **Generate & auto-import a Power Automate Solution** — creates `OofManager-CloudSchedule.zip` under the app's local data folder and imports it automatically when possible; if automatic import is blocked, the app opens Power Automate for manual import.
+- **Turn the cloud flow on/off from OOF Manager** — after the solution is imported, the app locates the generated Power Automate flow and lets you enable or disable it without hunting through the Maker portal.
+- **Always-on cloud schedule** — after import, the flow runs inside Microsoft 365 and keeps your OOF schedule rolling forward even when OOF Manager and your computer are closed.
 - **No manual Power Automate expressions** — the app writes the weekday-aware recurrence logic, local time-zone conversion, start/end window calculations, and Outlook automatic-reply action for you.
 - **No manual HTML reply formatting** — internal and external reply text from the app is converted into HTML that Outlook renders correctly, preserving line breaks in the cloud flow.
-- **Always-on cloud schedule** — after import, the flow runs inside Microsoft 365 and keeps your OOF schedule rolling forward even when OOF Manager and your computer are closed.
 - **Personalized package output** — the generated solution includes your mailbox, local Windows time zone, work schedule, internal reply, external reply, and external-audience setting.
 - **One-click sign-in** with your Microsoft 365 account (modern auth / device code via `Connect-ExchangeOnline`)
 - **View and edit auto-reply state** (Disabled / Scheduled / Enabled) for the signed-in mailbox
@@ -39,7 +40,7 @@ Creating this flow manually is tedious. A user normally has to:
 - Preserve HTML formatting so Outlook does not collapse the reply into one unreadable paragraph.
 - Keep the flow aligned with their actual OOF Manager schedule.
 
-OOF Manager turns that setup into one generated solution zip. The user imports the zip, selects the Outlook connection, and gets a cloud-hosted OOF schedule that mirrors the desktop configuration.
+OOF Manager turns that setup into one generated solution zip, imports it automatically when the tenant allows it, and keeps track of the generated flow afterward. From the desktop app you can refresh the flow state, turn the cloud schedule on or off, and still fall back to the Maker portal when a tenant policy blocks automation.
 
 ## Requirements
 
@@ -72,6 +73,7 @@ dotnet publish OofManager.Wpf.csproj -c Release -o publish
 | --- | --- |
 | `Views/`, `ViewModels/` | XAML pages + MVVM view-models (Login, Main) |
 | `Services/ExchangeService.cs` | In-process PowerShell runspace; talks to Exchange Online |
+| `Services/PowerAutomateService.cs` | Imports the generated Power Automate Solution and manages the cloud flow state |
 | `Services/CloudSchedulePackageGenerator.cs` | Builds the Power Automate Solution zip for always-on cloud OOF scheduling |
 | `Services/CloudScheduleGuideGenerator.cs` | Builds the personalized manual setup guide for the cloud flow |
 | `Services/PreferencesService.cs` | Persists settings to `%LocalAppData%\OofManager\preferences.json` |
