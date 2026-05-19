@@ -141,8 +141,8 @@ public partial class MainViewModel : ObservableObject
         get
         {
             if (IsScheduleMode)
-                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. ⚡ Sync to Outlook pushes the next off-hours window immediately; Auto-sync re-pushes it every 5 minutes.";
-            return "Manual mode: you flip OOF on/off yourself below. ⚡ Sync to Outlook pushes your current state to Outlook immediately; Auto-sync re-pushes it every 5 minutes.";
+                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. ⚡ Sync to Outlook pushes the next off-hours window immediately.";
+            return "Manual mode: you flip OOF on/off yourself below. ⚡ Sync to Outlook pushes your current state to Outlook immediately.";
         }
     }
 
@@ -1119,7 +1119,6 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
 
-    [RelayCommand]
     private async Task RefreshCloudScheduleFlowStatusAsync()
     {
         if (_isCloudScheduleFlowStatusChecking) return;

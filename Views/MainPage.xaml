@@ -147,10 +147,9 @@
 
             <!-- OOF Settings mode picker. Sits directly under the status
                  message; the selected mode controls which card appears
-                 below (Manual mode or Schedule mode). The Auto-sync
-                 checkbox and ⚡ Sync to Outlook button apply to both modes; the
-                 SyncCardSubtitle text explains what each does in the
-                 currently-selected mode. -->
+                 below (Manual mode or Schedule mode). The ⚡ Sync to Outlook
+                 button applies to both modes; the SyncCardSubtitle text explains
+                 what it does in the currently-selected mode. -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel Margin="0">
                     <TextBlock Text="🔄 OOF Settings" FontSize="16" FontWeight="Bold"/>
@@ -159,10 +158,10 @@
                                TextWrapping="Wrap"
                                Margin="0,4,0,0"/>
 
-                    <!-- Mode selector + shared sync controls. This is one
-                         logical toolbar: pick the mode, then either sync once
-                         or leave Auto-sync on. Keeping it on a single row makes
-                         the relationship clearer than stacking two tool rows. -->
+                    <!-- Mode selector + shared sync control. This is one
+                        logical toolbar: pick the mode, then sync the current
+                        mode's state to Outlook. Keeping it on a single row
+                        makes the relationship clearer than stacking tool rows. -->
                     <Grid Margin="0,12,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
@@ -203,7 +202,7 @@
                                              Tag="0,5,5,0"
                                              IsChecked="{Binding IsManualMode, Mode=TwoWay}"
                                              Content="✋ Manual"
-                                             ToolTip="You flip OOF on/off yourself in the Manual mode card below. OofManager only writes to Exchange when you click ⚡ Sync to Outlook or have Auto-sync enabled."/>
+                                             ToolTip="You flip OOF on/off yourself in the Manual mode card below. OofManager writes the current state to Exchange when you click ⚡ Sync to Outlook."/>
                             </Grid>
                         </Border>
 
@@ -218,15 +217,8 @@
                                 Content="{Binding SyncButtonText}"
                                 Command="{Binding SyncNowCommand}"
                                 VerticalAlignment="Center"
+                                Margin="0,0,13,0"
                                 ToolTip="{Binding SyncButtonToolTip}"/>
-                            <CheckBox FontSize="12"
-                                  VerticalAlignment="Center"
-                                  VerticalContentAlignment="Center"
-                                  Height="32"
-                                  Margin="12,0,0,0"
-                                  IsChecked="{Binding IsBackgroundSyncEnabled, Mode=TwoWay}"
-                                  Content="🔄 Auto-sync every 5 min"
-                                  ToolTip="One switch for &quot;always-on&quot; mode. Three effects when checked:&#10;  • Start with Windows — launches hidden in the tray at logon.&#10;  • 5-minute background reconcile — Schedule mode re-pushes the next off-hours window so the schedule rolls forward indefinitely; Manual mode re-pushes your current on/off state + reply text to correct drift from Outlook desktop / OWA / admins / Power Automate flows.&#10;  • Close button (X) — minimises the window to the system tray instead of exiting, so the background sync keeps running.&#10;When unchecked: no auto-start, no background sync, and X really exits the app."/>
                         </StackPanel>
                     </Grid>
 
@@ -263,7 +255,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                <StackPanel Margin="0">
+                <StackPanel Grid.ColumnSpan="2" Margin="0">
                         <!-- Manual-control reminder. When the user turns
                              Work Schedule off they regain full manual
                              control of the OOF toggle here — but any Power
@@ -281,27 +273,36 @@
                              shows up under Cloud flows. -->
                         <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
                             CornerRadius="4" Padding="10,8" Margin="0"
-                                HorizontalAlignment="Left"
+                                HorizontalAlignment="Stretch"
                                 Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0">
-                                <TextBlock FontSize="11" TextWrapping="Wrap" MaxWidth="700"
+                            <Grid VerticalAlignment="Center" Margin="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
                                            Text="{Binding CloudScheduleFlowBannerText}"
                                            VerticalAlignment="Center"
                                            Margin="0,0,10,0"/>
-                                <Button Padding="10,4" FontSize="11"
+                                <Button Grid.Column="1"
+                                        Padding="10,4" FontSize="11"
                                         Content="🛑 Turn off Power Automate flow"
                                         Command="{Binding DisableCloudScheduleFlowCommand}"
                                         IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         VerticalAlignment="Center"
                                         Margin="0,0,6,0"
                                         ToolTip="Signs in to Power Automate (first run only) and toggles the OofManager Cloud Schedule flow Off using the bundled PowerApps PowerShell module. Falls back to opening the browser if it can't."/>
-                                <Button Padding="10,4" FontSize="11"
+                                <Button Grid.Column="2"
+                                        Padding="10,4" FontSize="11"
                                         Content="▶️ Turn on Power Automate flow"
                                         Command="{Binding EnableCloudScheduleFlowCommand}"
                                         IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         VerticalAlignment="Center"
                                         ToolTip="Re-enables the OofManager Cloud Schedule flow if you previously turned it off. Use this when you want the always-on cloud schedule running again."/>
-                            </StackPanel>
+                            </Grid>
                         </Border>
                     </StackPanel>
 
@@ -334,7 +335,7 @@
                                 HorizontalAlignment="Left"
                                 VerticalAlignment="Center"
                                 Margin="22,0,0,0"
-                                ToolTip="Plan a single multi-day Scheduled OOF window. Checking the box doesn't push to Outlook immediately — click ⚡ Sync to Outlook or enable Auto-sync to commit the vacation."/>
+                                ToolTip="Plan a single multi-day Scheduled OOF window. Checking the box doesn't push to Outlook immediately — click ⚡ Sync to Outlook to commit the vacation."/>
                     </StackPanel>
 
                     <!-- "Update reply messages" button removed — Sync to Outlook
@@ -605,27 +606,6 @@
                                        FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
                             <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
                                        FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <Grid Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
-                                           Text="{Binding CloudScheduleFlowBannerText}"
-                                           FontSize="11"
-                                           Opacity="0.75"
-                                           TextWrapping="Wrap"
-                                           VerticalAlignment="Center"
-                                           Margin="0,0,10,0"/>
-                                <Button Grid.Column="1"
-                                        Content="🔄 Check flow status"
-                                        Command="{Binding RefreshCloudScheduleFlowStatusCommand}"
-                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
-                                        Padding="10,4"
-                                        FontSize="11"
-                                        VerticalAlignment="Center"
-                                        ToolTip="Checks whether the OofManager Power Automate cloud flow is On, Off, or not found. This is separate from the Outlook OOF status above."/>
-                            </Grid>
                             <!-- Two equal-width CTAs side-by-side. The
                                  package is the recommended path; the manual
                                  setup guide is the fallback for tenants that

@@ -512,8 +512,14 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             Path.Combine(programFiles, "WindowsPowerShell", "Modules"),
             Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "Modules")
         };
-        var existing = Environment.GetEnvironmentVariable("PSModulePath") ?? string.Empty;
-        var combined = string.Join(";", modulePaths.Concat(new[] { existing }).Where(p => !string.IsNullOrEmpty(p)));
+        var existingPaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? string.Empty)
+            .Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries);
+        var combined = string.Join(
+            Path.PathSeparator.ToString(),
+            modulePaths.Concat(existingPaths)
+                .Select(p => p.Trim())
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
         Environment.SetEnvironmentVariable("PSModulePath", combined);
 
         var iss = InitialSessionState.CreateDefault();
