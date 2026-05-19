@@ -3,7 +3,7 @@
 ; Output: Installer\Output\OofManagerSetup.exe
 
 #define MyAppName "OOF Manager"
-#define MyAppVersion "1.1.4"
+#define MyAppVersion "1.1.5"
 #define MyAppPublisher "OOF Manager"
 #define MyAppExeName "OofManager.exe"
 
