@@ -1025,6 +1025,7 @@ public partial class MainViewModel : ObservableObject
                 pkg.Path,
                 pkg.SolutionUniqueName,
                 pkg.WorkflowId,
+                pkg.FlowDisplayName,
                 MailboxIdentity,
                 UserDisplayName,
                 forceOverwrite: false,

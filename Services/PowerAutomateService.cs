@@ -51,6 +51,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
         string solutionZipPath,
         string solutionUniqueName,
         Guid workflowId,
+        string expectedFlowDisplayName,
         string? upnHint,
         string? displayNameHint,
         bool forceOverwrite,
@@ -83,6 +84,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
             if (cachedResult.Outcome == CloudScheduleImportOutcome.Success)
             {
                 SaveImportEnvironmentCache(upnHint, cachedResult);
+                SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, cachedResult);
                 return cachedResult;
             }
 
@@ -105,7 +107,10 @@ public sealed class PowerAutomateService : IPowerAutomateService
             ct).ConfigureAwait(false);
 
         if (result.Outcome == CloudScheduleImportOutcome.Success)
+        {
             SaveImportEnvironmentCache(upnHint, result);
+            SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, result);
+        }
 
         return result;
     }
@@ -237,6 +242,20 @@ public sealed class PowerAutomateService : IPowerAutomateService
         _prefs.Set(FlowCacheEnvironmentIdKey, flowReference.EnvironmentName.Trim());
         _prefs.Set(FlowCacheDisplayNameKey, flowReference.DisplayName.Trim());
         _prefs.Set(FlowCacheNameKey, flowReference.FlowName.Trim());
+    }
+
+    private void SaveImportedFlowCandidateCache(string? upnHint, string expectedFlowDisplayName, CloudScheduleImportResult result)
+    {
+        var normalizedUpn = NormalizeCacheUpn(upnHint);
+        if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName)) return;
+        if (string.IsNullOrWhiteSpace(result.EnvironmentId) || string.IsNullOrWhiteSpace(result.WorkflowId)) return;
+        if (GetCachedFlowReference(upnHint, expectedFlowDisplayName, result.EnvironmentId) != null) return;
+
+        using var batch = _prefs.BeginBatch();
+        _prefs.Set(FlowCacheUpnKey, normalizedUpn);
+        _prefs.Set(FlowCacheEnvironmentIdKey, result.EnvironmentId!.Trim());
+        _prefs.Set(FlowCacheDisplayNameKey, expectedFlowDisplayName.Trim());
+        _prefs.Set(FlowCacheNameKey, result.WorkflowId!.Trim());
     }
 
     private void ClearFlowReferenceCache()

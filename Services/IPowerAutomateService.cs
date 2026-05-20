@@ -139,6 +139,7 @@ public interface IPowerAutomateService
         string solutionZipPath,
         string solutionUniqueName,
         Guid workflowId,
+        string expectedFlowDisplayName,
         string? upnHint,
         string? displayNameHint,
         bool forceOverwrite,
