@@ -3,7 +3,11 @@ param(
     [string]$IsccPath,
     [string]$InstallerScript = (Join-Path $PSScriptRoot '..\Installer\OofManager.iss'),
     [string]$PowerAppsCliMsiPath,
-    [switch]$SkipPowerAppsCliMsi
+    [switch]$SkipPowerAppsCliMsi,
+    [switch]$SkipPublish,
+    [string]$Configuration = 'Release',
+    [string]$Project = (Join-Path $PSScriptRoot '..\OofManager.Wpf.csproj'),
+    [string]$PublishDir = (Join-Path $PSScriptRoot '..\publish')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,6 +115,15 @@ $powerAppsCliMsiOutputPath = Join-Path $repoRoot 'Installer\Prerequisites\powera
 
 Push-Location $repoRoot
 try {
+    if (-not $SkipPublish) {
+        $projectPath = (Resolve-Path -LiteralPath $Project).Path
+        Write-Host "Publishing $projectPath ($Configuration) -> $PublishDir"
+        & dotnet publish $projectPath -c $Configuration -o $PublishDir -v minimal
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish failed with exit code $LASTEXITCODE"
+        }
+    }
+
     if (-not $SkipPowerAppsCliMsi) {
         Copy-PowerAppsCliMsi -DestinationPath $powerAppsCliMsiOutputPath -ExplicitPath $PowerAppsCliMsiPath
         Write-Host "PowerApps CLI prerequisite: $powerAppsCliMsiOutputPath"
