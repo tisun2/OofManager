@@ -4,13 +4,11 @@ using System.Text;
 namespace OofManager.Wpf.Services;
 
 /// <summary>
-/// Append-only diagnostic log for background auto-sync activity. We write
+/// Append-only diagnostic log for Outlook sync activity. We write
 /// to %LOCALAPPDATA%\OofManager\sync.log so that when the user reports
 /// "OofManager and Outlook disagree", we can read this file and see exactly
 /// what OofManager did, what the server returned before / after each push,
-/// and any exception messages from a background tick — failures in the
-/// 5-minute auto-sync loop only surface in the in-app status bar, which the
-/// user can't see when the window is minimized to the tray.
+/// and any exception messages from sync operations.
 /// </summary>
 public static class SyncLogger
 {
@@ -35,7 +33,7 @@ public static class SyncLogger
                 RotateIfNeeded();
                 var stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
                 // FileShare.ReadWrite lets the user tail the log in another tool while
-                // the app keeps writing — useful when debugging the auto-sync loop.
+                // the app keeps writing.
                 using var fs = new FileStream(LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
                 using var sw = new StreamWriter(fs, Encoding.UTF8);
                 sw.Write('[');

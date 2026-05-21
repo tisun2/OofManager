@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
@@ -19,23 +20,46 @@ namespace OofManager.Wpf.Services;
 /// </summary>
 public class ExchangeService : IExchangeService, IAsyncDisposable
 {
+    private const string MailboxIdentityCachePrefix = "Exchange.MailboxIdentity";
+
+    private static readonly TimeSpan ModuleImportTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultPowerShellTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultConnectTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan MailboxResolutionTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan DisconnectTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan AutoConnectFailureCooldown = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ExoModuleCacheRetention = TimeSpan.FromDays(7);
+    private static readonly TimeSpan CachedMailboxRefreshDelay = TimeSpan.FromSeconds(30);
+
     private Runspace? _runspace;
     private PowerShell? _ps;
+    private readonly IPreferencesService _preferences;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private string? _preferredPsModulePath;
+    private string? _exchangeModuleImportScript;
+    private string? _exoModuleBasePath;
 
     private bool _isConnected;
     private string? _userPrincipalName;
     private string? _userDisplayName;
     private string? _targetMailboxIdentity;
+    private bool _hasResolvedMailboxIdentity;
 
     public bool IsConnected => _isConnected;
 
     private Task? _prewarmTask;
     private bool _moduleImported;
+    private Task? _mailboxIdentityTask;
     // Cached background ConnectAsync. Populated by TryAutoConnectAsync from
     // App.OnStartup so the LoginPage's auto-sign-in path can simply await the
     // *same* connect attempt instead of kicking off a duplicate one.
     private Task? _autoConnectTask;
+    private DateTimeOffset _nextAutoConnectAfter = DateTimeOffset.MinValue;
+
+    public ExchangeService(IPreferencesService preferences)
+    {
+        _preferences = preferences;
+    }
 
     public Task PrewarmAsync()
     {
@@ -51,27 +75,45 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
 
     private async Task PrewarmCoreAsync()
     {
+        var total = Stopwatch.StartNew();
+        SyncLogger.Write("SignIn prewarm start");
         try
         {
+            var phase = Stopwatch.StartNew();
             EnsureRunspace();
+            LogSignInPhase("prewarm runspace", phase.Elapsed);
+
             // Import once now so the user's click only pays the auth round-trip.
             // -DisableNameChecking skips a slow per-cmdlet name validation pass.
             // The module ships in the app's Modules\ folder so no install step is needed.
-            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop").ConfigureAwait(false);
+            phase.Restart();
+            await InvokeAsync(
+                GetExchangeModuleImportScript(),
+                ModuleImportTimeout,
+                "Import ExchangeOnlineManagement").ConfigureAwait(false);
+            LogSignInPhase("prewarm module import", phase.Elapsed);
             _moduleImported = true;
+            SyncLogger.Write($"SignIn prewarm succeeded in {total.Elapsed.TotalMilliseconds:0} ms");
         }
-        catch
+        catch (Exception ex)
         {
+            SyncLogger.Write($"SignIn prewarm failed after {total.Elapsed.TotalMilliseconds:0} ms: {ex.GetType().Name}: {ex.Message}");
             // Pre-warm is best-effort. If it fails, ConnectAsync will surface the error.
             _moduleImported = false;
         }
     }
 
-    public Task TryAutoConnectAsync(string upnHint)
+    public Task TryAutoConnectAsync(string upnHint, TimeSpan? timeout = null)
     {
         // Already connected: nothing to do. The caller will observe IsConnected==true
         // immediately when it awaits this completed task.
         if (_isConnected) return Task.CompletedTask;
+
+        if (DateTimeOffset.UtcNow < _nextAutoConnectAfter)
+        {
+            SyncLogger.Write("SignIn silent auto-connect skipped during failure cooldown");
+            return Task.CompletedTask;
+        }
 
         var existing = Volatile.Read(ref _autoConnectTask);
         if (existing != null) return existing;
@@ -80,10 +122,13 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         {
             try
             {
-                await ConnectAsync(upnHint).ConfigureAwait(false);
+                await ConnectAsync(upnHint, timeout).ConfigureAwait(false);
+                _nextAutoConnectAfter = DateTimeOffset.MinValue;
             }
-            catch
+            catch (Exception ex)
             {
+                _nextAutoConnectAfter = DateTimeOffset.UtcNow.Add(AutoConnectFailureCooldown);
+                SyncLogger.Write($"SignIn silent auto-connect failed: {ex.GetType().Name}: {ex.Message}");
                 // Silent attempt: swallow. LoginViewModel inspects IsConnected after
                 // awaiting and falls back to manual sign-in when this happens.
             }
@@ -99,25 +144,46 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         return prev ?? t;
     }
 
-    public async Task ConnectAsync(string? upnHint = null)
+    public async Task ConnectAsync(string? upnHint = null, TimeSpan? timeout = null)
     {
+        var connectTimeout = timeout ?? DefaultConnectTimeout;
+        var total = Stopwatch.StartNew();
+        SyncLogger.Write($"SignIn ConnectAsync start timeout={connectTimeout.TotalSeconds:0}s upnHint={(string.IsNullOrWhiteSpace(upnHint) ? "<none>" : upnHint)}");
+
         // Wait for any in-flight pre-warm; if none was started, do the work now.
         if (_prewarmTask != null)
         {
-            try { await _prewarmTask.ConfigureAwait(false); } catch { _prewarmTask = null; }
+            var phase = Stopwatch.StartNew();
+            try
+            {
+                await _prewarmTask.ConfigureAwait(false);
+                LogSignInPhase("prewarm wait", phase.Elapsed);
+            }
+            catch (Exception ex)
+            {
+                _prewarmTask = null;
+                SyncLogger.Write($"SignIn prewarm wait failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
         EnsureRunspace();
         if (!_moduleImported)
         {
-            await InvokeAsync("Import-Module ExchangeOnlineManagement -DisableNameChecking -ErrorAction Stop").ConfigureAwait(false);
+            var phase = Stopwatch.StartNew();
+            await InvokeAsync(
+                GetExchangeModuleImportScript(),
+                ModuleImportTimeout,
+                "Import ExchangeOnlineManagement").ConfigureAwait(false);
             _moduleImported = true;
+            LogSignInPhase("module import", phase.Elapsed);
         }
 
         // Allocate the hidden console MSAL/WAM requires — only now, just before
         // the WAM dialog pops. Doing it here (not at app startup) keeps the app
         // launch flash-free; any brief conhost flicker is hidden under the WAM
         // auth dialog that appears immediately after.
+        var consolePhase = Stopwatch.StartNew();
         Program.EnsureHiddenConsole();
+        LogSignInPhase("hidden console", consolePhase.Elapsed);
 
         // -CommandName limits which Exchange cmdlets are proxied (huge speedup: from ~10s
         // down to ~2s) since we only ever call the two AutoReplyConfiguration cmdlets.
@@ -126,41 +192,42 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         // cached refresh token for that account (no UI). If the cache is empty
         // or the token is no longer valid (password change, CA policy, 90-day
         // inactivity expiry), WAM falls back to its interactive sign-in dialog.
-        var upnLine = string.IsNullOrWhiteSpace(upnHint)
+        var upnAssignment = string.IsNullOrWhiteSpace(upnHint)
             ? string.Empty
-            : $"    -UserPrincipalName '{EscapePowerShellSingleQuotedString(upnHint!)}' `\n";
-        // Also resolve the mailbox's PrimarySmtpAddress via the V3 REST cmdlet
-        // Get-EXOMailbox. We use that as the -Identity for all subsequent
-        // OOF reads/writes so OofManager hits the same EXO routing anchor that
-        // Outlook desktop uses — without this, signing in with an alias UPN
-        // (tisun@microsoft.com) made the mailbox locator pick a different
-        // backend replica than Outlook's primary-SMTP (Tianyue.Sun@…) read,
-        // producing the visible "OofManager says Scheduled, Outlook says
-        // Disabled" inconsistency. Best-effort: if Get-EXOMailbox fails (perm
-        // denied, REST endpoint unreachable, etc.) we fall back to the hint
-        // or the connection UPN, which is the old behaviour.
+            : $"$connectParams.UserPrincipalName = '{EscapePowerShellSingleQuotedString(upnHint!)}'\n";
+        var exoModuleBasePath = EscapePowerShellSingleQuotedString(GetExoModuleBasePath());
+        // Keep the login-critical script limited to authentication and connection
+        // identity discovery. PrimarySmtpAddress resolution via Get-EXOMailbox can
+        // add several seconds on slow EXO REST calls, so it is started in the
+        // background after sign-in and awaited only before OOF read/write commands
+        // that require the Outlook-matching mailbox anchor.
         var script = $@"
-Connect-ExchangeOnline `
-{upnLine}    -ShowBanner:$false `
-    -SkipLoadingFormatData `
-    -SkipLoadingCmdletHelp `
-    -CommandName 'Get-MailboxAutoReplyConfiguration','Set-MailboxAutoReplyConfiguration' `
-    -ErrorAction Stop | Out-Null
-$connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
-$primarySmtp = $null
-$displayName = $null
-try {{
-    $mailbox = Get-EXOMailbox -Identity $connUpn -Properties PrimarySmtpAddress,DisplayName -ErrorAction Stop
-    $primarySmtp = $mailbox.PrimarySmtpAddress
-    $displayName = $mailbox.DisplayName
-}} catch {{
-    # Best-effort: if this user lacks Get-EXOMailbox access (e.g. delegated
-    # scenarios) keep the original UPN and let the rest of the app proceed.
+$connectStart = Get-Date
+$connectParams = @{{
+    ShowBanner = $false
+    SkipLoadingFormatData = $true
+    SkipLoadingCmdletHelp = $true
+    CommandName = @('Get-MailboxAutoReplyConfiguration','Set-MailboxAutoReplyConfiguration')
+    ErrorAction = 'Stop'
 }}
-[PSCustomObject]@{{ UPN = $connUpn; PrimarySmtp = $primarySmtp; DisplayName = $displayName }} | ConvertTo-Json -Compress
+{upnAssignment}if ((Get-Command Connect-ExchangeOnline).Parameters.ContainsKey('EXOModuleBasePath')) {{
+    $connectParams.EXOModuleBasePath = '{exoModuleBasePath}'
+}}
+Connect-ExchangeOnline @connectParams | Out-Null
+$connectEnd = Get-Date
+$connectionInfoStart = Get-Date
+$connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
+$connectionInfoEnd = Get-Date
+[PSCustomObject]@{{
+    UPN = $connUpn
+    ConnectMs = [int](($connectEnd - $connectStart).TotalMilliseconds)
+    ConnectionInfoMs = [int](($connectionInfoEnd - $connectionInfoStart).TotalMilliseconds)
+}} | ConvertTo-Json -Compress
 ";
 
-        var output = await InvokeAsync(script).ConfigureAwait(false);
+        var connectPhase = Stopwatch.StartNew();
+        var output = await InvokeAsync(script, connectTimeout, "Connect to Exchange Online").ConfigureAwait(false);
+        LogSignInPhase("Connect-ExchangeOnline script", connectPhase.Elapsed);
 
         var rawJson = output
             .Select(o => o?.ToString()?.Trim())
@@ -168,7 +235,9 @@ try {{
             .LastOrDefault();
 
         string? primarySmtp = null;
-    string? displayName = null;
+        string? displayName = null;
+        int? connectMs = null;
+        int? connectionInfoMs = null;
         if (!string.IsNullOrWhiteSpace(rawJson))
         {
             try
@@ -181,6 +250,10 @@ try {{
                     primarySmtp = smtpEl.GetString();
                 if (root.TryGetProperty("DisplayName", out var displayEl) && displayEl.ValueKind == JsonValueKind.String)
                     displayName = displayEl.GetString();
+                if (root.TryGetProperty("ConnectMs", out var connectEl) && connectEl.TryGetInt32(out var parsedConnectMs))
+                    connectMs = parsedConnectMs;
+                if (root.TryGetProperty("ConnectionInfoMs", out var connectionInfoEl) && connectionInfoEl.TryGetInt32(out var parsedConnectionInfoMs))
+                    connectionInfoMs = parsedConnectionInfoMs;
             }
             catch
             {
@@ -190,28 +263,187 @@ try {{
             }
         }
 
+        if (connectMs.HasValue || connectionInfoMs.HasValue)
+        {
+            SyncLogger.Write(
+                $"SignIn Exchange script detail connect={connectMs?.ToString() ?? "?"}ms connectionInfo={connectionInfoMs?.ToString() ?? "?"}ms");
+        }
+
         if (string.IsNullOrWhiteSpace(_userPrincipalName))
         {
             // Connect-ExchangeOnline succeeded but Get-ConnectionInformation returned
             // nothing usable. Clean up the live REST session so a retry doesn't pile up
             // ghost sessions on the server side.
-            try { await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue").ConfigureAwait(false); }
+            try { await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue", DisconnectTimeout, "Disconnect Exchange Online").ConfigureAwait(false); }
             catch { /* best-effort */ }
             throw new Exception("Connected, but failed to read the current signed-in user.");
         }
 
+        _userDisplayName = null;
+        _hasResolvedMailboxIdentity = false;
+
         // Anchor precedence for OOF reads/writes:
-        //   1. PrimarySmtpAddress from Get-EXOMailbox (matches Outlook desktop).
-        //   2. Explicit upnHint (user passed it via Switch Account).
-        //   3. Connection UPN from Get-ConnectionInformation.
+        //   1. PrimarySmtpAddress from this run's Get-EXOMailbox, when available.
+        //   2. Cached PrimarySmtpAddress from a prior successful mailbox lookup.
+        //   3. Explicit upnHint (user passed it via Switch Account).
+        //   4. Connection UPN from Get-ConnectionInformation.
         if (!string.IsNullOrWhiteSpace(primarySmtp))
+        {
             _targetMailboxIdentity = primarySmtp!.Trim();
+            _hasResolvedMailboxIdentity = true;
+        }
+        else if (ApplyCachedMailboxIdentity(_userPrincipalName))
+        {
+            // The background refresh below will update the cache if EXO reports a change.
+        }
         else if (!string.IsNullOrWhiteSpace(upnHint))
+        {
             _targetMailboxIdentity = upnHint!.Trim();
+        }
         else
+        {
             _targetMailboxIdentity = _userPrincipalName;
-        _userDisplayName = !string.IsNullOrWhiteSpace(displayName) ? displayName!.Trim() : null;
+        }
+        if (!string.IsNullOrWhiteSpace(displayName))
+            _userDisplayName = displayName!.Trim();
         _isConnected = true;
+        StartMailboxIdentityResolution(upnHint, _hasResolvedMailboxIdentity ? CachedMailboxRefreshDelay : null);
+        SyncLogger.Write($"SignIn ConnectAsync succeeded in {total.Elapsed.TotalMilliseconds:0} ms user={_userPrincipalName} target={_targetMailboxIdentity}");
+    }
+
+    private void StartMailboxIdentityResolution(string? upnHint, TimeSpan? delay = null)
+    {
+        var currentUser = _userPrincipalName;
+        if (string.IsNullOrWhiteSpace(currentUser)) return;
+
+        _mailboxIdentityTask = Task.Run(async () =>
+        {
+            try
+            {
+                if (delay is { } refreshDelay && refreshDelay > TimeSpan.Zero)
+                {
+                    SyncLogger.Write($"SignIn mailbox identity refresh delayed {refreshDelay.TotalSeconds:0}s because cache is present");
+                    await Task.Delay(refreshDelay).ConfigureAwait(false);
+                }
+
+                if (!_isConnected || !string.Equals(_userPrincipalName, currentUser, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                await ResolveMailboxIdentityAsync(currentUser!, upnHint).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SyncLogger.Write($"SignIn mailbox identity resolution failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        });
+    }
+
+    private async Task ResolveMailboxIdentityAsync(string expectedUserPrincipalName, string? upnHint)
+    {
+        var identity = !string.IsNullOrWhiteSpace(expectedUserPrincipalName)
+            ? expectedUserPrincipalName
+            : upnHint;
+        if (string.IsNullOrWhiteSpace(identity)) return;
+
+        var escapedIdentity = EscapePowerShellSingleQuotedString(identity!);
+        var script = $@"
+$mailboxStart = Get-Date
+$mailbox = Get-EXOMailbox -Identity '{escapedIdentity}' -Properties PrimarySmtpAddress,DisplayName -ErrorAction Stop
+$mailboxEnd = Get-Date
+[PSCustomObject]@{{
+    PrimarySmtp = $mailbox.PrimarySmtpAddress
+    DisplayName = $mailbox.DisplayName
+    MailboxMs = [int](($mailboxEnd - $mailboxStart).TotalMilliseconds)
+}} | ConvertTo-Json -Compress
+";
+
+        var output = await InvokeAsync(script, MailboxResolutionTimeout, "Resolve Exchange mailbox identity").ConfigureAwait(false);
+        var rawJson = output
+            .Select(o => o?.ToString()?.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .LastOrDefault();
+        if (string.IsNullOrWhiteSpace(rawJson)) return;
+
+        using var doc = JsonDocument.Parse(ExtractJson(rawJson!));
+        var root = doc.RootElement;
+        var primarySmtp = root.TryGetProperty("PrimarySmtp", out var smtpEl) && smtpEl.ValueKind == JsonValueKind.String
+            ? smtpEl.GetString()
+            : null;
+        var displayName = root.TryGetProperty("DisplayName", out var displayEl) && displayEl.ValueKind == JsonValueKind.String
+            ? displayEl.GetString()
+            : null;
+        var mailboxMs = root.TryGetProperty("MailboxMs", out var mailboxEl) && mailboxEl.TryGetInt32(out var parsedMailboxMs)
+            ? parsedMailboxMs.ToString()
+            : "?";
+
+        if (!string.Equals(_userPrincipalName, expectedUserPrincipalName, StringComparison.OrdinalIgnoreCase))
+        {
+            SyncLogger.Write($"SignIn mailbox identity ignored stale result for {expectedUserPrincipalName}");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(primarySmtp))
+        {
+            _targetMailboxIdentity = primarySmtp!.Trim();
+            _hasResolvedMailboxIdentity = true;
+            SaveMailboxIdentityCache(expectedUserPrincipalName, _targetMailboxIdentity, displayName);
+        }
+        if (!string.IsNullOrWhiteSpace(displayName))
+            _userDisplayName = displayName!.Trim();
+        SyncLogger.Write($"SignIn mailbox identity resolved mailbox={mailboxMs}ms target={_targetMailboxIdentity} displayName={_userDisplayName ?? "<none>"}");
+    }
+
+    private async Task EnsureMailboxIdentityResolvedAsync()
+    {
+        if (_hasResolvedMailboxIdentity) return;
+
+        var task = Volatile.Read(ref _mailboxIdentityTask);
+        if (task == null) return;
+
+        try { await task.ConfigureAwait(false); }
+        catch { /* ResolveMailboxIdentityAsync logs and falls back to the current target. */ }
+    }
+
+    private bool ApplyCachedMailboxIdentity(string? userPrincipalName)
+    {
+        var cacheKey = GetMailboxIdentityCacheKey(userPrincipalName);
+        if (cacheKey == null) return false;
+
+        var cachedPrimarySmtp = _preferences.GetString($"{cacheKey}.PrimarySmtp");
+        if (string.IsNullOrWhiteSpace(cachedPrimarySmtp)) return false;
+
+        _targetMailboxIdentity = cachedPrimarySmtp!.Trim();
+        _hasResolvedMailboxIdentity = true;
+
+        var cachedDisplayName = _preferences.GetString($"{cacheKey}.DisplayName");
+        _userDisplayName = string.IsNullOrWhiteSpace(cachedDisplayName)
+            ? null
+            : cachedDisplayName!.Trim();
+
+        var updatedUtc = _preferences.GetString($"{cacheKey}.UpdatedUtc");
+        SyncLogger.Write(
+            $"SignIn mailbox identity cache hit user={userPrincipalName} target={_targetMailboxIdentity} " +
+            $"displayName={_userDisplayName ?? "<none>"} updated={updatedUtc ?? "<unknown>"}");
+        return true;
+    }
+
+    private void SaveMailboxIdentityCache(string userPrincipalName, string primarySmtp, string? displayName)
+    {
+        var cacheKey = GetMailboxIdentityCacheKey(userPrincipalName);
+        if (cacheKey == null || string.IsNullOrWhiteSpace(primarySmtp)) return;
+
+        var trimmedPrimarySmtp = primarySmtp.Trim();
+        using var batch = _preferences.BeginBatch();
+        _preferences.Set($"{cacheKey}.PrimarySmtp", trimmedPrimarySmtp);
+        _preferences.Set($"{cacheKey}.DisplayName", string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim());
+        _preferences.Set($"{cacheKey}.UpdatedUtc", DateTimeOffset.UtcNow.ToString("O"));
+        SyncLogger.Write($"SignIn mailbox identity cache saved user={userPrincipalName} target={trimmedPrimarySmtp}");
+    }
+
+    private static string? GetMailboxIdentityCacheKey(string? userPrincipalName)
+    {
+        if (string.IsNullOrWhiteSpace(userPrincipalName)) return null;
+        return $"{MailboxIdentityCachePrefix}.{userPrincipalName!.Trim().ToLowerInvariant()}";
     }
 
     public async Task DisconnectAsync()
@@ -220,7 +452,7 @@ try {{
         {
             if (_runspace != null && _runspace.RunspaceStateInfo.State == RunspaceState.Opened)
             {
-                await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue").ConfigureAwait(false);
+                await InvokeAsync("Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue", DisconnectTimeout, "Disconnect Exchange Online").ConfigureAwait(false);
             }
         }
         catch { /* best-effort */ }
@@ -230,6 +462,8 @@ try {{
             _userPrincipalName = null;
             _userDisplayName = null;
             _targetMailboxIdentity = null;
+            _hasResolvedMailboxIdentity = false;
+            _mailboxIdentityTask = null;
             _moduleImported = false;
             _prewarmTask = null;
             CloseRunspace();
@@ -241,19 +475,22 @@ try {{
         return Task.FromResult(_userPrincipalName ?? "Unknown");
     }
 
-    public Task<string> GetCurrentDisplayNameAsync()
+    public async Task<string> GetCurrentDisplayNameAsync()
     {
-        return Task.FromResult(_userDisplayName ?? _userPrincipalName ?? "Unknown");
+        await EnsureMailboxIdentityResolvedAsync().ConfigureAwait(false);
+        return _userDisplayName ?? _userPrincipalName ?? "Unknown";
     }
 
-    public Task<string> GetCurrentMailboxIdentityAsync()
+    public async Task<string> GetCurrentMailboxIdentityAsync()
     {
-        return Task.FromResult(_targetMailboxIdentity ?? _userPrincipalName ?? "Unknown");
+        await EnsureMailboxIdentityResolvedAsync().ConfigureAwait(false);
+        return _targetMailboxIdentity ?? _userPrincipalName ?? "Unknown";
     }
 
     public async Task<OofSettings> GetOofSettingsAsync()
     {
         EnsureConnected();
+        await EnsureMailboxIdentityResolvedAsync().ConfigureAwait(false);
 
         var upn = EscapePowerShellSingleQuotedString(_targetMailboxIdentity ?? _userPrincipalName!);
         var script = $@"
@@ -307,6 +544,7 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     public async Task SetOofSettingsAsync(OofSettings settings)
     {
         EnsureConnected();
+        await EnsureMailboxIdentityResolvedAsync().ConfigureAwait(false);
 
         var expectedState = settings.Status switch
         {
@@ -409,6 +647,8 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
     private async Task WriteOnceAsync(OofSettings settings, string expectedState)
     {
+        await EnsureMailboxIdentityResolvedAsync().ConfigureAwait(false);
+
         var audience = settings.ExternalAudienceAll ? "All" : "Known";
         var upn = EscapePowerShellSingleQuotedString(_targetMailboxIdentity ?? _userPrincipalName!);
         var internalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(PlainTextToHtml(settings.InternalReply)));
@@ -497,6 +737,27 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     {
         if (_runspace != null && _runspace.RunspaceStateInfo.State == RunspaceState.Opened) return;
 
+        var combined = GetPreferredPsModulePath();
+        if (!string.Equals(Environment.GetEnvironmentVariable("PSModulePath"), combined, StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.SetEnvironmentVariable("PSModulePath", combined);
+        }
+
+        var iss = InitialSessionState.CreateDefault();
+        // Disable the authorization manager so script files (e.g. inside the bundled
+        // ExchangeOnlineManagement module) load regardless of the system execution policy.
+        iss.AuthorizationManager = null;
+        iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+
+        var rs = RunspaceFactory.CreateRunspace(iss);
+        rs.Open();
+        _runspace = rs;
+    }
+
+    private string GetPreferredPsModulePath()
+    {
+        if (_preferredPsModulePath != null) return _preferredPsModulePath;
+
         // Prefer the ExchangeOnlineManagement module bundled in the app's Modules\
         // folder. That way the app works offline and doesn't depend on the user's
         // PSGallery install. We also include the user's standard module paths as
@@ -514,23 +775,91 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         };
         var existingPaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? string.Empty)
             .Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries);
-        var combined = string.Join(
+        _preferredPsModulePath = string.Join(
             Path.PathSeparator.ToString(),
             modulePaths.Concat(existingPaths)
-                .Select(p => p.Trim())
-                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Select(path => path.Trim())
+                .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Distinct(StringComparer.OrdinalIgnoreCase));
-        Environment.SetEnvironmentVariable("PSModulePath", combined);
+        return _preferredPsModulePath;
+    }
 
-        var iss = InitialSessionState.CreateDefault();
-        // Disable the authorization manager so script files (e.g. inside the bundled
-        // ExchangeOnlineManagement module) load regardless of the system execution policy.
-        iss.AuthorizationManager = null;
-        iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+    private string GetExchangeModuleImportScript()
+    {
+        if (_exchangeModuleImportScript != null) return _exchangeModuleImportScript;
 
-        var rs = RunspaceFactory.CreateRunspace(iss);
-        rs.Open();
-        _runspace = rs;
+        var moduleRoot = Path.Combine(AppContext.BaseDirectory, "Modules", "ExchangeOnlineManagement");
+        var modulePath = Directory.Exists(moduleRoot)
+            ? Directory.GetFiles(moduleRoot, "ExchangeOnlineManagement.psd1", SearchOption.AllDirectories)
+                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault()
+            : null;
+        string moduleTarget = !string.IsNullOrWhiteSpace(modulePath) && File.Exists(modulePath)
+            ? modulePath!
+            : "ExchangeOnlineManagement";
+        var escapedModuleTarget = EscapePowerShellSingleQuotedString(moduleTarget);
+        _exchangeModuleImportScript =
+            $"Import-Module '{escapedModuleTarget}' -DisableNameChecking " +
+            "-Function Connect-ExchangeOnline,Disconnect-ExchangeOnline " +
+            "-Cmdlet Get-ConnectionInformation,Get-EXOMailbox " +
+            "-ErrorAction Stop";
+        SyncLogger.Write($"SignIn Exchange module import target: {moduleTarget}");
+        return _exchangeModuleImportScript;
+    }
+
+    private string GetExoModuleBasePath()
+    {
+        if (_exoModuleBasePath != null) return _exoModuleBasePath;
+
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var baseRoot = string.IsNullOrWhiteSpace(localAppData)
+            ? Path.GetTempPath()
+            : Path.Combine(localAppData, "OofManager");
+        var basePath = Path.Combine(baseRoot, "ExoModuleCache");
+        try
+        {
+            Directory.CreateDirectory(basePath);
+            CleanupOldExoModuleCacheDirectories(basePath);
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"SignIn EXO module cache directory failed: {ex.GetType().Name}: {ex.Message}");
+            basePath = Path.GetTempPath();
+        }
+
+        _exoModuleBasePath = basePath;
+        SyncLogger.Write($"SignIn EXO module base path: {_exoModuleBasePath}");
+        return _exoModuleBasePath;
+    }
+
+    private static void CleanupOldExoModuleCacheDirectories(string basePath)
+    {
+        var cutoff = DateTime.UtcNow.Subtract(ExoModuleCacheRetention);
+        IEnumerable<string> directories;
+        try
+        {
+            directories = Directory.EnumerateDirectories(basePath, "tmpEXO_*", SearchOption.TopDirectoryOnly).ToList();
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"SignIn EXO module cache cleanup scan failed: {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        foreach (var directory in directories)
+        {
+            try
+            {
+                if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                SyncLogger.Write($"SignIn EXO module cache cleanup skipped {Path.GetFileName(directory)}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
     }
 
     private void CloseRunspace()
@@ -545,7 +874,10 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     /// <summary>
     /// Invokes a PowerShell script against the persistent runspace. Throws on errors.
     /// </summary>
-    private async Task<Collection<PSObject>> InvokeAsync(string script)
+    private Task<Collection<PSObject>> InvokeAsync(string script)
+        => InvokeAsync(script, DefaultPowerShellTimeout, "PowerShell command");
+
+    private async Task<Collection<PSObject>> InvokeAsync(string script, TimeSpan timeout, string operationName)
     {
         EnsureRunspace();
 
@@ -576,7 +908,19 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             // BeginInvoke/EndInvoke lets PowerShell schedule the work itself and avoids
             // tying up a thread-pool worker for the entire (potentially multi-second)
             // cmdlet duration — e.g. Connect-ExchangeOnline normally blocks for ~2s.
-            var asyncResults = await Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke).ConfigureAwait(false);
+            var invokeTask = Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke);
+            var completed = await Task.WhenAny(invokeTask, Task.Delay(timeout)).ConfigureAwait(false);
+            if (completed != invokeTask)
+            {
+                SyncLogger.Write($"Exchange PowerShell timeout during {operationName} after {timeout.TotalSeconds:0}s");
+                try { ps.Stop(); } catch { }
+                CloseRunspace();
+                _moduleImported = false;
+                _isConnected = false;
+                throw new TimeoutException($"{operationName} timed out after {timeout.TotalSeconds:0} seconds. Check your network and try again.");
+            }
+
+            var asyncResults = await invokeTask.ConfigureAwait(false);
             if (ps.HadErrors && ps.Streams.Error.Count > 0)
             {
                 var err = ps.Streams.Error[0];
@@ -590,6 +934,9 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
             _lock.Release();
         }
     }
+
+    private static void LogSignInPhase(string phase, TimeSpan elapsed)
+        => SyncLogger.Write($"SignIn {phase} took {elapsed.TotalMilliseconds:0} ms");
 
     public ValueTask DisposeAsync()
     {

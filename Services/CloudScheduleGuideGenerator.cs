@@ -11,8 +11,7 @@ namespace OofManager.Wpf.Services;
 /// Power Automate scheduled cloud flow which mirrors their local OofManager
 /// work-schedule rules. The flow runs in Microsoft 365 (no local computer
 /// required), so OOF replies keep being scheduled in Outlook even when the
-/// user's machines are powered off — solving the "computer must be on" gap
-/// in the local Scheduled-Task background sync.
+/// user's machines are powered off.
 ///
 /// Output is a single self-contained .html file with inline CSS and clipboard
 /// helpers, dropped into <c>%TEMP%</c> and opened in the default browser. We
@@ -189,7 +188,7 @@ public static class CloudScheduleGuideGenerator
 
   <div class=""card"">
     <h3 style=""margin-top:0"">Why do I need this?</h3>
-    <p>OofManager already pushes your next OOF window to Outlook when its app or background scheduled task is running. But if every machine you use is fully powered off (or you're travelling without your laptop), nothing on your end can talk to Exchange. A cloud flow runs inside Microsoft 365 itself, so it keeps working regardless of what your devices are doing.</p>
+    <p>OofManager can push your next OOF window to Outlook while the app is open. A cloud flow runs inside Microsoft 365 itself, so it keeps working regardless of what your devices are doing.</p>
   </div>
 
   <h2>Your personalised settings</h2>

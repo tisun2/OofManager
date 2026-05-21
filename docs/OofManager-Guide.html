@@ -286,7 +286,7 @@
       <li><a href="#main-ui">主界面导览</a></li>
       <li><a href="#schedule">配置工作时间排程</a></li>
       <li><a href="#templates">使用模板库</a></li>
-      <li><a href="#tray">系统托盘 / 关闭行为</a></li>
+      <li><a href="#tray">关闭行为</a></li>
       <li><a href="#troubleshoot">常见问题</a></li>
       <li><a href="#uninstall">卸载</a></li>
     </ol>
@@ -300,15 +300,11 @@
       <li><strong>按天设置工作时间。</strong>
           <code>Work Schedule</code> 卡片现在为周一到周日每一天单独提供起始 / 结束时间。
           勾选 <strong>Off Work</strong> 即表示该天不工作（默认 7 天都工作，包括周末）。</li>
-      <li><strong>📤 Sync to Outlook（关掉应用也能生效）。</strong>
+        <li><strong>📤 Sync to Outlook（关掉应用也能生效）。</strong>
           点击该按钮将"下一段非工作时间"以 Scheduled OOF 形式推到邮箱，<strong>Exchange 服务端会自己到点切换自动回复</strong>，
-          以后忘了开这个客户端也不会错过下班后的 OOF。
-          默认还启用了 <code>🔄 Keep Outlook in sync automatically</code>：登录后、保存排程后、以及每次后台轮询后都会自动 sync（同一个窗口去重，不会重复 push）。</li>
-      <li><strong>🚀 Start with Windows。</strong>
-          首次登录成功后会询问是否开启开机启动，主页顶部也提供了 <code>🚀 Start with Windows</code> 勾选框，
-          随时可以开关。开启后 Windows 登录时会静默启动 OofManager 到系统托盘（仅当前用户，无需管理员权限）。</li>
-      <li><strong>🔔 托盘通知。</strong>
-          窗口隐藏到托盘后，后台自动切换 OOF 或 sync 到 Outlook 时会在右下角弹一个气泡提示，不错过重要变化。</li>
+          以后忘了开这个客户端也不会错过下班后的 OOF。</li>
+        <li><strong>☁️ Power Automate 云端计划。</strong>
+          如果你希望所有电脑都关机时排程仍持续推进，可以生成云端 Flow，让 Microsoft 365 按工作时间直接更新自动回复。</li>
     </ul>
     <h3>📝 历史变更</h3>
     <ul>
@@ -328,13 +324,13 @@
     <h2><span class="num">?</span>这是什么？</h2>
     <p class="lead">
       OOF Manager 是一个轻量的 Windows 桌面工具，帮你自动管理 Microsoft 365 邮箱的<strong>自动回复（Out-of-Office）</strong>状态。
-      你只需登录一次，配好工作时间和回复内容，它就会在后台每 5 分钟自动开 / 关你的 OOF —— 再也不用每天手动进 Outlook 设置。
+      你只需登录一次，配好工作时间和回复内容，就可以把下一段非工作时间同步到 Outlook；需要全天候自动推进时，可使用 Power Automate 云端计划。
     </p>
     <div class="grid">
       <div class="tile"><div class="icon">🗓️</div><h4>按周排程</h4><p>逐天勾选 + 30 分钟粒度的开关时间。</p></div>
       <div class="tile"><div class="icon">📋</div><h4>模板库</h4><p>预存出差 / 休假等常用文案。</p></div>
-      <div class="tile"><div class="icon">🖥️</div><h4>静默驻留</h4><p>最小化到系统托盘后几乎无感。</p></div>
-      <div class="tile"><div class="icon">🔐</div><h4>本地运行</h4><p>不依赖云流程，凭据从不落盘。</p></div>
+      <div class="tile"><div class="icon">☁️</div><h4>云端计划</h4><p>Power Automate 可在电脑关机时继续推进排程。</p></div>
+      <div class="tile"><div class="icon">🔐</div><h4>本地登录</h4><p>客户端登录凭据从不落盘。</p></div>
     </div>
   </section>
 
@@ -522,12 +518,9 @@
         <text x="28" y="70" font-family="Segoe UI" font-size="15" fill="#0f172a" font-weight="bold">tisun@microsoft.com</text>
         <text x="28" y="92" font-family="Segoe UI" font-size="11.5" fill="#6b7280">tisun@microsoft.com</text>
 
-        <!-- Hide to Tray button -->
-        <rect x="544" y="62" width="98" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
-        <text x="555" y="82" font-family="Segoe UI" font-size="12" fill="#1f2937">📥 Hide to Tray</text>
         <!-- Sign Out button -->
-        <rect x="650" y="62" width="82" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
-        <text x="660" y="82" font-family="Segoe UI" font-size="12" fill="#1f2937">Sign Out</text>
+        <rect x="630" y="62" width="102" height="32" rx="3" fill="#e5e7eb" stroke="#d1d5db"/>
+        <text x="650" y="82" font-family="Segoe UI" font-size="12" fill="#1f2937">Sign Out</text>
 
         <!-- Status banner -->
         <rect x="324" y="118" width="116" height="22" rx="3" fill="#f3f4f6" stroke="#d1d5db"/>
@@ -662,9 +655,9 @@
 
     <table>
       <tr><th>区域</th><th>说明</th></tr>
-      <tr><td>顶部用户卡片</td><td>显示当前账号；右侧按钮：<code>📥 Hide to Tray</code>、<code>Sign Out</code>；下方一行显示当前 OOF 状态（例如 <code>OOF turned off</code>）</td></tr>
+      <tr><td>顶部用户卡片</td><td>显示当前账号；右侧按钮：<code>Sign Out</code>；下方一行显示当前 OOF 状态（例如 <code>OOF turned off</code>）</td></tr>
       <tr><td>Out of Office</td><td>查看当前状态（Disabled / Scheduled / Enabled），右上角的 <strong>On / Off</strong> 开关可临时切换；点击 <code>⚡ Save Now</code> 立即把当前选择推送到服务器</td></tr>
-      <tr><td>🗓️ Work Schedule</td><td>排程开关 + 每天独立的 <code>Off Work</code> 勾选 + 每天起止时间（下拉选或手动输入）；<code>🔄 Keep Outlook in sync automatically</code> 默认开，会把“下一段非工作时间”推到邮箱让 Exchange 自己切换。下方按钮：<code>Save and Apply</code> 保存并立即生效，<code>Check Now</code> 强制重新评估当前状态，<code>📤 Sync to Outlook</code> 手动推一次。</td></tr>
+      <tr><td>🗓️ Work Schedule</td><td>排程开关 + 每天独立的 <code>Off Work</code> 勾选 + 每天起止时间（下拉选或手动输入）。<code>📤 Sync to Outlook</code> 会把“下一段非工作时间”推到邮箱让 Exchange 自己切换；Power Automate 云端计划可在本机关闭时继续推进。下方按钮：<code>Save and Apply</code> 保存并立即生效，<code>Check Now</code> 强制重新评估当前状态，<code>📤 Sync to Outlook</code> 手动推一次。</td></tr>
       <tr><td>🏢 Internal Reply</td><td>给同公司同事看到的回复正文</td></tr>
       <tr><td>🌐 External Reply</td><td>给外部发件人看到的回复正文；<code>All senders</code> 关闭时仅回复联系人内的外部发件人</td></tr>
       <tr><td>底部按钮</td><td><code>💾 Save Settings</code> 保存所有回复内容；<code>📋 Save as Template</code> 把当前回复存为模板</td></tr>
@@ -718,49 +711,11 @@
 
   <!-- ===== TRAY ===== -->
   <section id="tray" class="card">
-    <h2><span class="num">8</span>系统托盘 / 关闭按钮行为</h2>
-    <p>OOF Manager 支持最小化到系统托盘后台运行：</p>
+    <h2><span class="num">8</span>关闭按钮行为</h2>
+    <p>OOF Manager 现在不再驻留系统托盘。点击主窗口右上角的 ❌ 会正常退出程序，不会隐藏到后台。</p>
 
-    <div class="mock-wrap">
-      <!-- Mock tray menu -->
-      <svg viewBox="0 0 460 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tray menu mockup">
-        <!-- Taskbar -->
-        <rect x="0" y="200" width="460" height="40" fill="#0f172a"/>
-        <!-- Tray icon -->
-        <circle cx="380" cy="220" r="11" fill="#2563eb"/>
-        <text x="380" y="225" font-family="Segoe UI" font-size="12" fill="#fff" text-anchor="middle">📧</text>
-        <!-- Tooltip arrow -->
-        <polygon points="376,205 384,205 380,200" fill="#fff"/>
-        <!-- Menu -->
-        <rect x="240" y="40" width="200" height="160" rx="8" fill="#fff" stroke="#cbd5e1" filter="drop-shadow(0 6px 18px rgba(0,0,0,0.18))"/>
-        <text x="256" y="68" font-family="Segoe UI" font-size="12.5" fill="#0f172a">🪟  Show Window</text>
-        <text x="256" y="94" font-family="Segoe UI" font-size="12.5" fill="#0f172a">📥  Hide to Tray</text>
-        <line x1="252" y1="108" x2="428" y2="108" stroke="#e2e8f0"/>
-        <text x="256" y="130" font-family="Segoe UI" font-size="11.5" fill="#475569">↺  Reset Close Button</text>
-        <text x="256" y="148" font-family="Segoe UI" font-size="11.5" fill="#475569">    Behavior (Ask Again)</text>
-        <line x1="252" y1="162" x2="428" y2="162" stroke="#e2e8f0"/>
-        <text x="256" y="184" font-family="Segoe UI" font-size="12.5" fill="#dc2626">🚪  Exit</text>
-      </svg>
-      <div class="mock-cap">图 4 · 托盘右键菜单</div>
-    </div>
-
-    <h3>托盘操作</h3>
-    <ul>
-      <li><strong>左键单击</strong>托盘图标 → 还原窗口</li>
-      <li><strong>右键</strong> → 弹出菜单：Show Window / Hide to Tray / Exit / 重置关闭按钮行为</li>
-    </ul>
-
-    <h3>自定义关闭按钮行为</h3>
-    <p>点击主窗口右上角的 ❌ 关闭按钮时，程序会询问你想要什么行为：</p>
-    <ul>
-      <li><strong>📥 Hide to Tray</strong> — 最小化到托盘，程序继续运行</li>
-      <li><strong>❌ Exit</strong> — 完全退出（排程将停止）</li>
-      <li><strong>Cancel</strong> — 不关闭</li>
-    </ul>
-    <p>勾选 <em>"Remember my choice, don't ask again"</em> 即可记住选择。要重置该设置，从托盘菜单选 <strong>Reset Close Button Behavior (Ask Again Next Time)</strong>。</p>
-
-    <div class="callout warn">
-      <strong>⚠️ 重要：</strong>如果选择 <strong>Exit</strong> 完全退出，自动排程也会停止。要让它持续生效，请使用 <strong>Hide to Tray</strong>。
+    <div class="callout info">
+      <strong>☁️ 需要全天候排程：</strong>请使用 Power Automate 云端计划。云端 Flow 在 Microsoft 365 中运行，即使本机关闭也能继续推进工作时间排程。
     </div>
   </section>
 
@@ -786,7 +741,7 @@
     <h3>Q：开了排程，第二天 OOF 没自动开</h3>
     <p>A：检查：</p>
     <ul>
-      <li>程序是否仍在运行（任务栏 / 托盘是否能看到）</li>
+      <li>是否已经用 <strong>📤 Sync to Outlook</strong> 推送了下一段 OOF 窗口，或已经启用 Power Automate 云端计划</li>
       <li>登录会话是否还有效（Sign Out 后重新登录）</li>
       <li>电脑过夜是否一直处于联网状态（深度睡眠会让网络停止）</li>
       <li>用 <strong>Check Now</strong> 强制同步一次看是否成功</li>

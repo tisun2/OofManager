@@ -17,7 +17,7 @@ public interface IExchangeService
     /// silent token-cache hit (no UI) if a fresh refresh token is already
     /// cached for that identity. When null, WAM shows its account picker.
     /// </summary>
-    Task ConnectAsync(string? upnHint = null);
+    Task ConnectAsync(string? upnHint = null, TimeSpan? timeout = null);
 
     /// <summary>
     /// Best-effort silent reconnect: kicks off (or reuses) a background
@@ -28,7 +28,7 @@ public interface IExchangeService
     /// fired during app startup so the LoginPage's auto-sign-in path observes
     /// IsConnected==true and skips straight to MainPage in the common case.
     /// </summary>
-    Task TryAutoConnectAsync(string upnHint);
+    Task TryAutoConnectAsync(string upnHint, TimeSpan? timeout = null);
     Task DisconnectAsync();
     Task<OofSettings> GetOofSettingsAsync();
     Task SetOofSettingsAsync(OofSettings settings);

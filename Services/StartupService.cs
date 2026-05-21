@@ -18,9 +18,8 @@ public interface IStartupService
 
     /// <summary>
     /// Register (or unregister) OofManager for user-scoped autostart by writing
-    /// the HKCU Run key. When enabled, the launch command includes the
-    /// <c>--minimized</c> switch so the app comes up hidden in the tray instead
-    /// of stealing focus.
+    /// the HKCU Run key. Kept for legacy cleanup now that local background
+    /// startup is disabled in favour of the Power Automate cloud schedule.
     /// </summary>
     void SetEnabled(bool enabled);
 
@@ -28,7 +27,7 @@ public interface IStartupService
     /// If autostart is currently enabled but the registered command points at
     /// a different executable (e.g. an old dev build path that survived an
     /// install), rewrite the entry to point at the current exe. This keeps the
-    /// user's "start with Windows" choice working across upgrades / reinstalls
+    /// legacy startup choice working across upgrades / reinstalls
     /// without ever prompting them again.
     /// </summary>
     void EnsureRegistrationIsFresh();
@@ -65,8 +64,6 @@ public sealed class StartupService : IStartupService
     // version, so HasBeenPromptedBefore() returns false and the user gets one
     // fresh chance to opt in.
     private const string PromptVersionPrefKey = "Startup.PromptShownVersion";
-    public const string MinimizedArg = "--minimized";
-
     private readonly IPreferencesService _prefs;
 
     public StartupService(IPreferencesService prefs)
@@ -106,9 +103,9 @@ public sealed class StartupService : IStartupService
                 var current = GetExecutablePath();
                 if (string.IsNullOrEmpty(current)) return false;
 
-                // Stored command is `"<exe>" --minimized`; pull the exe path out
-                // of the leading quoted segment (or, defensively, the first whitespace-
-                // delimited token if quoting was ever stripped).
+                // Stored command is a quoted exe path; pull the path out of
+                // the leading quoted segment (or, defensively, the first
+                // whitespace-delimited token if quoting was ever stripped).
                 var registered = ExtractExePath(value!);
                 return !string.IsNullOrEmpty(registered)
                     && string.Equals(
@@ -135,7 +132,7 @@ public sealed class StartupService : IStartupService
                 if (string.IsNullOrEmpty(exePath)) return;
                 // Always quote the path; spaces in "Program Files" or in the
                 // user profile would otherwise truncate the command.
-                key.SetValue(RunValueName, $"\"{exePath}\" {MinimizedArg}", RegistryValueKind.String);
+                key.SetValue(RunValueName, $"\"{exePath}\"", RegistryValueKind.String);
             }
             else
             {

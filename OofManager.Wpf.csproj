@@ -61,18 +61,7 @@
     </Reference>
   </ItemGroup>
 
-  <!--
-    System.Windows.Forms + System.Drawing are needed for NotifyIcon (system tray).
-    Both are part of the Windows GAC on every Windows install, so Private=false
-    keeps the published output small.
-  -->
   <ItemGroup>
-    <Reference Include="System.Windows.Forms">
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="System.Drawing">
-      <Private>false</Private>
-    </Reference>
     <!--
       System.IO.Compression + .FileSystem are framework assemblies on net48.
       Used by CloudSchedulePackageGenerator to build the Power Automate import zip.

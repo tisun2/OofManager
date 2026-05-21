@@ -9,6 +9,9 @@ public partial class LoginViewModel : ObservableObject
     // Stored across launches so we can ask MSAL/WAM for a silent token-cache
     // refresh on the next start instead of forcing the user to click Sign In.
     private const string LastUpnPrefKey = "Auth.LastSignedInUpn";
+    private static readonly TimeSpan AutoLoginConnectTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan ManualLoginConnectTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan SlowSignInStatusDelay = TimeSpan.FromSeconds(20);
 
     private readonly IExchangeService _exchangeService;
     private readonly INavigationService _navigation;
@@ -100,7 +103,9 @@ public partial class LoginViewModel : ObservableObject
             // Reuses the in-flight startup-time connect attempt if one is
             // already running; otherwise launches a fresh background connect.
             // Either way, this awaits the same underlying ConnectAsync.
-            await _exchangeService.TryAutoConnectAsync(upnHint!);
+            await AwaitWithSlowStatusAsync(
+                _exchangeService.TryAutoConnectAsync(upnHint!, AutoLoginConnectTimeout),
+                "Still connecting to Exchange Online. This can happen on cold starts or slow networks...");
             if (!_exchangeService.IsConnected)
             {
                 // Silent auto-login failed (token expired, password change, CA
@@ -143,7 +148,9 @@ public partial class LoginViewModel : ObservableObject
             // different account" inside the WAM dialog if they want to switch.
             var lastUpn = _prefs.GetString(LastUpnPrefKey)
                           ?? _windowsAccount.TryGetCurrentUserUpn();
-            await _exchangeService.ConnectAsync(upnHint: lastUpn);
+            await AwaitWithSlowStatusAsync(
+                _exchangeService.ConnectAsync(upnHint: lastUpn, timeout: ManualLoginConnectTimeout),
+                "Still waiting for Microsoft sign-in or Exchange Online. This can happen on slow networks...");
             IsLoggedIn = true;
             UserDisplayName = await _exchangeService.GetCurrentUserAsync();
             _prefs.Set(LastUpnPrefKey, UserDisplayName);
@@ -200,7 +207,9 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            await _exchangeService.ConnectAsync(upnHint: trimmedUpn);
+            await AwaitWithSlowStatusAsync(
+                _exchangeService.ConnectAsync(upnHint: trimmedUpn, timeout: ManualLoginConnectTimeout),
+                "Still waiting for Microsoft sign-in or Exchange Online. This can happen on slow networks...");
             IsLoggedIn = true;
             // Use the canonical UPN the server reports back in case the user
             // typed an alias or different casing.
@@ -222,5 +231,17 @@ public partial class LoginViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    private async Task AwaitWithSlowStatusAsync(Task task, string slowStatusMessage)
+    {
+        var slowStatusTask = Task.Delay(SlowSignInStatusDelay);
+        var completed = await Task.WhenAny(task, slowStatusTask);
+        if (completed == slowStatusTask && IsBusy)
+        {
+            StatusMessage = slowStatusMessage;
+        }
+
+        await task;
     }
 }

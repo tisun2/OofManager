@@ -3,13 +3,12 @@ namespace OofManager.Wpf.Services;
 /// <summary>
 /// Immutable snapshot of the user's per-day work schedule, loaded from
 /// <see cref="IPreferencesService"/>. Pure logic, no UI dependencies, so it can
-/// be used both from <c>MainViewModel</c> (interactive) and from the
-/// <c>--sync</c> background runner (no window).
+/// be used both from <c>MainViewModel</c> and the Power Automate package/guide
+/// generators.
 /// </summary>
 public sealed class WorkScheduleSnapshot
 {
     public bool IsEnabled { get; }
-    public bool BackgroundSyncEnabled { get; }
     private readonly bool[] _isWorkday = new bool[7]; // index = (int)DayOfWeek
     private readonly TimeSpan[] _start = new TimeSpan[7];
     private readonly TimeSpan[] _end = new TimeSpan[7];
@@ -17,7 +16,6 @@ public sealed class WorkScheduleSnapshot
     public WorkScheduleSnapshot(IPreferencesService prefs)
     {
         IsEnabled = prefs.GetBool("WorkSchedule.Enabled", false);
-        BackgroundSyncEnabled = prefs.GetBool("WorkSchedule.BackgroundSync", false);
 
         var legacyStart = prefs.GetInt("WorkSchedule.StartMinutes", 9 * 60);
         var legacyEnd = prefs.GetInt("WorkSchedule.EndMinutes", 18 * 60);
