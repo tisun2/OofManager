@@ -51,7 +51,9 @@ public partial class MainViewModel : ObservableObject
     // generation, save failures, etc.). This is shown inside the OOF Settings
     // card, not in the persistent top status bar.
     [ObservableProperty] private string _statusMessage = string.Empty;
-    [ObservableProperty] private string _cloudScheduleFlowBannerText = "Power Automate flow: not checked yet.";
+    [ObservableProperty] private string _cloudScheduleFlowBannerText = "Power Automate flow: Not checked. Use the buttons to check or change the cloud schedule flow.";
+    [ObservableProperty] private string _cloudScheduleFlowStateText = "Not checked";
+    [ObservableProperty] private string _cloudScheduleFlowBannerDetail = "Use the buttons to check or change the cloud schedule flow.";
     // Persistent top status bar: always describes the real/current OOF state
     // plus the next known OOF window, never transient button progress.
     [ObservableProperty] private string _oofStatusBarMessage = "Loading OOF status...";
@@ -1013,7 +1015,7 @@ public partial class MainViewModel : ObservableObject
         if (_isCloudScheduleFlowStatusChecking) return;
 
         _isCloudScheduleFlowStatusChecking = true;
-        CloudScheduleFlowBannerText = "Power Automate flow: checking...";
+        SetCloudScheduleFlowBannerProgress("Checking", "Checking Power Automate flow...");
         try
         {
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
@@ -1022,9 +1024,7 @@ public partial class MainViewModel : ObservableObject
             var statusProgress = new Progress<string>(message =>
             {
                 if (string.IsNullOrWhiteSpace(message)) return;
-                CloudScheduleFlowBannerText = message.StartsWith("Power Automate", StringComparison.OrdinalIgnoreCase)
-                    ? message
-                    : $"Power Automate flow: {message}";
+                SetCloudScheduleFlowBannerProgress("Checking", NormalizeCloudScheduleFlowDetail(message));
             });
             var result = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
             SetCloudScheduleFlowBanner(result.State);
@@ -1041,13 +1041,33 @@ public partial class MainViewModel : ObservableObject
 
     private void SetCloudScheduleFlowBanner(PowerAutomateFlowState state)
     {
-        CloudScheduleFlowBannerText = state switch
+        var (stateText, detailText) = state switch
         {
-            PowerAutomateFlowState.On => "Power Automate flow: On. Turn it off before vacation; turn it back on after.",
-            PowerAutomateFlowState.Off => "Power Automate flow: Off. Turn it back on after vacation to resume the cloud schedule.",
-            PowerAutomateFlowState.NotFound => "Power Automate flow: Not found. Import the Cloud Schedule package first.",
-            _ => "Power Automate flow: Unknown. Sign in to Power Automate to check or use the buttons.",
+            PowerAutomateFlowState.On => ("On", "Turn it off before vacation; turn it back on after."),
+            PowerAutomateFlowState.Off => ("Off", "Turn it back on after vacation to resume the cloud schedule."),
+            PowerAutomateFlowState.NotFound => ("Not found", "Import the Cloud Schedule package first."),
+            _ => ("Unknown", "Sign in to Power Automate to check or use the buttons."),
         };
+
+        CloudScheduleFlowStateText = stateText;
+        CloudScheduleFlowBannerDetail = detailText;
+        CloudScheduleFlowBannerText = $"Power Automate flow: {stateText}. {detailText}";
+    }
+
+    private void SetCloudScheduleFlowBannerProgress(string stateText, string detailText)
+    {
+        CloudScheduleFlowStateText = stateText;
+        CloudScheduleFlowBannerDetail = detailText;
+        CloudScheduleFlowBannerText = $"Power Automate flow: {detailText}";
+    }
+
+    private static string NormalizeCloudScheduleFlowDetail(string message)
+    {
+        const string prefix = "Power Automate flow:";
+        var detail = message.Trim();
+        return detail.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? detail.Substring(prefix.Length).TrimStart()
+            : detail;
     }
 
     private async Task RunCloudScheduleFlowToggleAsync(bool disable)
