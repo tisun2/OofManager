@@ -19,7 +19,7 @@
                        HorizontalAlignment="Center"
                        Foreground="{DynamicResource SystemControlHighlightAccentBrush}"
                        Margin="0,10,0,0"/>
-            <TextBlock Text="Out of Office Manager"
+                <TextBlock Text="Out of facility Manager"
                        FontSize="16" Opacity="0.7"
                        HorizontalAlignment="Center"
                        Margin="0,4,0,0"/>
