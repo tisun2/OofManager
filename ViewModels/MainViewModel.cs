@@ -923,7 +923,9 @@ public partial class MainViewModel : ObservableObject
 
             if (import.Outcome == CloudScheduleImportOutcome.Success)
             {
-                StatusMessage = $"✅ {import.Message} Version {pkg.SolutionVersion}; imported at {DateTime.Now:yyyy-MM-dd HH:mm}. Power Automate solution is ready.";
+                var activation = await EnsureCloudScheduleFlowOnAfterImportAsync(pkg.FlowDisplayName);
+                var prefix = activation.IsReady ? "✅" : "⚠️";
+                StatusMessage = $"{prefix} {import.Message} Version {pkg.SolutionVersion}; imported at {DateTime.Now:yyyy-MM-dd HH:mm}. {activation.Message}";
                 return;
             }
 
@@ -939,6 +941,77 @@ public partial class MainViewModel : ObservableObject
         {
             _isCloudSchedulePackageRunning = false;
             IsBusy = false;
+        }
+    }
+
+    private async Task<(bool IsReady, string Message)> EnsureCloudScheduleFlowOnAfterImportAsync(string expectedFlowDisplayName)
+    {
+        var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+        var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+
+        SetCloudScheduleFlowBannerProgress("Checking", "Checking Power Automate flow after import...");
+        StatusMessage = "📦 Import completed. Checking Power Automate flow status...";
+
+        var statusProgress = new Progress<string>(message =>
+        {
+            if (string.IsNullOrWhiteSpace(message)) return;
+            var detail = NormalizeCloudScheduleFlowDetail(message);
+            SetCloudScheduleFlowBannerProgress("Checking", detail);
+            StatusMessage = $"📦 {detail}";
+        });
+
+        try
+        {
+            var status = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+            SetCloudScheduleFlowBanner(status.State);
+
+            if (status.State == PowerAutomateFlowState.On)
+            {
+                return (true, "Power Automate flow is on.");
+            }
+
+            if (status.State != PowerAutomateFlowState.Off)
+            {
+                return (false, "Power Automate solution imported, but the flow status could not be confirmed: " + status.Message);
+            }
+
+            SetCloudScheduleFlowBannerProgress("Turning on", "Power Automate flow is off. Turning it on...");
+            StatusMessage = "📦 Power Automate flow is off. Turning it on...";
+
+            var enableProgress = new Progress<string>(message =>
+            {
+                if (string.IsNullOrWhiteSpace(message)) return;
+                StatusMessage = message;
+            });
+            var enable = await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, enableProgress);
+
+            switch (enable.Outcome)
+            {
+                case PowerAutomateOutcome.Success:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.On);
+                    return (true, "Power Automate flow was off and has been turned on.");
+                case PowerAutomateOutcome.NoFlowFound:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.NotFound);
+                    OpenPowerAutomateFlows();
+                    return (false, enable.Message);
+                case PowerAutomateOutcome.SignInFailed:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+                    OpenPowerAutomateFlows();
+                    return (false, "Power Automate sign-in did not complete, so the flow could not be turned on automatically.");
+                case PowerAutomateOutcome.SolutionAwareBlocked:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+                    OpenPowerAutomateFlows();
+                    return (false, "Power Automate refused the automatic turn-on. Opened Power Automate so you can turn it on there.");
+                default:
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+                    OpenPowerAutomateFlows();
+                    return (false, enable.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+            return (false, "Power Automate solution imported, but the flow status check failed: " + ex.Message);
         }
     }
 

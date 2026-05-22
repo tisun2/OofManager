@@ -674,10 +674,10 @@
                                         Padding="12,6" HorizontalAlignment="Stretch"
                                     ToolTip="Generates the Power Automate solution package, then tries to import it automatically. If automatic import is unavailable, Power Automate opens so you can import OofManager-CloudSchedule.zip manually. Recommended."/>
                                 <Button Grid.Column="2"
-                                        Content="📝 Manual Setup Flow"
+                                        Content="📝 Flow Setup Guide"
                                         Command="{Binding OpenCloudScheduleGuideCommand}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Fallback if your tenant blocks legacy package import. Opens a personalised HTML walkthrough in your browser."/>
+                                        ToolTip="Opens a guide for creating the Power Automate flow in Power Automate instead of generating and importing a solution package."/>
                             </Grid>
                         </StackPanel>
                     </Border>

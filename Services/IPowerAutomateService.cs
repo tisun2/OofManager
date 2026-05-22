@@ -87,12 +87,10 @@ public enum CloudScheduleImportOutcome
 /// <summary>
 /// Outcome of <see cref="IPowerAutomateService.ImportCloudScheduleSolutionAsync"/>.
 /// On <see cref="CloudScheduleImportOutcome.Success"/>, all four URL/id fields
-/// are populated so callers can deep-link the user straight to the imported
-/// flow's details page (where they bind the Office 365 connection + flip the
-/// flow on — the only two steps the Dataverse Web API can't do silently). On
-/// <see cref="CloudScheduleImportOutcome.AlreadyExists"/>, the same env metadata
-/// is populated so a confirmation dialog can name the env about to be
-/// overwritten before the caller retries with <c>forceOverwrite=true</c>.
+/// are populated so callers can cache the imported flow reference and, when
+/// possible, verify or turn on the flow after import. On <see cref="CloudScheduleImportOutcome.AlreadyExists"/>,
+/// the same env metadata is populated so a confirmation dialog can name the
+/// env about to be overwritten before the caller retries with <c>forceOverwrite=true</c>.
 /// </summary>
 public sealed class CloudScheduleImportResult
 {

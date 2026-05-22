@@ -36,4 +36,19 @@ public interface IExchangeService
     Task<string> GetCurrentDisplayNameAsync();
     Task<string> GetCurrentMailboxIdentityAsync();
     bool IsConnected { get; }
+
+    /// <summary>
+    /// Short human-readable label for the stage the sign-in pipeline is currently
+    /// in (e.g. "Preparing Exchange module…", "Connecting to Microsoft 365…"),
+    /// or null when no sign-in is in flight. Polled by LoginViewModel on
+    /// subscription so late subscribers still see the current stage.
+    /// </summary>
+    string? CurrentSignInPhase { get; }
+
+    /// <summary>
+    /// Raised whenever <see cref="CurrentSignInPhase"/> transitions to a new
+    /// non-null value. May fire on any thread; subscribers must marshal to the
+    /// UI thread before touching bound properties.
+    /// </summary>
+    event Action<string>? SignInPhaseChanged;
 }

@@ -1,3 +1,4 @@
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OofManager.Wpf.Services;
@@ -47,6 +48,22 @@ public partial class LoginViewModel : ObservableObject
         _dialog = dialog;
         // App.OnStartup already kicked off PrewarmAsync; calling it here would be
         // a no-op anyway because PrewarmAsync caches the in-flight task.
+        // Subscribe so as ExchangeService moves from "Preparing module\u2026" to
+        // "Connecting to Microsoft 365\u2026" we surface that to the user instead
+        // of leaving them staring at a frozen "Signing you in\u2026" line for ~10s.
+        _exchangeService.SignInPhaseChanged += OnSignInPhaseChanged;
+    }
+
+    private void OnSignInPhaseChanged(string phase)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) return;
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            // Only overwrite while a sign-in is actually in flight, so success/
+            // failure messages set by the command handlers below are not stomped.
+            if (IsBusy) StatusMessage = phase;
+        }));
     }
 
     /// <summary>
@@ -94,9 +111,13 @@ public partial class LoginViewModel : ObservableObject
         }
 
         IsBusy = true;
-        StatusMessage = fromWindows
-            ? $"Signing you in as {upnHint} (Windows account)…"
-            : $"Signing you in as {upnHint}…";
+        // Prefer the live phase from ExchangeService (likely "Preparing Exchange
+        // module…" by the time LoginPage paints) so the user sees what we're
+        // actually doing, not a generic banner.
+        StatusMessage = _exchangeService.CurrentSignInPhase
+            ?? (fromWindows
+                ? $"Signing you in as {upnHint} (Windows account)…"
+                : $"Signing you in as {upnHint}…");
 
         try
         {
@@ -139,7 +160,8 @@ public partial class LoginViewModel : ObservableObject
     {
         if (IsBusy) return;
         IsBusy = true;
-        StatusMessage = "Signing in to Microsoft 365... (a sign-in dialog will appear)";
+        StatusMessage = _exchangeService.CurrentSignInPhase
+            ?? "Signing in to Microsoft 365... (a sign-in dialog will appear)";
 
         try
         {
@@ -203,7 +225,8 @@ public partial class LoginViewModel : ObservableObject
 
         var trimmedUpn = newUpn!.Trim();
         IsBusy = true;
-        StatusMessage = $"Signing in as {trimmedUpn}…";
+        StatusMessage = _exchangeService.CurrentSignInPhase
+            ?? $"Signing in as {trimmedUpn}\u2026";
 
         try
         {

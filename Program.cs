@@ -44,9 +44,56 @@ internal static class Program
     [STAThread]
     public static void Main()
     {
+        // Kick off the heaviest sign-in prep (runspace open + EXO module import)
+        // before WPF or DI is touched, so it overlaps with App ctor,
+        // InitializeComponent, BuildServiceProvider, MainWindow.Initialize, and
+        // first paint. The (singleton) ExchangeService instance later adopts
+        // the prepared runspace in PrewarmCoreAsync. Safe and non-blocking.
+        try { Services.ExchangeService.BeginEagerPrewarm(); }
+        catch { /* best-effort; instance prewarm will still run */ }
+
+        // Returning-user fast path: if a previous successful sign-in remembered a
+        // UPN, chain a silent Connect-ExchangeOnline onto the eager runspace right
+        // now. By the time WPF, DI, and the LoginPage finish painting, the EXO
+        // session is usually already established and ConnectAsync just adopts it
+        // instead of paying the ~12s Connect-ExchangeOnline pipeline again.
+        try
+        {
+            var cachedUpn = ReadCachedSignInUpn();
+            if (!string.IsNullOrWhiteSpace(cachedUpn))
+                Services.ExchangeService.BeginEagerConnect(cachedUpn);
+        }
+        catch { /* best-effort */ }
+
         var app = new App();
         app.InitializeComponent();
         app.Run();
+    }
+
+    /// <summary>
+    /// Reads Auth.LastSignedInUpn from %LOCALAPPDATA%\OofManager\preferences.json
+    /// directly, bypassing the DI-resolved PreferencesService so we can use the
+    /// value before App.OnStartup runs. Returns null on any error.
+    /// </summary>
+    private static string? ReadCachedSignInUpn()
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OofManager",
+                "preferences.json");
+            if (!System.IO.File.Exists(path)) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(path));
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (!doc.RootElement.TryGetProperty("Auth.LastSignedInUpn", out var el)) return null;
+            if (el.ValueKind != System.Text.Json.JsonValueKind.String) return null;
+            return el.GetString();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

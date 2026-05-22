@@ -69,15 +69,14 @@ public partial class App : Application
         var lastUpn = Services.GetRequiredService<IPreferencesService>()
             .GetString("Auth.LastSignedInUpn");
         var exchange = Services.GetRequiredService<IExchangeService>();
+        // ExchangeService's constructor already kicked off PrewarmAsync (runspace +
+        // module import) and the hidden-console allocation in the background, so the
+        // first-run path needs no extra prep here. For returning users we additionally
+        // trigger the silent auto-connect so by the time LoginPage paints, IsConnected
+        // is usually already true and the user goes straight to MainPage.
         if (!string.IsNullOrWhiteSpace(lastUpn))
         {
             _ = exchange.TryAutoConnectAsync(lastUpn!, TimeSpan.FromSeconds(45));
-        }
-        else
-        {
-            // First-run/manual sign-in path: import ExchangeOnlineManagement while WPF
-            // renders so the user's click usually only pays the auth round-trip.
-            _ = exchange.PrewarmAsync();
         }
 
         window.Initialize(Services);

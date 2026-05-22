@@ -4,6 +4,7 @@ using System.IO;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -35,17 +36,54 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
     private PowerShell? _ps;
     private readonly IPreferencesService _preferences;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly object _runspaceLock = new();
     private string? _preferredPsModulePath;
     private string? _exchangeModuleImportScript;
     private string? _exoModuleBasePath;
+
+    // Process-wide guard for the heavy-DLL preload. The CLR loads assemblies into the
+    // default AppDomain, not per-runspace, so doing this once per process is enough.
+    private static volatile bool _exoAssembliesPreloaded;
+    private static readonly object _exoAssembliesPreloadLock = new();
+
+    // Eager static prewarm — kicked off from Program.Main() before App is constructed
+    // so the runspace open + EXO module import can overlap with WPF startup, the DI
+    // container build, and first window paint. The (singleton) ExchangeService instance
+    // later adopts the prepared runspace, eliminating the ~3 s prewarm wait that the
+    // user used to see on the click path.
+    private static Task? _eagerPrewarmTask;
+    private static Runspace? _eagerRunspace;
+    private static bool _eagerModuleImported;
+    private static volatile bool _eagerRunspaceAdopted;
+    private static string? _cachedEagerPsm1Path;
+
+    // Eager Connect-ExchangeOnline — chained after the eager prewarm when Program.Main
+    // discovers a remembered UPN. The connect runs on _eagerRunspace, so by the time
+    // the instance adopts the runspace and ConnectAsync is called for the same UPN we
+    // can skip the ~12s Connect-ExchangeOnline pipeline entirely.
+    private static Task? _eagerConnectTask;
+    private static volatile string? _eagerConnectUpn;
+    private static volatile bool _eagerConnectSucceeded;
+    private static PowerShell? _eagerConnectPs;
 
     private bool _isConnected;
     private string? _userPrincipalName;
     private string? _userDisplayName;
     private string? _targetMailboxIdentity;
     private bool _hasResolvedMailboxIdentity;
+    private string? _currentSignInPhase;
 
     public bool IsConnected => _isConnected;
+    public string? CurrentSignInPhase => _currentSignInPhase;
+    public event Action<string>? SignInPhaseChanged;
+
+    private void SetSignInPhase(string? phase)
+    {
+        _currentSignInPhase = phase;
+        if (phase == null) return;
+        try { SignInPhaseChanged?.Invoke(phase); }
+        catch (Exception ex) { SyncLogger.Write($"SignIn phase callback failed: {ex.GetType().Name}: {ex.Message}"); }
+    }
 
     private Task? _prewarmTask;
     private bool _moduleImported;
@@ -59,6 +97,20 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
     public ExchangeService(IPreferencesService preferences)
     {
         _preferences = preferences;
+        // Eagerly do everything that can run before the auth round-trip on background
+        // threads, overlapping with WPF window paint:
+        //   - Open the in-process runspace + parallel-preload EXO heavy DLLs (~250ms)
+        //   - Import the EXO module (~2.7s)
+        //   - Allocate the hidden console MSAL/WAM requires (~50-200ms)
+        // All paths through ConnectAsync await _prewarmTask and re-check _moduleImported
+        // / _consolePrepared, so a fresh ConnectAsync just observes the work as already
+        // done instead of repeating it on the sign-in critical path.
+        _ = PrewarmAsync();
+        _ = Task.Run(() =>
+        {
+            try { Program.EnsureHiddenConsole(); }
+            catch (Exception ex) { SyncLogger.Write($"SignIn eager hidden console init failed: {ex.GetType().Name}: {ex.Message}"); }
+        });
     }
 
     public Task PrewarmAsync()
@@ -77,8 +129,18 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
     {
         var total = Stopwatch.StartNew();
         SyncLogger.Write("SignIn prewarm start");
+        SetSignInPhase("Preparing Exchange module\u2026");
         try
         {
+            // Fast path: adopt the static eager prewarm kicked off from Program.Main
+            // if available. On returning users this typically means runspace + module
+            // import already finished before we even reach this point.
+            if (await TryAdoptEagerPrewarmAsync().ConfigureAwait(false))
+            {
+                SyncLogger.Write($"SignIn prewarm adopted eager runspace moduleImported={_moduleImported} in {total.Elapsed.TotalMilliseconds:0} ms");
+                return;
+            }
+
             var phase = Stopwatch.StartNew();
             EnsureRunspace();
             LogSignInPhase("prewarm runspace", phase.Elapsed);
@@ -100,6 +162,278 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             SyncLogger.Write($"SignIn prewarm failed after {total.Elapsed.TotalMilliseconds:0} ms: {ex.GetType().Name}: {ex.Message}");
             // Pre-warm is best-effort. If it fails, ConnectAsync will surface the error.
             _moduleImported = false;
+            _currentSignInPhase = null;
+        }
+    }
+
+    private async Task<bool> TryAdoptEagerPrewarmAsync()
+    {
+        var eager = Volatile.Read(ref _eagerPrewarmTask);
+        if (eager == null) return false;
+
+        var waitPhase = Stopwatch.StartNew();
+        try { await eager.ConfigureAwait(false); }
+        catch { /* failure already logged; fall back to instance prewarm */ }
+        LogSignInPhase("eager prewarm wait", waitPhase.Elapsed);
+
+        var adoptedRs = _eagerRunspace;
+        if (_eagerRunspaceAdopted
+            || adoptedRs == null
+            || adoptedRs.RunspaceStateInfo.State != RunspaceState.Opened)
+        {
+            return false;
+        }
+
+        lock (_runspaceLock)
+        {
+            if (_runspace != null) return false;
+            _runspace = adoptedRs;
+            _eagerRunspaceAdopted = true;
+            _eagerRunspace = null; // release static reference; instance now owns it
+        }
+        if (_eagerModuleImported) _moduleImported = true;
+        return true;
+    }
+
+    private async Task<bool> TryAdoptEagerConnectAsync(string? upnHint)
+    {
+        if (string.IsNullOrWhiteSpace(upnHint)) return false;
+
+        var task = Volatile.Read(ref _eagerConnectTask);
+        if (task == null) return false;
+
+        var trimmedUpn = upnHint!.Trim();
+        var eagerUpn = _eagerConnectUpn;
+
+        // UPN mismatch (e.g. user switching accounts): cancel any in-flight eager
+        // pipeline so it does not queue behind our soon-to-be-submitted connect
+        // script on the shared runspace and double the total wait.
+        if (!string.Equals(eagerUpn, trimmedUpn, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!task.IsCompleted)
+            {
+                try { _eagerConnectPs?.Stop(); } catch { }
+                try { await task.ConfigureAwait(false); } catch { }
+                SyncLogger.Write($"SignIn eager connect cancelled: upnHint={trimmedUpn} differs from eager upn={eagerUpn ?? "<none>"}");
+            }
+            return false;
+        }
+
+        var waitPhase = Stopwatch.StartNew();
+        try { await task.ConfigureAwait(false); }
+        catch { return false; /* failure already logged */ }
+        LogSignInPhase("eager connect wait", waitPhase.Elapsed);
+
+        if (!_eagerConnectSucceeded) return false;
+
+        var rs = _runspace;
+        if (rs == null || rs.RunspaceStateInfo.State != RunspaceState.Opened) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Starts the EXO runspace + module import on a background thread before any
+    /// ExchangeService instance exists. Safe to call from Program.Main() — idempotent
+    /// and non-blocking. The (singleton) ExchangeService instance adopts the resulting
+    /// runspace in PrewarmCoreAsync.
+    /// </summary>
+    public static Task BeginEagerPrewarm()
+    {
+        var existing = Volatile.Read(ref _eagerPrewarmTask);
+        if (existing != null) return existing;
+        var t = Task.Run(EagerPrewarmCoreAsync);
+        var prev = Interlocked.CompareExchange(ref _eagerPrewarmTask, t, null);
+        return prev ?? t;
+    }
+
+    private static async Task EagerPrewarmCoreAsync()
+    {
+        var total = Stopwatch.StartNew();
+        SyncLogger.Write("SignIn eager prewarm start");
+        Runspace? rs = null;
+        try
+        {
+            // Hidden console allocation is independent of module import; run it in parallel.
+            var consoleTask = Task.Run(() =>
+            {
+                try { Program.EnsureHiddenConsole(); }
+                catch (Exception ex) { SyncLogger.Write($"SignIn eager hidden console failed: {ex.GetType().Name}: {ex.Message}"); }
+            });
+
+            var phase = Stopwatch.StartNew();
+            var psm1Path = FindExchangeModulePsm1Static();
+            if (!string.IsNullOrEmpty(psm1Path))
+            {
+                var netFxDir = Path.GetDirectoryName(psm1Path!);
+                if (!string.IsNullOrEmpty(netFxDir))
+                    PreloadExoAssemblies(netFxDir!);
+            }
+            LogSignInPhase("eager assembly preload", phase.Elapsed);
+
+            phase.Restart();
+            var combined = ComputePreferredPsModulePathStatic();
+            if (!string.Equals(Environment.GetEnvironmentVariable("PSModulePath"), combined, StringComparison.OrdinalIgnoreCase))
+                Environment.SetEnvironmentVariable("PSModulePath", combined);
+
+            var iss = InitialSessionState.CreateDefault();
+            iss.AuthorizationManager = null;
+            iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+            rs = RunspaceFactory.CreateRunspace(iss);
+            rs.Open();
+            LogSignInPhase("eager runspace", phase.Elapsed);
+
+            phase.Restart();
+            var script = BuildExchangeModuleImportScript(psm1Path);
+            await RunScriptOnRunspaceAsync(rs, script, ModuleImportTimeout, "Import ExchangeOnlineManagement (eager)").ConfigureAwait(false);
+            LogSignInPhase("eager module import", phase.Elapsed);
+
+            try { await consoleTask.ConfigureAwait(false); } catch { /* best-effort */ }
+
+            _eagerRunspace = rs;
+            _eagerModuleImported = true;
+            SyncLogger.Write($"SignIn eager prewarm succeeded in {total.Elapsed.TotalMilliseconds:0} ms");
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"SignIn eager prewarm failed after {total.Elapsed.TotalMilliseconds:0} ms: {ex.GetType().Name}: {ex.Message}");
+            // Best-effort. Dispose any half-initialized runspace so the instance prewarm
+            // doesn't try to adopt it.
+            if (rs != null)
+            {
+                try { rs.Close(); } catch { }
+                try { rs.Dispose(); } catch { }
+            }
+        }
+    }
+
+    private static async Task RunScriptOnRunspaceAsync(Runspace rs, string script, TimeSpan timeout, string operationName)
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = rs;
+        ps.AddScript(script);
+        var invokeTask = Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke);
+        var completed = await Task.WhenAny(invokeTask, Task.Delay(timeout)).ConfigureAwait(false);
+        if (completed != invokeTask)
+        {
+            try { ps.Stop(); } catch { }
+            throw new TimeoutException($"{operationName} timed out after {timeout.TotalSeconds:0} seconds.");
+        }
+        await invokeTask.ConfigureAwait(false);
+        if (ps.HadErrors && ps.Streams.Error.Count > 0)
+        {
+            var err = ps.Streams.Error[0];
+            throw new Exception(err.Exception?.Message ?? err.ToString());
+        }
+    }
+
+    /// <summary>
+    /// Returning-user fast path: chains a silent Connect-ExchangeOnline -UserPrincipalName
+    /// onto the eager prewarm runspace so by the time the WPF UI is ready and
+    /// ConnectAsync is called for the same UPN, the EXO session is already established
+    /// and the ~12s connect pipeline can be skipped entirely. Safe to call from
+    /// Program.Main() — idempotent, non-blocking, and silently no-ops when no UPN
+    /// is provided.
+    /// </summary>
+    public static Task BeginEagerConnect(string? upnHint)
+    {
+        if (string.IsNullOrWhiteSpace(upnHint)) return Task.CompletedTask;
+        var existing = Volatile.Read(ref _eagerConnectTask);
+        if (existing != null) return existing;
+        var trimmedUpn = upnHint!.Trim();
+        var t = Task.Run(() => EagerConnectCoreAsync(trimmedUpn));
+        var prev = Interlocked.CompareExchange(ref _eagerConnectTask, t, null);
+        if (prev != null) return prev;
+        _eagerConnectUpn = trimmedUpn;
+        return t;
+    }
+
+    private static async Task EagerConnectCoreAsync(string upn)
+    {
+        var prewarm = Volatile.Read(ref _eagerPrewarmTask);
+        if (prewarm != null)
+        {
+            try { await prewarm.ConfigureAwait(false); }
+            catch { return; /* prewarm failure already logged */ }
+        }
+
+        var rs = _eagerRunspace;
+        if (rs == null || rs.RunspaceStateInfo.State != RunspaceState.Opened)
+        {
+            SyncLogger.Write("SignIn eager connect skipped: runspace not available");
+            return;
+        }
+
+        var total = Stopwatch.StartNew();
+        SyncLogger.Write($"SignIn eager connect start upn={upn}");
+        PowerShell? ps = null;
+        try
+        {
+            var escapedUpn = EscapePowerShellSingleQuotedString(upn);
+            var basePath = ComputeEagerExoModuleBasePath();
+            var exoBasePathLine = string.IsNullOrEmpty(basePath)
+                ? string.Empty
+                : "if ((Get-Command Connect-ExchangeOnline).Parameters.ContainsKey('EXOModuleBasePath')) { $connectParams.EXOModuleBasePath = '"
+                    + EscapePowerShellSingleQuotedString(basePath) + "' }\n";
+            var script = $@"
+$connectParams = @{{
+    ShowBanner = $false
+    SkipLoadingFormatData = $true
+    SkipLoadingCmdletHelp = $true
+    CommandName = @('Get-MailboxAutoReplyConfiguration','Set-MailboxAutoReplyConfiguration')
+    ErrorAction = 'Stop'
+    UserPrincipalName = '{escapedUpn}'
+}}
+{exoBasePathLine}Connect-ExchangeOnline @connectParams | Out-Null
+";
+            ps = PowerShell.Create();
+            ps.Runspace = rs;
+            ps.AddScript(script);
+            _eagerConnectPs = ps;
+
+            var invokeTask = Task.Factory.FromAsync(ps.BeginInvoke(), ps.EndInvoke);
+            var completed = await Task.WhenAny(invokeTask, Task.Delay(DefaultConnectTimeout)).ConfigureAwait(false);
+            if (completed != invokeTask)
+            {
+                try { ps.Stop(); } catch { }
+                throw new TimeoutException($"Connect ExchangeOnline (eager) timed out after {DefaultConnectTimeout.TotalSeconds:0} seconds.");
+            }
+            await invokeTask.ConfigureAwait(false);
+            if (ps.HadErrors && ps.Streams.Error.Count > 0)
+            {
+                var err = ps.Streams.Error[0];
+                throw new Exception(err.Exception?.Message ?? err.ToString());
+            }
+
+            _eagerConnectSucceeded = true;
+            SyncLogger.Write($"SignIn eager connect succeeded in {total.Elapsed.TotalMilliseconds:0} ms upn={upn}");
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"SignIn eager connect failed after {total.Elapsed.TotalMilliseconds:0} ms: {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            _eagerConnectPs = null;
+            try { ps?.Dispose(); } catch { }
+        }
+    }
+
+    private static string ComputeEagerExoModuleBasePath()
+    {
+        try
+        {
+            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var baseRoot = string.IsNullOrWhiteSpace(localAppData)
+                ? Path.GetTempPath()
+                : Path.Combine(localAppData, "OofManager");
+            var basePath = Path.Combine(baseRoot, "ExoModuleCache");
+            Directory.CreateDirectory(basePath);
+            return basePath;
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"SignIn eager EXO module base path failed: {ex.GetType().Name}: {ex.Message}");
+            return string.Empty;
         }
     }
 
@@ -166,6 +500,38 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             }
         }
         EnsureRunspace();
+
+        // Returning-user fast path: if Program.Main kicked off an eager Connect-ExchangeOnline
+        // for this UPN and it has finished (or finishes by now), skip the heavy connect
+        // script entirely — the EXO session is already live on the adopted runspace.
+        if (await TryAdoptEagerConnectAsync(upnHint).ConfigureAwait(false))
+        {
+            _userPrincipalName = upnHint!.Trim();
+            _userDisplayName = null;
+            _hasResolvedMailboxIdentity = false;
+            if (ApplyCachedMailboxIdentity(_userPrincipalName))
+            {
+                // Background refresh below will update the cache if EXO reports a change.
+            }
+            else
+            {
+                _targetMailboxIdentity = _userPrincipalName;
+            }
+            _isConnected = true;
+            SetSignInPhase(null);
+            StartMailboxIdentityResolution(upnHint, _hasResolvedMailboxIdentity ? CachedMailboxRefreshDelay : null);
+            SyncLogger.Write($"SignIn ConnectAsync adopted eager session in {total.Elapsed.TotalMilliseconds:0} ms user={_userPrincipalName} target={_targetMailboxIdentity}");
+            return;
+        }
+
+        // Allocate the hidden console MSAL/WAM requires in parallel with the module
+        // import — they have no dependency on each other, and conhost allocation can
+        // cost 100-600ms on first launch. Doing it here (not at app startup) still keeps
+        // the app launch flash-free; any brief conhost flicker is hidden under the WAM
+        // auth dialog that appears immediately after.
+        var consolePhase = Stopwatch.StartNew();
+        var consoleTask = Task.Run(() => Program.EnsureHiddenConsole());
+
         if (!_moduleImported)
         {
             var phase = Stopwatch.StartNew();
@@ -177,12 +543,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             LogSignInPhase("module import", phase.Elapsed);
         }
 
-        // Allocate the hidden console MSAL/WAM requires — only now, just before
-        // the WAM dialog pops. Doing it here (not at app startup) keeps the app
-        // launch flash-free; any brief conhost flicker is hidden under the WAM
-        // auth dialog that appears immediately after.
-        var consolePhase = Stopwatch.StartNew();
-        Program.EnsureHiddenConsole();
+        await consoleTask.ConfigureAwait(false);
         LogSignInPhase("hidden console", consolePhase.Elapsed);
 
         // -CommandName limits which Exchange cmdlets are proxied (huge speedup: from ~10s
@@ -192,9 +553,19 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         // cached refresh token for that account (no UI). If the cache is empty
         // or the token is no longer valid (password change, CA policy, 90-day
         // inactivity expiry), WAM falls back to its interactive sign-in dialog.
-        var upnAssignment = string.IsNullOrWhiteSpace(upnHint)
-            ? string.Empty
-            : $"$connectParams.UserPrincipalName = '{EscapePowerShellSingleQuotedString(upnHint!)}'\n";
+        var hasUpnHint = !string.IsNullOrWhiteSpace(upnHint);
+        var upnAssignment = hasUpnHint
+            ? $"$connectParams.UserPrincipalName = '{EscapePowerShellSingleQuotedString(upnHint!)}'\n"
+            : string.Empty;
+        // When the caller supplied a UPN hint, Connect-ExchangeOnline succeeded with
+        // that same UPN (otherwise it would have thrown), so we can trust it as the
+        // signed-in identity and skip the ~200-250ms Get-ConnectionInformation round-trip.
+        // Without a hint (rare — only when the cached UPN is missing AND the Windows
+        // account UPN fallback is unavailable), we still call Get-ConnectionInformation
+        // to learn whichever account the user picked in the WAM dialog.
+        var connectionUpnLookup = hasUpnHint
+            ? $"$connUpn = '{EscapePowerShellSingleQuotedString(upnHint!)}'"
+            : "$connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName";
         var exoModuleBasePath = EscapePowerShellSingleQuotedString(GetExoModuleBasePath());
         // Keep the login-critical script limited to authentication and connection
         // identity discovery. PrimarySmtpAddress resolution via Get-EXOMailbox can
@@ -216,7 +587,7 @@ $connectParams = @{{
 Connect-ExchangeOnline @connectParams | Out-Null
 $connectEnd = Get-Date
 $connectionInfoStart = Get-Date
-$connUpn = (Get-ConnectionInformation | Select-Object -First 1).UserPrincipalName
+{connectionUpnLookup}
 $connectionInfoEnd = Get-Date
 [PSCustomObject]@{{
     UPN = $connUpn
@@ -225,6 +596,7 @@ $connectionInfoEnd = Get-Date
 }} | ConvertTo-Json -Compress
 ";
 
+        SetSignInPhase("Connecting to Microsoft 365\u2026");
         var connectPhase = Stopwatch.StartNew();
         var output = await InvokeAsync(script, connectTimeout, "Connect to Exchange Online").ConfigureAwait(false);
         LogSignInPhase("Connect-ExchangeOnline script", connectPhase.Elapsed);
@@ -307,6 +679,7 @@ $connectionInfoEnd = Get-Date
         if (!string.IsNullOrWhiteSpace(displayName))
             _userDisplayName = displayName!.Trim();
         _isConnected = true;
+        SetSignInPhase(null);
         StartMailboxIdentityResolution(upnHint, _hasResolvedMailboxIdentity ? CachedMailboxRefreshDelay : null);
         SyncLogger.Write($"SignIn ConnectAsync succeeded in {total.Elapsed.TotalMilliseconds:0} ms user={_userPrincipalName} target={_targetMailboxIdentity}");
     }
@@ -466,6 +839,7 @@ $mailboxEnd = Get-Date
             _mailboxIdentityTask = null;
             _moduleImported = false;
             _prewarmTask = null;
+            _currentSignInPhase = null;
             CloseRunspace();
         }
     }
@@ -737,31 +1111,96 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
     {
         if (_runspace != null && _runspace.RunspaceStateInfo.State == RunspaceState.Opened) return;
 
-        var combined = GetPreferredPsModulePath();
-        if (!string.Equals(Environment.GetEnvironmentVariable("PSModulePath"), combined, StringComparison.OrdinalIgnoreCase))
+        // Parallel-preload the EXO module's heaviest DLLs into the CLR before the
+        // subsequent pipeline-based Import-Module runs, so PowerShell's module loader
+        // skips the disk reads. Kept outside the lock so multiple callers don't serialize
+        // here; the helper itself is idempotent and process-wide.
+        var psm1Path = GetExchangeModuleManifestPath();
+        if (!string.IsNullOrEmpty(psm1Path))
         {
-            Environment.SetEnvironmentVariable("PSModulePath", combined);
+            // psm1Path lives directly inside the netFramework\ subdirectory, so pass
+            // its parent folder to the assembly preloader as-is.
+            var netFxDir = Path.GetDirectoryName(psm1Path);
+            if (!string.IsNullOrEmpty(netFxDir))
+            {
+                PreloadExoAssemblies(netFxDir!);
+            }
         }
 
-        var iss = InitialSessionState.CreateDefault();
-        // Disable the authorization manager so script files (e.g. inside the bundled
-        // ExchangeOnlineManagement module) load regardless of the system execution policy.
-        iss.AuthorizationManager = null;
-        iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+        // Double-checked lock: the constructor kicks off an eager EnsureRunspace on a
+        // background thread which can race with the first ConnectAsync, so the second
+        // caller must not create a duplicate runspace.
+        lock (_runspaceLock)
+        {
+            if (_runspace != null && _runspace.RunspaceStateInfo.State == RunspaceState.Opened) return;
 
-        var rs = RunspaceFactory.CreateRunspace(iss);
-        rs.Open();
-        _runspace = rs;
+            var combined = GetPreferredPsModulePath();
+            if (!string.Equals(Environment.GetEnvironmentVariable("PSModulePath"), combined, StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.SetEnvironmentVariable("PSModulePath", combined);
+            }
+
+            var iss = InitialSessionState.CreateDefault();
+            // Disable the authorization manager so script files (e.g. inside the bundled
+            // ExchangeOnlineManagement module) load regardless of the system execution policy.
+            iss.AuthorizationManager = null;
+            iss.ThreadOptions = PSThreadOptions.UseCurrentThread;
+
+            var rs = RunspaceFactory.CreateRunspace(iss);
+            rs.Open();
+            _runspace = rs;
+        }
+    }
+
+    private static void PreloadExoAssemblies(string netFrameworkDir)
+    {
+        if (_exoAssembliesPreloaded) return;
+        lock (_exoAssembliesPreloadLock)
+        {
+            if (_exoAssembliesPreloaded) return;
+            if (!Directory.Exists(netFrameworkDir))
+            {
+                _exoAssembliesPreloaded = true;
+                return;
+            }
+            // The eight biggest assemblies the EXO module's .psm1 ends up loading via
+            // Add-Type / LoadFile during Import-Module. Pre-loading them in parallel via
+            // Assembly.LoadFrom into the default AppDomain lets the subsequent module
+            // import skip the disk reads. Order doesn't matter — the CLR de-dupes by
+            // assembly identity.
+            var heavyDlls = new[]
+            {
+                "Microsoft.Exchange.Management.AdminApiProvider.dll",
+                "Microsoft.OData.Core.dll",
+                "Microsoft.Identity.Client.dll",
+                "Microsoft.OData.Edm.dll",
+                "Microsoft.OData.Client.dll",
+                "Newtonsoft.Json.dll",
+                "System.Text.Json.dll",
+                "Microsoft.IdentityModel.Tokens.dll",
+            };
+            var sw = Stopwatch.StartNew();
+            Parallel.ForEach(heavyDlls, dll =>
+            {
+                var path = Path.Combine(netFrameworkDir, dll);
+                if (!File.Exists(path)) return;
+                try { Assembly.LoadFrom(path); }
+                catch (Exception ex) { SyncLogger.Write($"SignIn EXO assembly preload skipped {dll}: {ex.GetType().Name}"); }
+            });
+            _exoAssembliesPreloaded = true;
+            SyncLogger.Write($"SignIn EXO assembly preload took {sw.ElapsedMilliseconds} ms");
+        }
     }
 
     private string GetPreferredPsModulePath()
-    {
-        if (_preferredPsModulePath != null) return _preferredPsModulePath;
+        => _preferredPsModulePath ??= ComputePreferredPsModulePathStatic();
 
-        // Prefer the ExchangeOnlineManagement module bundled in the app's Modules\
-        // folder. That way the app works offline and doesn't depend on the user's
-        // PSGallery install. We also include the user's standard module paths as
-        // fallbacks so a user-installed copy still works.
+    // Prefer the ExchangeOnlineManagement module bundled in the app's Modules\
+    // folder. That way the app works offline and doesn't depend on the user's
+    // PSGallery install. User module paths stay as fallbacks for installer-less
+    // dev runs.
+    private static string ComputePreferredPsModulePathStatic()
+    {
         var bundledModules = Path.Combine(AppContext.BaseDirectory, "Modules");
         var userDocs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
@@ -775,36 +1214,54 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         };
         var existingPaths = (Environment.GetEnvironmentVariable("PSModulePath") ?? string.Empty)
             .Split(new[] { Path.PathSeparator }, StringSplitOptions.RemoveEmptyEntries);
-        _preferredPsModulePath = string.Join(
+        return string.Join(
             Path.PathSeparator.ToString(),
             modulePaths.Concat(existingPaths)
                 .Select(path => path.Trim())
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Distinct(StringComparer.OrdinalIgnoreCase));
-        return _preferredPsModulePath;
     }
 
+    private string? GetExchangeModuleManifestPath() => FindExchangeModulePsm1Static();
+
     private string GetExchangeModuleImportScript()
+        => _exchangeModuleImportScript ??= BuildExchangeModuleImportScript(GetExchangeModuleManifestPath());
+
+    // Locate the bundled EXO module .psm1 inside the netFramework\ subdirectory and
+    // import that file directly. Going through the top-level .psd1 forces
+    // PowerShell to evaluate $PSEdition routing and resolve the manifest's
+    // RequiredModules chain (PackageManagement + PowerShellGet probes), neither of
+    // which we need — we already know we're on Windows PowerShell 5.1 and the EXO
+    // .psm1 imports its binary sub-modules itself.
+    private static string? FindExchangeModulePsm1Static()
     {
-        if (_exchangeModuleImportScript != null) return _exchangeModuleImportScript;
+        if (_cachedEagerPsm1Path != null)
+            return _cachedEagerPsm1Path.Length == 0 ? null : _cachedEagerPsm1Path;
 
         var moduleRoot = Path.Combine(AppContext.BaseDirectory, "Modules", "ExchangeOnlineManagement");
-        var modulePath = Directory.Exists(moduleRoot)
-            ? Directory.GetFiles(moduleRoot, "ExchangeOnlineManagement.psd1", SearchOption.AllDirectories)
-                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault()
-            : null;
-        string moduleTarget = !string.IsNullOrWhiteSpace(modulePath) && File.Exists(modulePath)
-            ? modulePath!
-            : "ExchangeOnlineManagement";
-        var escapedModuleTarget = EscapePowerShellSingleQuotedString(moduleTarget);
-        _exchangeModuleImportScript =
-            $"Import-Module '{escapedModuleTarget}' -DisableNameChecking " +
+        string? hit = null;
+        if (Directory.Exists(moduleRoot))
+        {
+            var netFxSegment = Path.DirectorySeparatorChar + "netFramework" + Path.DirectorySeparatorChar;
+            hit = Directory.GetFiles(moduleRoot, "ExchangeOnlineManagement.psm1", SearchOption.AllDirectories)
+                .Where(p => p.IndexOf(netFxSegment, StringComparison.OrdinalIgnoreCase) >= 0 && File.Exists(p))
+                .OrderByDescending(p => p, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+        }
+        _cachedEagerPsm1Path = hit ?? string.Empty;
+        SyncLogger.Write($"SignIn Exchange module psm1: {(_cachedEagerPsm1Path.Length == 0 ? "<bundled module not found>" : _cachedEagerPsm1Path)}");
+        return _cachedEagerPsm1Path.Length == 0 ? null : _cachedEagerPsm1Path;
+    }
+
+    private static string BuildExchangeModuleImportScript(string? moduleTarget)
+    {
+        var target = string.IsNullOrEmpty(moduleTarget) ? "ExchangeOnlineManagement" : moduleTarget!;
+        var escaped = target.Replace("'", "''");
+        return
+            $"Import-Module '{escaped}' -DisableNameChecking " +
             "-Function Connect-ExchangeOnline,Disconnect-ExchangeOnline " +
             "-Cmdlet Get-ConnectionInformation,Get-EXOMailbox " +
             "-ErrorAction Stop";
-        SyncLogger.Write($"SignIn Exchange module import target: {moduleTarget}");
-        return _exchangeModuleImportScript;
     }
 
     private string GetExoModuleBasePath()
