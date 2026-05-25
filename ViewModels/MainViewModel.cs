@@ -1357,9 +1357,8 @@ public partial class MainViewModel : ObservableObject
                 if (result.TriggerHour is not int h || result.TriggerMinute is not int m) return "(not set)";
                 try
                 {
-                    var nowUtc = DateTime.UtcNow.Date.AddHours(h).AddMinutes(m);
-                    var local = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, TimeZoneInfo.Local);
-                    return $"{local:HH:mm} {TimeZoneInfo.Local.Id} (cloud raw: {h:D2}:{m:D2} {result.TriggerTimeZone ?? "UTC"})";
+                    var local = CloudTriggerToLocal(h, m, result.TriggerTimeZone);
+                    return $"{local:hh\\:mm} (local) — cloud raw: {h:D2}:{m:D2} {result.TriggerTimeZone ?? "UTC"}";
                 }
                 catch
                 {
@@ -1381,9 +1380,8 @@ public partial class MainViewModel : ObservableObject
             {
                 try
                 {
-                    var nowUtc = DateTime.UtcNow.Date.AddHours(ch).AddMinutes(cm);
-                    var local = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, TimeZoneInfo.Local).TimeOfDay;
-                    triggerMatches = local.Hours == let.Hours && local.Minutes == let.Minutes;
+                    var cloudLocal = CloudTriggerToLocal(ch, cm, result.TriggerTimeZone);
+                    triggerMatches = cloudLocal.Hours == let.Hours && cloudLocal.Minutes == let.Minutes;
                 }
                 catch { /* leave false */ }
             }
@@ -1416,6 +1414,35 @@ public partial class MainViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Converts the cloud Recurrence trigger's raw hour/minute (which is
+    /// expressed in <paramref name="triggerTimeZone"/>, not UTC) into local
+    /// time-of-day for comparison against the local schedule. The generator
+    /// stamps the trigger timeZone as the user's local <see cref="TimeZoneInfo.Local"/>
+    /// id at import time, so most of the time triggerTimeZone == local and
+    /// the conversion is a no-op; the explicit conversion still matters for
+    /// the cross-machine / cross-tz case (user imports from one PC and
+    /// later checks from another in a different zone).
+    /// </summary>
+    private static TimeSpan CloudTriggerToLocal(int hour, int minute, string? triggerTimeZone)
+    {
+        var srcTz = TimeZoneInfo.Local;
+        if (!string.IsNullOrWhiteSpace(triggerTimeZone))
+        {
+            try { srcTz = TimeZoneInfo.FindSystemTimeZoneById(triggerTimeZone!); }
+            catch
+            {
+                if (string.Equals(triggerTimeZone, "UTC", StringComparison.OrdinalIgnoreCase))
+                    srcTz = TimeZoneInfo.Utc;
+            }
+        }
+        if (srcTz.Id == TimeZoneInfo.Local.Id)
+            return new TimeSpan(hour, minute, 0);
+        var unspec = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, DateTime.UtcNow.Day, hour, minute, 0, DateTimeKind.Unspecified);
+        var asLocal = TimeZoneInfo.ConvertTime(unspec, srcTz, TimeZoneInfo.Local);
+        return asLocal.TimeOfDay;
     }
 
     private async Task RefreshCloudScheduleFlowStatusAsync()
