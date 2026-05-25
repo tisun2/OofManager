@@ -1369,7 +1369,7 @@ try {
             }
             Trace ""definition source: $defSource""
             if ($definition -ne $null) {
-                Emit 'Success' (""Cloud flow definition retrieved from "" + $defSource + "".") @($f.DisplayName) $null (Get-FlowReferences @($f)) $definition
+                Emit 'Success' (""Cloud flow definition retrieved from "" + $defSource) @($f.DisplayName) $null (Get-FlowReferences @($f)) $definition
             }
             Emit 'OtherError' 'Cloud flow was found, but neither definition nor definitionSummary could be read.' @($f.DisplayName) 'Unknown'
         }
