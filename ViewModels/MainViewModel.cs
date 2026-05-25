@@ -102,7 +102,11 @@ public partial class MainViewModel : ObservableObject
         (string.Equals(CloudScheduleFlowStateText, "On", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(CloudScheduleFlowStateText, "Off", StringComparison.OrdinalIgnoreCase));
 
-    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanToggleCloudScheduleFlow));
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanToggleCloudScheduleFlow));
+        OnPropertyChanged(nameof(CanToggleVacationFlows));
+    }
     // Manual-vacation cloud flows banner — sibling to the Cloud Schedule
     // banner but reports the combined state of the two flows (Vacation Start
     // + Vacation End). Combined state values: "On" (both On), "Off" (both
@@ -110,6 +114,39 @@ public partial class MainViewModel : ObservableObject
     // "Partial" (only one of the two found), "Checking", "Unknown".
     [ObservableProperty] private string _vacationFlowsStateText = "Not checked";
     [ObservableProperty] private string _vacationFlowsBannerDetail = "Use the buttons to check or change the cloud vacation flows.";
+
+    /// <summary>
+    /// Two-way bound to the Manual-mode ToggleSwitch that replaced the
+    /// separate Turn off / Turn on vacation flows buttons. Mirrors
+    /// <see cref="IsCloudScheduleFlowOn"/> — getter reflects current state,
+    /// setter triggers the matching Enable/Disable command. The switch is
+    /// disabled in XAML when state is Mixed/Partial/Not found/Unknown
+    /// since "On" wouldn't be well-defined there.
+    /// </summary>
+    public bool IsVacationFlowsOn
+    {
+        get => string.Equals(VacationFlowsStateText, "On", StringComparison.OrdinalIgnoreCase);
+        set
+        {
+            var currentlyOn = IsVacationFlowsOn;
+            if (value == currentlyOn) return;
+            if (value)
+                _ = EnableVacationFlowsAsync();
+            else
+                _ = DisableVacationFlowsAsync();
+        }
+    }
+
+    partial void OnVacationFlowsStateTextChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsVacationFlowsOn));
+        OnPropertyChanged(nameof(CanToggleVacationFlows));
+    }
+
+    public bool CanToggleVacationFlows =>
+        !IsBusy &&
+        (string.Equals(VacationFlowsStateText, "On", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(VacationFlowsStateText, "Off", StringComparison.OrdinalIgnoreCase));
     // Persistent top status bar: always describes the real/current OOF state
     // plus the next known OOF window, never transient button progress.
     [ObservableProperty] private string _oofStatusBarMessage = "Loading OOF status...";
