@@ -39,6 +39,7 @@ public partial class MainViewModel : ObservableObject
     private DateTimeOffset? _confirmedOofEndTime;
     private bool _isCloudScheduleFlowStatusChecking;
     private bool _isCloudSchedulePackageRunning;
+    private bool _isVacationFlowsStatusChecking;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -54,6 +55,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _cloudScheduleFlowBannerText = "Power Automate flow: Not checked. Use the buttons to check or change the cloud schedule flow.";
     [ObservableProperty] private string _cloudScheduleFlowStateText = "Not checked";
     [ObservableProperty] private string _cloudScheduleFlowBannerDetail = "Use the buttons to check or change the cloud schedule flow.";
+    // Manual-vacation cloud flows banner — sibling to the Cloud Schedule
+    // banner but reports the combined state of the two flows (Vacation Start
+    // + Vacation End). Combined state values: "On" (both On), "Off" (both
+    // Off), "Mixed" (one On one Off), "Not found" (neither imported yet),
+    // "Partial" (only one of the two found), "Checking", "Unknown".
+    [ObservableProperty] private string _vacationFlowsStateText = "Not checked";
+    [ObservableProperty] private string _vacationFlowsBannerDetail = "Use the buttons to check or change the cloud vacation flows.";
     // Persistent top status bar: always describes the real/current OOF state
     // plus the next known OOF window, never transient button progress.
     [ObservableProperty] private string _oofStatusBarMessage = "Loading OOF status...";
@@ -599,6 +607,7 @@ public partial class MainViewModel : ObservableObject
             if (_hasLoadedOnce)
             {
                 _ = RefreshCloudScheduleFlowStatusAsync();
+                _ = RefreshVacationFlowsStatusAsync();
             }
         }
     }
@@ -1353,6 +1362,145 @@ public partial class MainViewModel : ObservableObject
         return detail.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
             ? detail.Substring(prefix.Length).TrimStart()
             : detail;
+    }
+
+    /// <summary>
+    /// Manual-mode counterpart to <see cref="DisableCloudScheduleFlowAsync"/>:
+    /// turns OFF both Vacation Start and Vacation End flows in one click.
+    /// Used when the user wants to cancel a planned cloud vacation without
+    /// deleting the imported solution (so the flows are dormant but can be
+    /// re-enabled later via the Turn-on button).
+    /// </summary>
+    [RelayCommand]
+    private Task DisableVacationFlowsAsync() => RunVacationFlowsToggleAsync(disable: true);
+
+    /// <summary>
+    /// Re-enables both Vacation Start and Vacation End flows. Used after a
+    /// previous Turn-off, or to recover from a Power Automate import that
+    /// left the flows Off because a connection reference was unbound.
+    /// </summary>
+    [RelayCommand]
+    private Task EnableVacationFlowsAsync() => RunVacationFlowsToggleAsync(disable: false);
+
+    private async Task RefreshVacationFlowsStatusAsync()
+    {
+        if (_isVacationFlowsStatusChecking) return;
+
+        _isVacationFlowsStatusChecking = true;
+        SetVacationFlowsBannerProgress("Checking", "Checking vacation flows...");
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
+
+            var startStatus = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, identity.StartFlowDisplayName);
+            var endStatus   = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, identity.EndFlowDisplayName);
+            SetVacationFlowsBanner(startStatus.State, endStatus.State);
+        }
+        catch
+        {
+            SetVacationFlowsBanner(PowerAutomateFlowState.Unknown, PowerAutomateFlowState.Unknown);
+        }
+        finally
+        {
+            _isVacationFlowsStatusChecking = false;
+        }
+    }
+
+    private void SetVacationFlowsBanner(PowerAutomateFlowState startState, PowerAutomateFlowState endState)
+    {
+        // Combine the two states into one user-facing label. Distinguishing
+        // Mixed vs Partial helps the user understand whether the next step
+        // is "re-enable one flow" vs "(re-)import the vacation solution".
+        string state, detail;
+        if (startState == PowerAutomateFlowState.NotFound && endState == PowerAutomateFlowState.NotFound)
+        {
+            state = "Not found";
+            detail = "No cloud vacation planned. Pick dates above and click 🏖️ Set up vacation in cloud.";
+        }
+        else if (startState == PowerAutomateFlowState.NotFound || endState == PowerAutomateFlowState.NotFound)
+        {
+            state = "Partial";
+            detail = "Only one of the two vacation flows was found. Re-run 🏖️ Set up vacation in cloud to repair.";
+        }
+        else if (startState == PowerAutomateFlowState.On && endState == PowerAutomateFlowState.On)
+        {
+            state = "On";
+            detail = "Both vacation flows are armed. They'll fire at your start/end times.";
+        }
+        else if (startState == PowerAutomateFlowState.Off && endState == PowerAutomateFlowState.Off)
+        {
+            state = "Off";
+            detail = "Both vacation flows exist but are off. Click Turn on to arm them.";
+        }
+        else if (startState == PowerAutomateFlowState.On || endState == PowerAutomateFlowState.On)
+        {
+            state = "Mixed";
+            detail = $"Start: {startState}, End: {endState}. Click Turn on to arm both.";
+        }
+        else
+        {
+            state = "Unknown";
+            detail = "Sign in to Power Automate to check, or use the buttons.";
+        }
+
+        VacationFlowsStateText = state;
+        VacationFlowsBannerDetail = detail;
+    }
+
+    private void SetVacationFlowsBannerProgress(string stateText, string detailText)
+    {
+        VacationFlowsStateText = stateText;
+        VacationFlowsBannerDetail = detailText;
+    }
+
+    private async Task RunVacationFlowsToggleAsync(bool disable)
+    {
+        if (IsBusy) return;
+        var verbLabel = disable ? "Turning off" : "Turning on";
+        IsBusy = true;
+        StatusMessage = $"{verbLabel} vacation flows...";
+        SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{verbLabel} both vacation flows...");
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
+
+            async Task<PowerAutomateOutcome> ToggleOneAsync(string flowDisplayName, string label)
+            {
+                SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{verbLabel} {label}...");
+                var progress = new Progress<string>(m =>
+                {
+                    if (!string.IsNullOrWhiteSpace(m))
+                        StatusMessage = $"{label}: {m}";
+                });
+                var result = disable
+                    ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress)
+                    : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress);
+                return result.Outcome;
+            }
+
+            var startOutcome = await ToggleOneAsync(identity.StartFlowDisplayName, "Vacation Start");
+            var endOutcome = await ToggleOneAsync(identity.EndFlowDisplayName, "Vacation End");
+
+            await RefreshVacationFlowsStatusAsync();
+
+            var bothOk = startOutcome == PowerAutomateOutcome.Success && endOutcome == PowerAutomateOutcome.Success;
+            StatusMessage = bothOk
+                ? $"✅ Vacation flows {(disable ? "turned off" : "turned on")}."
+                : $"⚠️ Vacation flows toggle finished with issues. Start: {startOutcome}, End: {endOutcome}.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Vacation flows toggle failed: {ex.Message}";
+            SetVacationFlowsBanner(PowerAutomateFlowState.Unknown, PowerAutomateFlowState.Unknown);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private async Task RunCloudScheduleFlowToggleAsync(bool disable)
