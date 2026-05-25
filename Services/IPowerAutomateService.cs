@@ -118,11 +118,54 @@ public sealed class CloudScheduleImportResult
     public string? WorkflowId { get; }
 }
 
+/// <summary>
+/// Snapshot of what's actually deployed in the cloud, decoded from the
+/// flow's Logic Apps definition. Only fields we can reliably extract from
+/// the generated JSON are populated; per-day work hours are encoded inside
+/// nested-if expressions that aren't reverse-parsed in v1.
+/// </summary>
+public sealed class CloudScheduleDefinitionResult
+{
+    public CloudScheduleDefinitionResult(
+        PowerAutomateOutcome outcome,
+        string message,
+        string? flowDisplayName,
+        IReadOnlyList<DayOfWeek>? workDays,
+        int? triggerHour,
+        int? triggerMinute,
+        string? triggerTimeZone)
+    {
+        Outcome = outcome;
+        Message = message;
+        FlowDisplayName = flowDisplayName;
+        WorkDays = workDays ?? Array.Empty<DayOfWeek>();
+        TriggerHour = triggerHour;
+        TriggerMinute = triggerMinute;
+        TriggerTimeZone = triggerTimeZone;
+    }
+
+    public PowerAutomateOutcome Outcome { get; }
+    public string Message { get; }
+    public string? FlowDisplayName { get; }
+    public IReadOnlyList<DayOfWeek> WorkDays { get; }
+    public int? TriggerHour { get; }
+    public int? TriggerMinute { get; }
+    public string? TriggerTimeZone { get; }
+}
+
 public interface IPowerAutomateService
 {
     Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
     Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
     Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetches the deployed cloud flow's Logic Apps definition and decodes
+    /// the workdays + trigger time. Powers the "Compare with cloud" feature
+    /// in the Weekly mode panel — lets the user see at a glance whether the
+    /// local UI matches what's actually running in M365.
+    /// </summary>
+    Task<CloudScheduleDefinitionResult> GetCloudScheduleDefinitionAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>
     /// Imports the prebuilt OofManager Cloud Schedule solution zip into the

@@ -1304,6 +1304,120 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
 
+    /// <summary>
+    /// Compares the locally-configured Weekly schedule (workdays + earliest
+    /// end-of-day time used as the cloud Recurrence trigger) against what's
+    /// actually deployed in the user's Cloud Schedule flow. Reports the diff
+    /// in a dialog so the user can spot drift between local and cloud (e.g.
+    /// after editing on a different machine, or after fiddling in the Power
+    /// Automate designer). Per-day work hours aren't compared in v1 — they're
+    /// encoded inside Logic Apps nested-if expressions and need either a
+    /// reverse parser or a sidecar metadata field on the generator side.
+    /// </summary>
+    [RelayCommand]
+    private async Task CompareCloudScheduleAsync()
+    {
+        if (IsBusy) return;
+        IsBusy = true;
+        StatusMessage = "☁️ Comparing local schedule against cloud flow…";
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var expectedFlowDisplayName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
+            var progress = new Progress<string>(m => { if (!string.IsNullOrWhiteSpace(m)) StatusMessage = $"☁️ {m}"; });
+
+            var result = await _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, expectedFlowDisplayName, progress);
+
+            if (result.Outcome == PowerAutomateOutcome.NoFlowFound)
+            {
+                StatusMessage = "☁️ No cloud flow found — import one first.";
+                await _dialog.AlertAsync("Compare with cloud",
+                    "No OofManager Cloud Schedule flow was found in your Power Platform environment. Click 'Generate & Import Solution' first.");
+                return;
+            }
+            if (result.Outcome != PowerAutomateOutcome.Success)
+            {
+                StatusMessage = $"☁️ Compare failed: {result.Message}";
+                await _dialog.AlertAsync("Compare with cloud", $"Couldn't read the cloud flow definition.\n\n{result.Message}");
+                return;
+            }
+
+            var weekDays = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
+            var localWorkdays = weekDays.Where(IsWorkday).ToList();
+            TimeSpan? localTriggerEnd = null;
+            foreach (var d in localWorkdays)
+            {
+                var e = GetEndTimeForDay(d);
+                if (localTriggerEnd == null || e < localTriggerEnd.Value) localTriggerEnd = e;
+            }
+
+            string CloudTriggerLocalString()
+            {
+                if (result.TriggerHour is not int h || result.TriggerMinute is not int m) return "(not set)";
+                try
+                {
+                    var nowUtc = DateTime.UtcNow.Date.AddHours(h).AddMinutes(m);
+                    var local = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, TimeZoneInfo.Local);
+                    return $"{local:HH:mm} {TimeZoneInfo.Local.Id} (cloud raw: {h:D2}:{m:D2} {result.TriggerTimeZone ?? "UTC"})";
+                }
+                catch
+                {
+                    return $"{h:D2}:{m:D2} {result.TriggerTimeZone ?? "UTC"}";
+                }
+            }
+
+            string FmtDays(IEnumerable<DayOfWeek> days) =>
+                string.Join(", ", weekDays.Where(days.Contains).Select(d => d.ToString().Substring(0, 3)));
+
+            var localDaysStr = localWorkdays.Count == 0 ? "(none)" : FmtDays(localWorkdays);
+            var cloudDaysStr = result.WorkDays.Count == 0 ? "(none)" : FmtDays(result.WorkDays);
+            var localTriggerStr = localTriggerEnd.HasValue ? localTriggerEnd.Value.ToString(@"hh\:mm") + " (local)" : "(no workdays)";
+
+            var workdaysMatch = localWorkdays.OrderBy(d => d).SequenceEqual(result.WorkDays.OrderBy(d => d));
+
+            bool triggerMatches = false;
+            if (result.TriggerHour is int ch && result.TriggerMinute is int cm && localTriggerEnd is TimeSpan let)
+            {
+                try
+                {
+                    var nowUtc = DateTime.UtcNow.Date.AddHours(ch).AddMinutes(cm);
+                    var local = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, TimeZoneInfo.Local).TimeOfDay;
+                    triggerMatches = local.Hours == let.Hours && local.Minutes == let.Minutes;
+                }
+                catch { /* leave false */ }
+            }
+
+            var allMatch = workdaysMatch && triggerMatches;
+            var headline = allMatch ? "✅ Local and cloud match." : "⚠️ Local and cloud differ.";
+
+            var body = headline + "\n\n" +
+                       $"Flow: {result.FlowDisplayName ?? expectedFlowDisplayName}\n\n" +
+                       $"  Workdays:\n" +
+                       $"    Local: {localDaysStr}\n" +
+                       $"    Cloud: {cloudDaysStr}   {(workdaysMatch ? "✓" : "✗")}\n\n" +
+                       $"  Earliest workday end (= cloud trigger time):\n" +
+                       $"    Local: {localTriggerStr}\n" +
+                       $"    Cloud: {CloudTriggerLocalString()}   {(triggerMatches ? "✓" : "✗")}\n\n" +
+                       "Per-day hours aren't compared in v1 (encoded inside Logic Apps expressions).\n\n" +
+                       (allMatch
+                          ? "Everything we can check looks consistent."
+                          : "If local is the authoritative version, click 'Generate & Import Solution' to push it to the cloud.");
+
+            StatusMessage = allMatch ? "☁️ Local and cloud match." : "☁️ Local and cloud differ — see dialog.";
+            await _dialog.AlertAsync("Compare with cloud", body);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"☁️ Compare failed: {ex.Message}";
+            await _dialog.AlertAsync("Compare with cloud", ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private async Task RefreshCloudScheduleFlowStatusAsync()
     {
         if (_isCloudScheduleFlowStatusChecking) return;

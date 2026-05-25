@@ -47,6 +47,102 @@ public sealed class PowerAutomateService : IPowerAutomateService
     public Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
         => RunOperationAsync("Enable-Flow", upnHint, displayNameHint, expectedFlowDisplayName, progress, ct);
 
+    public async Task<CloudScheduleDefinitionResult> GetCloudScheduleDefinitionAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var child = await RunFlowScriptAsync("Get-Definition", upnHint, displayNameHint, expectedFlowDisplayName, ct, progress).ConfigureAwait(false);
+        return ParseDefinitionResult(child.Json, child.ExitCode, expectedFlowDisplayName);
+    }
+
+    private static CloudScheduleDefinitionResult ParseDefinitionResult(string? resultJson, int exitCode, string expectedFlowDisplayName)
+    {
+        if (exitCode == -1 && resultJson is null)
+        {
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.SignInFailed,
+                "Power Automate sign-in did not complete within 5 minutes.", expectedFlowDisplayName, null, null, null, null);
+        }
+        if (string.IsNullOrWhiteSpace(resultJson))
+        {
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.OtherError,
+                $"PowerShell child exited with code {exitCode} but produced no result file.", expectedFlowDisplayName, null, null, null, null);
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(resultJson!);
+            var root = doc.RootElement;
+            var outcomeStr = root.TryGetProperty("Outcome", out var oEl) ? oEl.GetString() : null;
+            var message = root.TryGetProperty("Message", out var mEl) ? mEl.GetString() ?? "" : "";
+            var outcome = outcomeStr switch
+            {
+                "Success" => PowerAutomateOutcome.Success,
+                "NoFlowFound" => PowerAutomateOutcome.NoFlowFound,
+                "SignInFailed" => PowerAutomateOutcome.SignInFailed,
+                "SolutionAwareBlocked" => PowerAutomateOutcome.SolutionAwareBlocked,
+                _ => PowerAutomateOutcome.OtherError,
+            };
+
+            string? flowDisplayName = null;
+            if (root.TryGetProperty("Flows", out var fEl) && fEl.ValueKind == JsonValueKind.Array && fEl.GetArrayLength() > 0)
+                flowDisplayName = fEl[0].GetString();
+
+            if (outcome != PowerAutomateOutcome.Success)
+                return new CloudScheduleDefinitionResult(outcome, message, flowDisplayName, null, null, null, null);
+
+            if (!root.TryGetProperty("Definition", out var defEl) || defEl.ValueKind != JsonValueKind.Object)
+                return new CloudScheduleDefinitionResult(PowerAutomateOutcome.OtherError,
+                    "Cloud flow definition was empty.", flowDisplayName, null, null, null, null);
+
+            // Walk triggers.Recurrence.recurrence.schedule.{weekDays,hours,minutes}
+            // — the only fields we extract in v1. Per-day work hours are
+            // encoded in nested-if expressions inside actions and would
+            // require either reverse-parsing or a sidecar metadata field
+            // (planned for v2).
+            var workDays = new List<DayOfWeek>();
+            int? triggerHour = null, triggerMinute = null;
+            string? triggerTz = null;
+            if (defEl.TryGetProperty("triggers", out var trigsEl) && trigsEl.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var trigProp in trigsEl.EnumerateObject())
+                {
+                    if (!trigProp.Value.TryGetProperty("recurrence", out var recEl) || recEl.ValueKind != JsonValueKind.Object)
+                        continue;
+                    if (recEl.TryGetProperty("timeZone", out var tzEl) && tzEl.ValueKind == JsonValueKind.String)
+                        triggerTz = tzEl.GetString();
+                    if (recEl.TryGetProperty("schedule", out var schedEl) && schedEl.ValueKind == JsonValueKind.Object)
+                    {
+                        if (schedEl.TryGetProperty("weekDays", out var wdEl) && wdEl.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var d in wdEl.EnumerateArray())
+                            {
+                                if (d.ValueKind == JsonValueKind.String && Enum.TryParse<DayOfWeek>(d.GetString(), true, out var dow))
+                                    workDays.Add(dow);
+                            }
+                        }
+                        if (schedEl.TryGetProperty("hours", out var hEl) && hEl.ValueKind == JsonValueKind.Array && hEl.GetArrayLength() > 0)
+                        {
+                            var v = hEl[0];
+                            triggerHour = v.ValueKind == JsonValueKind.String ? (int.TryParse(v.GetString(), out var hi) ? hi : (int?)null)
+                                       : v.ValueKind == JsonValueKind.Number ? v.GetInt32() : (int?)null;
+                        }
+                        if (schedEl.TryGetProperty("minutes", out var mnEl) && mnEl.ValueKind == JsonValueKind.Array && mnEl.GetArrayLength() > 0)
+                        {
+                            var v = mnEl[0];
+                            triggerMinute = v.ValueKind == JsonValueKind.Number ? v.GetInt32()
+                                          : v.ValueKind == JsonValueKind.String ? (int.TryParse(v.GetString(), out var mi) ? mi : (int?)null)
+                                          : (int?)null;
+                        }
+                    }
+                    break; // only first recurrence trigger
+                }
+            }
+
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz);
+        }
+        catch (Exception ex)
+        {
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.OtherError,
+                $"Failed to parse PowerShell definition result: {ex.Message}", expectedFlowDisplayName, null, null, null, null);
+        }
+    }
     public async Task<CloudScheduleImportResult> ImportCloudScheduleSolutionAsync(
         string solutionZipPath,
         string solutionUniqueName,
@@ -734,15 +830,16 @@ function Get-FlowReferences($flows) {
     return @($refs)
 }
 
-function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @()) {
+function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @(), $definition = $null) {
     $obj = [ordered]@{
         Outcome = $outcome
         Message = $message
         Flows   = @($flows)
         State   = $state
         FlowReferences = @($flowReferences)
+        Definition = $definition
     }
-    $json = ($obj | ConvertTo-Json -Compress)
+    $json = ($obj | ConvertTo-Json -Compress -Depth 25)
     if ($resultFile) {
         [System.IO.File]::WriteAllText($resultFile, $json, [System.Text.UTF8Encoding]::new($false))
     }
@@ -1237,6 +1334,26 @@ try {
         }
 
         Emit 'OtherError' 'Power Automate flow was found, but its current state could not be read.' @($matched | ForEach-Object { $_.DisplayName }) 'Unknown'
+    }
+
+    if ($verb -eq 'Get-Definition') {
+        foreach ($f in $matched) {
+            Report ""Found cloud flow '$($f.DisplayName)'. Reading definition...""
+            $definition = $null
+            try {
+                if ($f.PSObject.Properties['Internal'] -and $f.Internal -and $f.Internal.properties) {
+                    $definition = $f.Internal.properties.definition
+                }
+            } catch {
+                Trace ""definition extract failed: $($_.Exception.Message)""
+            }
+            if ($definition -ne $null) {
+                Emit 'Success' 'Cloud flow definition retrieved.' @($f.DisplayName) $null (Get-FlowReferences @($f)) $definition
+            }
+            Emit 'OtherError' 'Cloud flow was found, but its definition could not be read.' @($f.DisplayName) 'Unknown'
+        }
+
+        Emit 'NoFlowFound' 'No cloud flow with the expected display name was found.' @() $null @()
     }
 
     $changed = @()
