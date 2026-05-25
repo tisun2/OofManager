@@ -779,8 +779,10 @@ $progressFile    = $env:OOFMGR_PA_PROGRESSFILE
 
 # Per-step debug trace so we can diagnose hangs. Each line is timestamped
 # and flushed immediately (Add-Content closes the handle), so even if the
-# script never returns we know exactly which step blocked.
-$debugLog = Join-Path $env:TEMP 'oofmgr-pa-debug.log'
+# script never returns we know exactly which step blocked. Per-pid file
+# avoids collisions when multiple Power Automate cmds run concurrently
+# (startup status refreshes overlap with user-triggered compare/toggle).
+$debugLog = Join-Path $env:TEMP (""oofmgr-pa-debug-$PID.log"")
 try { Remove-Item -LiteralPath $debugLog -ErrorAction SilentlyContinue } catch {}
 function Trace($m) {
     try {
@@ -1342,10 +1344,21 @@ try {
             $definition = $null
             $defSource = '<none>'
             try {
-                if ($f.PSObject.Properties['Internal'] -and $f.Internal -and $f.Internal.properties) {
-                    $props = $f.Internal.properties
-                    # Trace what's actually present so we can debug missing-
-                    # definition cases on real tenants without re-shipping.
+                # The bulk Get-Flow -EnvironmentName response returns a thin
+                # flow shape with no Internal.properties — we have to re-fetch
+                # by FlowName to get the full object with definition /
+                # definitionSummary. Read-CurrentEnabled does the same trick
+                # for Get-Status; do it here for the same reason.
+                $full = $null
+                try {
+                    Trace ""before Get-Flow full env=$($f.EnvironmentName) flow=$($f.FlowName)""
+                    $full = Get-Flow -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop
+                    Trace ""after  Get-Flow full""
+                } catch {
+                    Trace ""Get-Flow full FAILED: $($_.Exception.Message)""
+                }
+                if ($full -and $full.PSObject.Properties['Internal'] -and $full.Internal -and $full.Internal.properties) {
+                    $props = $full.Internal.properties
                     $propNames = @($props.PSObject.Properties | ForEach-Object { $_.Name })
                     Trace ""flow Internal.properties keys: $($propNames -join ',')""
 
@@ -1353,13 +1366,6 @@ try {
                         $definition = $props.definition
                         $defSource = 'definition'
                     } elseif ($props.PSObject.Properties['definitionSummary'] -and $props.definitionSummary) {
-                        # Get-Flow's default response carries only a
-                        # 'definitionSummary' that retains the triggers
-                        # block (recurrence schedule included) but strips
-                        # actions. Good enough for the workday + trigger
-                        # comparison v1 does — full definition would need
-                        # a separate Invoke-PowerAppsApi call with
-                        # $expand=properties/definition.
                         $definition = $props.definitionSummary
                         $defSource = 'definitionSummary'
                     }
