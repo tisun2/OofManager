@@ -445,15 +445,16 @@ public static class ManualVacationPackageGenerator
     private static Dictionary<string, object?> BuildOneShotRecurrence(string startTimeUtcIso) =>
         new()
         {
-            // One-shot pattern: 99-year recurrence starting at the chosen
-            // instant. count=1 caps it at a single run. Power Automate does
-            // not currently expose a true "one-shot scheduled" trigger via
-            // solution import — this recurrence shape is the closest match
-            // and is what the maker UI itself generates for "Run once" flows.
+            // One-shot pattern: 1-year recurrence starting at the chosen
+            // instant with count=1. Power Automate caps frequency×interval
+            // at 500 days, so Year×99 (≈36k days) is rejected with
+            // InvalidWorkflowTriggerRecurrence "cannot be greater than
+            // 500.00:00:00". Year×1 (365 days) stays under the cap and
+            // count=1 still pins it to exactly one run.
             ["recurrence"] = new Dictionary<string, object?>
             {
                 ["frequency"] = "Year",
-                ["interval"] = 99,
+                ["interval"] = 1,
                 ["startTime"] = startTimeUtcIso,
                 ["timeZone"] = "UTC",
                 ["count"] = 1,
