@@ -945,14 +945,14 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Phase-1 debug command for the research/manual-vacation-cloud-flows
-    /// branch: writes the Manual-Vacation solution zip to disk so it can be
-    /// imported via the maker portal manually and the two generated flows
-    /// can be inspected/exercised before we wire up automatic import. Pulls
-    /// the existing Cloud Schedule env id + runtime FlowName out of prefs
-    /// (populated by a prior Schedule-flow toggle) so the pause/resume
-    /// actions target the right flow; if neither is present yet, the start
-    /// flow ships AutoReply only and the end flow ships as a no-op.
+    /// Manual-vacation cloud orchestrator (research/manual-vacation-cloud-flows
+    /// branch). Mirrors <see cref="GenerateCloudSchedulePackageAsync"/>: builds
+    /// the Manual-Vacation solution zip, runs the same Power Automate import
+    /// path against the user's owned env, then turns ON both generated flows
+    /// (Vacation Start + Vacation End) so they actually fire at their one-shot
+    /// trigger times. Falls back to opening the maker portal + showing the
+    /// saved zip path if any step fails, same recovery shape the Schedule
+    /// import uses.
     /// </summary>
     [RelayCommand]
     private async Task GenerateManualVacationPackageAsync()
@@ -980,9 +980,12 @@ public partial class MainViewModel : ObservableObject
         {
             // Pull the existing Schedule flow's runtime ids from the same prefs
             // PowerAutomateService writes after the user's first successful
-            // toggle. See repo memory note on FlowName != WorkflowId.
+            // toggle. See repo memory note on FlowName != WorkflowId. Without
+            // these, the zip ships with AutoReply only (no pause/resume of the
+            // Schedule flow).
             var scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
             var scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
+            var hasScheduleTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
 
             var packageDir = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -990,7 +993,7 @@ public partial class MainViewModel : ObservableObject
                 "ManualVacation");
             var outPath = System.IO.Path.Combine(packageDir, "OofManager-ManualVacation.zip");
 
-            StatusMessage = "📦 Generating manual vacation solution…";
+            StatusMessage = "🏖️ Generating manual vacation solution…";
             var pkg = await Task.Run(() => ManualVacationPackageGenerator.GenerateWithIdentity(
                 userEmail: MailboxIdentity,
                 vacationStart: startLocal,
@@ -1003,22 +1006,87 @@ public partial class MainViewModel : ObservableObject
                 generateManaged: false,
                 outputPath: outPath));
 
-            var hasTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
-            var msg = hasTarget
-                ? $"📦 Generated v{pkg.SolutionVersion} → {pkg.Path}. Two flows ({pkg.StartFlowDisplayName}, {pkg.EndFlowDisplayName}) with pause/resume of the Cloud Schedule flow."
-                : $"📦 Generated v{pkg.SolutionVersion} → {pkg.Path}. AutoReply-only (no cached Schedule flow id; toggle Schedule flow once first to get pause/resume).";
-            StatusMessage = msg;
-            await _dialog.AlertAsync("Manual Vacation Package",
-                msg + "\n\nImport it manually via make.powerautomate.com → Solutions → Import solution.");
+            StatusMessage = $"🏖️ Generated manual vacation v{pkg.SolutionVersion}. Importing to Power Automate…";
+            var importProgress = new Progress<string>(message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    StatusMessage = $"🏖️ {message}";
+            });
+
+            // Reuses the generic Cloud Schedule import pipeline — env discovery,
+            // pac auth, ImportSolutionAsync, PublishAllXml — by passing the
+            // manual-vacation solution name + the start flow's deterministic
+            // WorkflowId (used only as a hint; the script echoes it back).
+            var import = await _powerAutomate.ImportCloudScheduleSolutionAsync(
+                pkg.Path,
+                pkg.SolutionUniqueName,
+                pkg.StartWorkflowId,
+                pkg.StartFlowDisplayName,
+                MailboxIdentity,
+                UserDisplayName,
+                forceOverwrite: false,
+                progress: importProgress);
+
+            if (import.Outcome != CloudScheduleImportOutcome.Success)
+            {
+                OpenSolutionsPage(import.EnvironmentId);
+                StatusMessage = $"⚠️ Automatic manual vacation import did not finish: {import.Message} Power Automate opened — import the saved zip manually from {pkg.Path}.";
+                return;
+            }
+
+            var startOn = await EnsureManualVacationFlowOnAsync(pkg.StartFlowDisplayName, "Vacation Start");
+            var endOn   = await EnsureManualVacationFlowOnAsync(pkg.EndFlowDisplayName, "Vacation End");
+
+            var bothOn = startOn.IsReady && endOn.IsReady;
+            var prefix = bothOn ? "✅" : "⚠️";
+            var pauseNote = hasScheduleTarget
+                ? "Pause/resume of your Cloud Schedule flow is wired."
+                : "AutoReply-only build — toggle the Cloud Schedule flow once first if you also want pause/resume.";
+            StatusMessage = $"{prefix} Manual vacation v{pkg.SolutionVersion} imported. Start flow: {startOn.Message} End flow: {endOn.Message} {pauseNote}";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to generate manual vacation solution: {ex.Message}";
-            await _dialog.AlertAsync("Manual Vacation Package", ex.Message);
+            StatusMessage = $"Failed to set up manual vacation: {ex.Message}";
+            await _dialog.AlertAsync("Manual Vacation", ex.Message);
         }
         finally
         {
             IsBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Verifies a manual-vacation flow is On (turning it on if needed),
+    /// mirroring <see cref="EnsureCloudScheduleFlowOnAfterImportAsync"/> but
+    /// without the cloud-schedule-specific banner updates. Returns a short
+    /// message suitable for inline status reporting.
+    /// </summary>
+    private async Task<(bool IsReady, string Message)> EnsureManualVacationFlowOnAsync(string expectedFlowDisplayName, string label)
+    {
+        var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+        var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+        var statusProgress = new Progress<string>(message =>
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+                StatusMessage = $"🏖️ {label}: {message}";
+        });
+
+        try
+        {
+            var status = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+            if (status.State == PowerAutomateFlowState.On)
+                return (true, $"{label} on.");
+            if (status.State != PowerAutomateFlowState.Off)
+                return (false, $"{label} status unknown ({status.Message}).");
+
+            var enable = await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+            return enable.Outcome == PowerAutomateOutcome.Success
+                ? (true, $"{label} turned on.")
+                : (false, $"{label} could not be turned on: {enable.Message}");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"{label} enable failed: {ex.Message}");
         }
     }
 

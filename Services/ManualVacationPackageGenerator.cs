@@ -293,9 +293,22 @@ public static class ManualVacationPackageGenerator
 
     /// <summary>
     /// Builds the vacation-start workflow JSON. One-shot Recurrence trigger at
-    /// the user's vacation start; one or two actions: set AutoReply, and
-    /// (optionally, when scheduleFlowEnvironmentId+RuntimeFlowName supplied)
-    /// turn off the existing OofManager Cloud Schedule flow.
+    /// the user's vacation start. When a Schedule-flow target is supplied the
+    /// action chain is ordered to defeat the SetAutoReply race against the
+    /// Schedule flow (which may fire at the exact same instant — e.g. 18:00
+    /// Monday — and otherwise overwrite the vacation reply with its daily OOF
+    /// text on the way past):
+    /// <list type="number">
+    ///   <item><description><b>StopFlow</b> Schedule — prevents future
+    ///   Schedule-flow triggers during the vacation.</description></item>
+    ///   <item><description><b>Delay 3 minutes</b> — lets any Schedule-flow
+    ///   run that was already in-flight at T0 finish its own SetAutoReply
+    ///   before we write ours.</description></item>
+    ///   <item><description><b>SetAutoReply</b> — last write wins; vacation
+    ///   reply is the final state Outlook sees.</description></item>
+    /// </list>
+    /// When no Schedule-flow target is supplied (no cached runtime FlowName),
+    /// only SetAutoReply runs — there's nothing to race against.
     /// </summary>
     private static string BuildVacationStartFlowJson(
         VacationIdentity identity,
@@ -307,31 +320,71 @@ public static class ManualVacationPackageGenerator
         string internalReply,
         string externalReply,
         string? scheduleFlowEnvironmentId,
-        string? scheduleFlowRuntimeFlowName) // tzId is used by the AutoReply action; the Recurrence trigger itself is in UTC
+        string? scheduleFlowRuntimeFlowName)
     {
+        var hasScheduleTarget =
+            !string.IsNullOrWhiteSpace(scheduleFlowEnvironmentId) &&
+            !string.IsNullOrWhiteSpace(scheduleFlowRuntimeFlowName);
+
         var connectionReferences = new Dictionary<string, object?>
         {
             ["shared_office365"] = BuildConnectionReferenceMap("shared_office365", identity.OutlookConnRefLogicalName),
         };
-        var actions = new Dictionary<string, object?>
+
+        var actions = new Dictionary<string, object?>();
+
+        if (hasScheduleTarget)
         {
-            ["Set_up_automatic_replies"] = BuildSetAutoReplyAction(
+            connectionReferences["shared_flowmanagement"] =
+                BuildConnectionReferenceMap("shared_flowmanagement", identity.FlowMgmtConnRefLogicalName);
+
+            // 1) Pause the Schedule flow FIRST so no future recurrence fires.
+            actions["Pause_OofManager_Cloud_Schedule_flow"] = BuildTurnOffFlowAction(
+                scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
+                runAfterStep: null);
+
+            // 2) Wait 3 minutes for any in-flight Schedule-flow run that was
+            //    triggered at the same instant T0 to finish its own
+            //    SetAutoReply. Built-in 'Wait' action — no connector reference
+            //    needed.
+            actions["Wait_for_in_flight_Schedule_run"] = new Dictionary<string, object?>
+            {
+                ["runAfter"] = new Dictionary<string, object?>
+                {
+                    ["Pause_OofManager_Cloud_Schedule_flow"] = new[] { "Succeeded", "Failed", "Skipped", "TimedOut" },
+                },
+                ["type"] = "Wait",
+                ["inputs"] = new Dictionary<string, object?>
+                {
+                    ["interval"] = new Dictionary<string, object?>
+                    {
+                        ["count"] = 3,
+                        ["unit"] = "Minute",
+                    },
+                },
+            };
+
+            // 3) Vacation SetAutoReply LAST — last write wins.
+            actions["Set_up_automatic_replies"] = BuildSetAutoReplyAction(
                 tzId: tzId,
                 autoReplyStart: autoReplyStart,
                 autoReplyEnd: autoReplyEnd,
                 audience: audience,
                 internalReply: internalReply,
-                externalReply: externalReply),
-        };
-
-        if (!string.IsNullOrWhiteSpace(scheduleFlowEnvironmentId) &&
-            !string.IsNullOrWhiteSpace(scheduleFlowRuntimeFlowName))
+                externalReply: externalReply,
+                runAfterStep: "Wait_for_in_flight_Schedule_run");
+        }
+        else
         {
-            connectionReferences["shared_flowmanagement"] =
-                BuildConnectionReferenceMap("shared_flowmanagement", identity.FlowMgmtConnRefLogicalName);
-            actions["Pause_OofManager_Cloud_Schedule_flow"] = BuildTurnOffFlowAction(
-                scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
-                runAfterStep: "Set_up_automatic_replies");
+            // No Schedule target → no race possible → single action.
+            actions["Set_up_automatic_replies"] = BuildSetAutoReplyAction(
+                tzId: tzId,
+                autoReplyStart: autoReplyStart,
+                autoReplyEnd: autoReplyEnd,
+                audience: audience,
+                internalReply: internalReply,
+                externalReply: externalReply,
+                runAfterStep: null);
         }
 
         return SerializeWorkflowEnvelope(
@@ -414,10 +467,19 @@ public static class ManualVacationPackageGenerator
         string autoReplyEnd,
         string audience,
         string internalReply,
-        string externalReply) =>
-        new()
+        string externalReply,
+        string? runAfterStep)
+    {
+        var runAfter = new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(runAfterStep))
         {
-            ["runAfter"] = new Dictionary<string, object?>(),
+            // Run AutoReply even if the preceding Wait/Pause reported a
+            // non-Succeeded state — we still want vacation reply set.
+            runAfter[runAfterStep!] = new[] { "Succeeded", "Failed", "Skipped", "TimedOut" };
+        }
+        return new Dictionary<string, object?>
+        {
+            ["runAfter"] = runAfter,
             ["metadata"] = new Dictionary<string, object?>
             {
                 ["operationMetadataId"] = Guid.NewGuid().ToString("D"),
@@ -445,6 +507,7 @@ public static class ManualVacationPackageGenerator
                 ["authentication"] = "@parameters('$authentication')",
             },
         };
+    }
 
     private static Dictionary<string, object?> BuildTurnOffFlowAction(string envId, string flowName, string? runAfterStep)
         => BuildFlowMgmtAction("StopFlow", envId, flowName, runAfterStep);

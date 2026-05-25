@@ -553,6 +553,23 @@
                                         </Grid>
                                     </Grid>
                                 </Grid>
+
+                                <!-- Manual-vacation cloud orchestrator
+                                     (research/manual-vacation-cloud-flows).
+                                     Generates a Dataverse solution with two
+                                     one-shot flows (vacation start sets
+                                     AutoReply + pauses Cloud Schedule;
+                                     vacation end resumes Cloud Schedule),
+                                     imports it via the same pipeline the
+                                     Cloud Schedule button uses, and turns
+                                     both flows on. -->
+                                <Button Content="🏖️ Set up vacation in cloud"
+                                        Command="{Binding GenerateManualVacationPackageCommand}"
+                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,12,0,0"
+                                        Padding="12,6"
+                                        ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Cloud Schedule at end, no local PC required."/>
                             </StackPanel>
                         </StackPanel>
                     </Grid>
