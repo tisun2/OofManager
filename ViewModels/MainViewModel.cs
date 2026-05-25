@@ -132,7 +132,7 @@ public partial class MainViewModel : ObservableObject
         get
         {
             if (IsScheduleMode)
-                return "Schedule mode: OOF Manager auto-flips OOF based on the weekly hours below. ⚡ Sync to Outlook pushes the next off-hours window immediately.";
+                return "Weekly mode: OOF Manager auto-flips OOF based on the weekly hours below. ⚡ Sync to Outlook pushes the next off-hours window immediately.";
             return "Manual mode: you flip OOF on/off yourself below. ⚡ Sync to Outlook pushes your current state to Outlook immediately.";
         }
     }
@@ -715,7 +715,7 @@ public partial class MainViewModel : ObservableObject
                 StatusMessage = "Clearing vacation OOF window and syncing the schedule...";
                 await EndVacationAsync();
                 if (IsOnLongVacation) return;
-                StatusMessage = "Schedule mode synced. Vacation OOF window cleared.";
+                StatusMessage = "Weekly mode synced. Vacation OOF window cleared.";
                 return;
             }
 

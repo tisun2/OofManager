@@ -221,7 +221,7 @@
                                              Style="{StaticResource SegmentedModeRadioStyle}"
                                              Tag="5,0,0,5"
                                              IsChecked="{Binding IsScheduleMode, Mode=TwoWay}"
-                                             Content="🗓️ Schedule"
+                                             Content="🗓️ Weekly"
                                              ToolTip="Use the weekly work-hours grid below. Sync to Outlook pushes the next off-hours window; Power Automate keeps it running in the cloud."/>
                                 <Border Grid.Column="1"
                                         Width="1"
