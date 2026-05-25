@@ -204,7 +204,7 @@ public partial class MainViewModel : ObservableObject
     /// Keep it enabled for already-planned/already-active vacations so the
     /// user can still uncheck and sync to clear them.
     /// </summary>
-    public bool CanToggleVacationWindow => IsOofEnabled || IsVacationWindowActive || IsOnLongVacation;
+    public bool CanToggleVacationWindow => true;
 
     /// <summary>
     /// Caption shown under the Sync card title. Tells the user what the
@@ -335,10 +335,11 @@ public partial class MainViewModel : ObservableObject
         {
             CurrentStatus = OofStatus.Disabled;
             IsScheduled = false;
-            if (IsVacationWindowActive)
-            {
-                IsVacationWindowActive = false;
-            }
+            // Vacation window stays as-is: it's an independent intent now
+            // ("I have a planned vacation"), not a sub-mode of OOF being on.
+            // The ReassertManualStateAsync path still prefers Scheduled over
+            // Enabled/Disabled when both are set, so flipping OOF off doesn't
+            // cancel a future vacation.
         }
         else
         {
@@ -433,13 +434,11 @@ public partial class MainViewModel : ObservableObject
     // tick reconciles via ReassertManualStateAsync.
     partial void OnIsVacationWindowActiveChanged(bool value)
     {
-        if (value && !IsOofEnabled && !IsOnLongVacation)
-        {
-            IsVacationWindowActive = false;
-            return;
-        }
-
-        if (value) EnsureVacationShowsManualOofOn();
+        // OOF on/off and Vacation window are independent intents now — the
+        // user can plan a future vacation without first turning OOF on, and
+        // turning OOF off doesn't cancel the planned vacation. Sync logic in
+        // ReassertManualStateAsync still prefers Scheduled (vacation) over
+        // Enabled/Disabled when both are set, so the precedence is clear.
 
         OnPropertyChanged(nameof(CanToggleVacationWindow));
         RefreshOofStatusBar();
