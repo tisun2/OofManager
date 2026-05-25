@@ -736,23 +736,12 @@
                                         Padding="12,6" HorizontalAlignment="Stretch"
                                     ToolTip="Generates the Power Automate solution package, then tries to import it automatically. If automatic import is unavailable, Power Automate opens so you can import OofManager-CloudSchedule.zip manually. Recommended."/>
                                 <Button Grid.Column="2"
-                                        Content="📝 Flow Setup Guide"
-                                        Command="{Binding OpenCloudScheduleGuideCommand}"
+                                        Content="☁️ Compare with cloud"
+                                        Command="{Binding CompareCloudScheduleCommand}"
+                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Opens a guide for creating the Power Automate flow in Power Automate instead of generating and importing a solution package."/>
+                                        ToolTip="Reads the deployed Cloud Schedule flow's definition from Power Automate and reports per-day differences between the local Weekly schedule and what's actually running in M365."/>
                             </Grid>
-                            <!-- Compare with cloud: fetches the deployed
-                                 flow's definition and shows a diff against
-                                 the local Weekly schedule (workdays + cloud
-                                 trigger time). v1 doesn't decode per-day
-                                 hours — those live inside Logic Apps
-                                 expressions that aren't reverse-parsed yet. -->
-                            <Button Content="☁️ Compare with cloud"
-                                    Command="{Binding CompareCloudScheduleCommand}"
-                                    IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
-                                    Padding="12,6" HorizontalAlignment="Stretch"
-                                    Margin="0,8,0,0"
-                                    ToolTip="Reads the deployed Cloud Schedule flow's definition from Power Automate and reports whether the local workdays + earliest end time match what's actually running in M365."/>
                         </StackPanel>
                     </Border>
                     </StackPanel>
