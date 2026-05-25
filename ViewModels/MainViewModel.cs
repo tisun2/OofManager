@@ -1056,10 +1056,13 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Verifies a manual-vacation flow is On (turning it on if needed),
-    /// mirroring <see cref="EnsureCloudScheduleFlowOnAfterImportAsync"/> but
-    /// without the cloud-schedule-specific banner updates. Returns a short
-    /// message suitable for inline status reporting.
+    /// Turns on a freshly-imported manual-vacation flow. Calls Enable
+    /// directly instead of status-then-enable: a flow that's already On
+    /// makes Enable a cheap no-op, and a freshly-imported flow can briefly
+    /// be invisible to <c>Get-Flow</c> while Power Automate finishes
+    /// registering it — the status check returning <c>NotFound</c> in that
+    /// window would otherwise make us bail without ever calling Enable.
+    /// One quick retry after a short delay covers the registration lag.
     /// </summary>
     private async Task<(bool IsReady, string Message)> EnsureManualVacationFlowOnAsync(string expectedFlowDisplayName, string label)
     {
@@ -1071,15 +1074,20 @@ public partial class MainViewModel : ObservableObject
                 StatusMessage = $"🏖️ {label}: {message}";
         });
 
+        async Task<PowerAutomateResult> TryEnableOnceAsync() =>
+            await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+
         try
         {
-            var status = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
-            if (status.State == PowerAutomateFlowState.On)
-                return (true, $"{label} on.");
-            if (status.State != PowerAutomateFlowState.Off)
-                return (false, $"{label} status unknown ({status.Message}).");
-
-            var enable = await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+            var enable = await TryEnableOnceAsync();
+            if (enable.Outcome == PowerAutomateOutcome.NoFlowFound)
+            {
+                // Freshly-imported flow may not be queryable for a few
+                // seconds. Wait + retry once.
+                StatusMessage = $"🏖️ {label}: flow not visible yet, waiting 10s before retry…";
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                enable = await TryEnableOnceAsync();
+            }
             return enable.Outcome == PowerAutomateOutcome.Success
                 ? (true, $"{label} turned on.")
                 : (false, $"{label} could not be turned on: {enable.Message}");
