@@ -797,7 +797,15 @@ public static class ManualVacationPackageGenerator
         var startFlowDisplayName = $"OofManager Vacation Start ({alias})";
         var endFlowDisplayName   = $"OofManager Vacation End ({alias})";
 
-        var outlookConnRefLogical = $"{PublisherPrefix}_OofManagerVacOutlookConn_{alias.ToLowerInvariant()}";
+        // Share the Outlook connection-reference logical name with
+        // CloudSchedulePackageGenerator so users who already imported Cloud
+        // Schedule get their existing Outlook connection reused
+        // automatically by Dataverse (logical names identify rows; matching
+        // name = same row = same bound connection). Without this, the
+        // Vacation solution lands with an unbound Outlook ref and Enable-Flow
+        // refuses to turn the flows on even though the connector type is
+        // identical.
+        var outlookConnRefLogical = $"{PublisherPrefix}_OofManagerOutlookConn_{alias.ToLowerInvariant()}";
         var flowMgmtConnRefLogical = $"{PublisherPrefix}_OofManagerVacFlowMgmtConn_{alias.ToLowerInvariant()}";
 
         var startWorkflowId = DeterministicGuid(VacationStartWorkflowNamespace, alias);

@@ -1038,7 +1038,28 @@ public partial class MainViewModel : ObservableObject
             var endOn   = await EnsureManualVacationFlowOnAsync(pkg.EndFlowDisplayName, "Vacation End");
 
             var bothOn = startOn.IsReady && endOn.IsReady;
-            var prefix = bothOn ? "✅" : "⚠️";
+            if (!bothOn)
+            {
+                // Most common cause: the shared_flowmanagement connection
+                // reference is unbound because the user has never created a
+                // Power Automate Management connection on this tenant.
+                // pac CLI / Dataverse import can't bind it automatically.
+                // Open the solution's Connection references page directly so
+                // the user is one click away from the fix.
+                OpenConnectionReferencesPage(import.EnvironmentId, pkg.SolutionUniqueName);
+                StatusMessage = $"⚠️ Manual vacation v{pkg.SolutionVersion} imported but flows are still Off. " +
+                                $"Start: {startOn.Message} End: {endOn.Message}";
+                await _dialog.AlertAsync("Bind connections to turn the vacation flows on",
+                    "Both Vacation flows were imported but couldn't be turned on. Usually this means a connection reference inside the solution isn't bound to a connection yet — most often 'OofManager Flow Management' (the Power Automate Management connector), because it's the first time you're using it on this tenant.\n\n" +
+                    "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                    "  1. Click the row's ⋯ → Edit\n" +
+                    "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                    "  3. Save\n\n" +
+                    "Then come back to the Vacation flows (Solutions → OofManager Manual Vacation → Cloud flows) and click 'Turn on'. After this one-time setup, re-running 'Set up vacation in cloud' will reuse the bound connections automatically.");
+                return;
+            }
+
+            var prefix = "✅";
             var pauseNote = hasScheduleTarget
                 ? "Pause/resume of your Cloud Schedule flow is wired."
                 : "AutoReply-only build — toggle the Cloud Schedule flow once first if you also want pause/resume.";
@@ -1179,6 +1200,37 @@ public partial class MainViewModel : ObservableObject
         var url = !string.IsNullOrWhiteSpace(environmentId)
             ? $"https://make.powerautomate.com/environments/{environmentId}/solutions"
             : "https://make.powerautomate.com/solutions";
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
+    /// Deep-links to the Connection references view of a specific solution
+    /// in the maker portal. Used after a manual-vacation import when one of
+    /// the connection references is unbound (shared_flowmanagement is the
+    /// usual culprit on fresh tenants) — drops the user one click away from
+    /// the binding UI instead of forcing them to navigate
+    /// Solutions → solution → Objects → Connection references by hand.
+    /// </summary>
+    private static void OpenConnectionReferencesPage(string? environmentId, string solutionUniqueName)
+    {
+        if (string.IsNullOrWhiteSpace(environmentId) || string.IsNullOrWhiteSpace(solutionUniqueName))
+        {
+            OpenSolutionsPage(environmentId);
+            return;
+        }
+        // The maker portal honors a query-string filter on the connections
+        // landing page (?solution={uniqueName}); from there the connection-
+        // refs panel is one click. There isn't a stable direct URL into the
+        // connection-references list of a solution that survives portal
+        // refactors, so this is the most reliable shape.
+        var url = $"https://make.powerautomate.com/environments/{environmentId}/solutions/{Uri.EscapeDataString(solutionUniqueName)}";
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
