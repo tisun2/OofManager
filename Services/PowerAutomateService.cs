@@ -99,6 +99,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
             var workDays = new List<DayOfWeek>();
             int? triggerHour = null, triggerMinute = null;
             string? triggerTz = null;
+            DateTimeOffset? triggerStartTimeUtc = null;
             if (defEl.TryGetProperty("triggers", out var trigsEl) && trigsEl.ValueKind == JsonValueKind.Object)
             {
                 foreach (var trigProp in trigsEl.EnumerateObject())
@@ -107,6 +108,19 @@ public sealed class PowerAutomateService : IPowerAutomateService
                         continue;
                     if (recEl.TryGetProperty("timeZone", out var tzEl) && tzEl.ValueKind == JsonValueKind.String)
                         triggerTz = tzEl.GetString();
+
+                    // Vacation flows: one-shot Recurrence anchored at a
+                    // specific UTC instant via 'startTime'. Parse it so the
+                    // Manual-side "Compare with cloud" can verify the
+                    // deployed flow fires at the user's planned vacation
+                    // start / end.
+                    if (recEl.TryGetProperty("startTime", out var stEl) && stEl.ValueKind == JsonValueKind.String &&
+                        DateTimeOffset.TryParse(stEl.GetString(), System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsedSt))
+                    {
+                        triggerStartTimeUtc = parsedSt;
+                    }
+
                     if (recEl.TryGetProperty("schedule", out var schedEl) && schedEl.ValueKind == JsonValueKind.Object)
                     {
                         if (schedEl.TryGetProperty("weekDays", out var wdEl) && wdEl.ValueKind == JsonValueKind.Array)
@@ -138,7 +152,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
             return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz,
                 perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen),
                 sidecarTimeZone: sidecarTz,
-                sidecarGeneratedAt: sidecarGen);
+                sidecarGeneratedAt: sidecarGen,
+                triggerStartTimeUtc: triggerStartTimeUtc);
         }
         catch (Exception ex)
         {

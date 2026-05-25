@@ -541,22 +541,29 @@
                                     </Grid>
                                 </Grid>
 
-                                <!-- Manual-vacation cloud orchestrator
-                                     (research/manual-vacation-cloud-flows).
-                                     Generates a Dataverse solution with two
-                                     one-shot flows (vacation start sets
-                                     AutoReply + pauses Cloud Schedule;
-                                     vacation end resumes Cloud Schedule),
-                                     imports it via the same pipeline the
-                                     Cloud Schedule button uses, and turns
-                                     both flows on. -->
-                                <Button Content="🏖️ Set up vacation in cloud"
-                                        Command="{Binding GenerateManualVacationPackageCommand}"
-                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
-                                        HorizontalAlignment="Left"
-                                        Margin="0,12,0,0"
-                                        Padding="12,6"
-                                        ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Cloud Schedule at end, no local PC required."/>
+                                <!-- Manual-vacation cloud orchestrator + diff.
+                                     Two side-by-side CTAs mirroring the
+                                     Weekly mode pair (Generate & Import +
+                                     Compare with cloud). -->
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            Content="🏖️ Set up vacation in cloud"
+                                            Command="{Binding GenerateManualVacationPackageCommand}"
+                                            IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
+                                            Padding="12,6" HorizontalAlignment="Stretch"
+                                            ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Cloud Schedule at end, no local PC required."/>
+                                    <Button Grid.Column="2"
+                                            Content="☁️ Compare with cloud"
+                                            Command="{Binding CompareVacationFlowsCommand}"
+                                            IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
+                                            Padding="12,6" HorizontalAlignment="Stretch"
+                                            ToolTip="Reads the deployed Vacation Start + Vacation End flows from Power Automate and reports whether their one-shot trigger times match your local pickers above."/>
+                                </Grid>
                             </StackPanel>
                         </StackPanel>
                     </Grid>

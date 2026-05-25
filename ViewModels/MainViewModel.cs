@@ -1446,6 +1446,90 @@ public partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Manual-mode counterpart to <see cref="CompareCloudScheduleAsync"/>:
+    /// reads the deployed Vacation Start + Vacation End flows' one-shot
+    /// Recurrence triggers and compares each anchor instant against the
+    /// local vacation start / end pickers. Surfaces a per-flow diff so the
+    /// user can spot drift between what they typed in the pickers and what
+    /// the cloud will actually fire.
+    /// </summary>
+    [RelayCommand]
+    private async Task CompareVacationFlowsAsync()
+    {
+        if (IsBusy) return;
+        IsBusy = true;
+        StatusMessage = "🏖️ Comparing local vacation against cloud flows…";
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
+            var progress = new Progress<string>(m => { if (!string.IsNullOrWhiteSpace(m)) StatusMessage = $"🏖️ {m}"; });
+
+            var startResult = await _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.StartFlowDisplayName, progress);
+            var endResult   = await _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.EndFlowDisplayName, progress);
+
+            if (startResult.Outcome == PowerAutomateOutcome.NoFlowFound && endResult.Outcome == PowerAutomateOutcome.NoFlowFound)
+            {
+                StatusMessage = "🏖️ No vacation flows found — set one up first.";
+                await _dialog.AlertAsync("Compare vacation with cloud",
+                    "No OofManager vacation flows were found. Click 🏖️ Set up vacation in cloud first.");
+                return;
+            }
+
+            var localStart = VacationStartDate.Date.Add(VacationStartTime);
+            var localEnd   = VacationEndDate.Date.Add(VacationEndTime);
+
+            string FormatCloud(CloudScheduleDefinitionResult r)
+            {
+                if (r.Outcome == PowerAutomateOutcome.NoFlowFound) return "(flow not found)";
+                if (r.Outcome != PowerAutomateOutcome.Success) return $"(error: {r.Message})";
+                if (r.TriggerStartTimeUtc is not DateTimeOffset utc) return "(no startTime in trigger)";
+                var local = utc.ToLocalTime();
+                return $"{local:yyyy-MM-dd HH:mm} (local)";
+            }
+
+            bool StartMatch(DateTimeOffset? cloudUtc, DateTime localDt)
+            {
+                if (cloudUtc is not DateTimeOffset utc) return false;
+                var local = utc.ToLocalTime().DateTime;
+                // Minute precision: pickers don't expose seconds.
+                return local.Year == localDt.Year && local.Month == localDt.Month && local.Day == localDt.Day
+                       && local.Hour == localDt.Hour && local.Minute == localDt.Minute;
+            }
+
+            var startMatches = StartMatch(startResult.TriggerStartTimeUtc, localStart);
+            var endMatches   = StartMatch(endResult.TriggerStartTimeUtc, localEnd);
+            var allMatch = startResult.Outcome == PowerAutomateOutcome.Success && startMatches
+                           && endResult.Outcome == PowerAutomateOutcome.Success && endMatches;
+            var headline = allMatch ? "✅ Local and cloud vacation match." : "⚠️ Local and cloud vacation differ.";
+
+            var body = headline + "\n\n" +
+                       $"  Vacation Start flow ({identity.StartFlowDisplayName}):\n" +
+                       $"    Local: {localStart:yyyy-MM-dd HH:mm}\n" +
+                       $"    Cloud: {FormatCloud(startResult)}   {(startMatches ? "✓" : "✗")}\n\n" +
+                       $"  Vacation End flow ({identity.EndFlowDisplayName}):\n" +
+                       $"    Local: {localEnd:yyyy-MM-dd HH:mm}\n" +
+                       $"    Cloud: {FormatCloud(endResult)}   {(endMatches ? "✓" : "✗")}\n\n" +
+                       (allMatch
+                          ? "Cloud-side trigger times line up with your pickers."
+                          : "If local is the authoritative version, click 🏖️ Set up vacation in cloud to re-import.");
+
+            StatusMessage = allMatch ? "🏖️ Local and cloud vacation match." : "🏖️ Local and cloud vacation differ — see dialog.";
+            await _dialog.AlertAsync("Compare vacation with cloud", body);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"🏖️ Compare failed: {ex.Message}";
+            await _dialog.AlertAsync("Compare vacation with cloud", ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    /// <summary>
     /// Converts the cloud Recurrence trigger's raw hour/minute (which is
     /// expressed in <paramref name="triggerTimeZone"/>, not UTC) into local
     /// time-of-day for comparison against the local schedule. The generator

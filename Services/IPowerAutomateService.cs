@@ -136,7 +136,8 @@ public sealed class CloudScheduleDefinitionResult
         string? triggerTimeZone,
         IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? perDaySchedule = null,
         string? sidecarTimeZone = null,
-        string? sidecarGeneratedAt = null)
+        string? sidecarGeneratedAt = null,
+        DateTimeOffset? triggerStartTimeUtc = null)
     {
         Outcome = outcome;
         Message = message;
@@ -148,6 +149,7 @@ public sealed class CloudScheduleDefinitionResult
         PerDaySchedule = perDaySchedule;
         SidecarTimeZone = sidecarTimeZone;
         SidecarGeneratedAt = sidecarGeneratedAt;
+        TriggerStartTimeUtc = triggerStartTimeUtc;
     }
 
     public PowerAutomateOutcome Outcome { get; }
@@ -157,6 +159,14 @@ public sealed class CloudScheduleDefinitionResult
     public int? TriggerHour { get; }
     public int? TriggerMinute { get; }
     public string? TriggerTimeZone { get; }
+
+    /// <summary>
+    /// One-shot Recurrence trigger anchor (vacation flows) — the absolute
+    /// UTC instant at which Power Automate will fire the trigger once.
+    /// Null for weekly-style Cloud Schedule flows (those use hour/minute
+    /// + weekDays instead).
+    /// </summary>
+    public DateTimeOffset? TriggerStartTimeUtc { get; }
 
     /// <summary>
     /// Per-day work schedule recovered from the sidecar parameter
