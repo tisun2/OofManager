@@ -1468,7 +1468,7 @@ public partial class MainViewModel : ObservableObject
             var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
             var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
 
-            async Task<PowerAutomateOutcome> ToggleOneAsync(string flowDisplayName, string label)
+            async Task<PowerAutomateResult> ToggleOneAsync(string flowDisplayName, string label)
             {
                 SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{verbLabel} {label}...");
                 var progress = new Progress<string>(m =>
@@ -1476,21 +1476,47 @@ public partial class MainViewModel : ObservableObject
                     if (!string.IsNullOrWhiteSpace(m))
                         StatusMessage = $"{label}: {m}";
                 });
-                var result = disable
+                return disable
                     ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress)
                     : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress);
-                return result.Outcome;
             }
 
-            var startOutcome = await ToggleOneAsync(identity.StartFlowDisplayName, "Vacation Start");
-            var endOutcome = await ToggleOneAsync(identity.EndFlowDisplayName, "Vacation End");
+            var startResult = await ToggleOneAsync(identity.StartFlowDisplayName, "Vacation Start");
+            var endResult   = await ToggleOneAsync(identity.EndFlowDisplayName, "Vacation End");
 
             await RefreshVacationFlowsStatusAsync();
 
-            var bothOk = startOutcome == PowerAutomateOutcome.Success && endOutcome == PowerAutomateOutcome.Success;
+            var bothOk = startResult.Outcome == PowerAutomateOutcome.Success && endResult.Outcome == PowerAutomateOutcome.Success;
+
+            // When the user is trying to TURN ON vacation flows and the
+            // PowerShell call reports Success but the flows are still Off
+            // after a refresh, the near-certain cause is that the
+            // shared_flowmanagement connection reference is unbound: pac CLI
+            // / Dataverse import can't auto-bind it on tenants where the
+            // user has never created a Power Automate Management connection
+            // before (which is everyone the first time). Power Automate
+            // accepts the Enable API call but refuses to actually activate
+            // a flow with an unbound connection ref, so the UI symptom is
+            // "Turn on does nothing." Deep-link to the solution's Connection
+            // references page so the user is one click from binding it.
+            if (!disable && bothOk && VacationFlowsStateText != "On")
+            {
+                var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
+                OpenConnectionReferencesPage(envId, identity.SolutionUniqueName);
+                StatusMessage = "⚠️ Vacation flows accepted the Turn on but stayed Off — Connection references page opened.";
+                await _dialog.AlertAsync("Bind the Flow Management connection",
+                    "The vacation flows accepted the Turn on call but stayed Off. The usual cause is an unbound 'OofManager Flow Management' connection reference (Power Automate Management connector). This is a one-time setup per tenant.\n\n" +
+                    "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                    "  1. Click the row's ⋯ → Edit\n" +
+                    "  2. In Connection: click '+ New connection' → sign in\n" +
+                    "  3. Save\n\n" +
+                    "Then come back here and click '▶️ Turn on vacation flows' again.");
+                return;
+            }
+
             StatusMessage = bothOk
                 ? $"✅ Vacation flows {(disable ? "turned off" : "turned on")}."
-                : $"⚠️ Vacation flows toggle finished with issues. Start: {startOutcome}, End: {endOutcome}.";
+                : $"⚠️ Vacation flows toggle finished with issues. Start: {startResult.Outcome} ({startResult.Message}). End: {endResult.Outcome} ({endResult.Message}).";
         }
         catch (Exception ex)
         {
