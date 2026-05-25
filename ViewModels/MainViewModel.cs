@@ -1387,6 +1387,33 @@ public partial class MainViewModel : ObservableObject
             }
 
             var allMatch = workdaysMatch && triggerMatches;
+
+            // Per-day diff (v2): only available when the cloud flow has the
+            // sidecar metadata stamped by newer generator versions. Older
+            // imports show "(re-import to enable)" in this section.
+            var perDayLines = new List<string>();
+            bool perDayAllMatch = true;
+            if (result.PerDaySchedule != null)
+            {
+                foreach (var d in weekDays)
+                {
+                    var localIs = IsWorkday(d);
+                    var localStart = GetStartTimeForDay(d);
+                    var localEnd = GetEndTimeForDay(d);
+                    var cloudDay = result.PerDaySchedule.TryGetValue(d, out var c) ? c : null;
+
+                    string localStr = localIs ? $"{localStart:hh\\:mm}-{localEnd:hh\\:mm}" : "off";
+                    string cloudStr = cloudDay == null ? "(missing)"
+                                      : cloudDay.IsWorkday ? $"{cloudDay.Start:hh\\:mm}-{cloudDay.End:hh\\:mm}" : "off";
+                    bool dayMatch = cloudDay != null &&
+                                    cloudDay.IsWorkday == localIs &&
+                                    (!localIs || (cloudDay.Start == localStart && cloudDay.End == localEnd));
+                    if (!dayMatch) perDayAllMatch = false;
+                    perDayLines.Add($"    {d.ToString().Substring(0, 3)}: local {localStr,-13}  cloud {cloudStr,-13}  {(dayMatch ? "✓" : "✗")}");
+                }
+                if (!perDayAllMatch) allMatch = false;
+            }
+
             var headline = allMatch ? "✅ Local and cloud match." : "⚠️ Local and cloud differ.";
 
             var body = headline + "\n\n" +
@@ -1397,7 +1424,9 @@ public partial class MainViewModel : ObservableObject
                        $"  Earliest workday end (= cloud trigger time):\n" +
                        $"    Local: {localTriggerStr}\n" +
                        $"    Cloud: {CloudTriggerLocalString()}   {(triggerMatches ? "✓" : "✗")}\n\n" +
-                       "Per-day hours aren't compared in v1 (encoded inside Logic Apps expressions).\n\n" +
+                       (result.PerDaySchedule != null
+                          ? "  Per-day hours (from cloud sidecar metadata):\n" + string.Join("\n", perDayLines) + "\n\n"
+                          : "  Per-day hours: (cloud flow lacks sidecar metadata — re-run 'Generate & Import Solution' once to enable)\n\n") +
                        (allMatch
                           ? "Everything we can check looks consistent."
                           : "If local is the authoritative version, click 'Generate & Import Solution' to push it to the cloud.");

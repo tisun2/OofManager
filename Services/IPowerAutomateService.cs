@@ -133,7 +133,10 @@ public sealed class CloudScheduleDefinitionResult
         IReadOnlyList<DayOfWeek>? workDays,
         int? triggerHour,
         int? triggerMinute,
-        string? triggerTimeZone)
+        string? triggerTimeZone,
+        IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? perDaySchedule = null,
+        string? sidecarTimeZone = null,
+        string? sidecarGeneratedAt = null)
     {
         Outcome = outcome;
         Message = message;
@@ -142,6 +145,9 @@ public sealed class CloudScheduleDefinitionResult
         TriggerHour = triggerHour;
         TriggerMinute = triggerMinute;
         TriggerTimeZone = triggerTimeZone;
+        PerDaySchedule = perDaySchedule;
+        SidecarTimeZone = sidecarTimeZone;
+        SidecarGeneratedAt = sidecarGeneratedAt;
     }
 
     public PowerAutomateOutcome Outcome { get; }
@@ -151,6 +157,29 @@ public sealed class CloudScheduleDefinitionResult
     public int? TriggerHour { get; }
     public int? TriggerMinute { get; }
     public string? TriggerTimeZone { get; }
+
+    /// <summary>
+    /// Per-day work schedule recovered from the sidecar parameter
+    /// <c>_oofmgr_source.defaultValue.days</c> we stamp into newer
+    /// packages. Null on older flows imported before the sidecar shipped
+    /// — those callers see workday + trigger-time compare only.
+    /// </summary>
+    public IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? PerDaySchedule { get; }
+    public string? SidecarTimeZone { get; }
+    public string? SidecarGeneratedAt { get; }
+}
+
+public sealed class CloudDaySchedule
+{
+    public CloudDaySchedule(bool isWorkday, TimeSpan start, TimeSpan end)
+    {
+        IsWorkday = isWorkday;
+        Start = start;
+        End = end;
+    }
+    public bool IsWorkday { get; }
+    public TimeSpan Start { get; }
+    public TimeSpan End { get; }
 }
 
 public interface IPowerAutomateService

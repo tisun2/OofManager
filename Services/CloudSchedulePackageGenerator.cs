@@ -241,13 +241,9 @@ public static class CloudSchedulePackageGenerator
             startExpr: startExpr,
             endExpr: endExpr,
             audience: externalAudienceAll ? "all" : "contactsOnly",
-            // Outlook renders the reply message field as HTML — plain newlines
-            // get flattened into a single paragraph in the Automatic Replies
-            // dialog. ExchangeService applies the same wrap on the local PS
-            // path; mirror it here so cloud-pushed replies preserve line
-            // breaks the same way the local sync does.
             internalReply: PlainTextToHtml(internalReply),
-            externalReply: PlainTextToHtml(externalReply));
+            externalReply: PlainTextToHtml(externalReply),
+            schedule: schedule);
 
         var solutionXml = BuildSolutionXml(generateManaged, identity, solutionVersion);
         var customizationsXml = BuildCustomizationsXml(identity);
@@ -312,7 +308,8 @@ public static class CloudSchedulePackageGenerator
         string endExpr,
         string audience,
         string internalReply,
-        string externalReply)
+        string externalReply,
+        WorkScheduleSnapshot schedule)
     {
         var wrapper = new Dictionary<string, object?>
         {
@@ -353,6 +350,19 @@ public static class CloudSchedulePackageGenerator
                         {
                             ["defaultValue"] = new Dictionary<string, object?>(),
                             ["type"] = "SecureObject",
+                        },
+                        // OofManager sidecar: plain-text record of the local
+                        // per-day work schedule the package was generated
+                        // from. Logic Apps preserves arbitrary parameters
+                        // through import, the workflow itself never reads
+                        // this one, and the "Compare with cloud" feature
+                        // decodes it back out so the user can see per-day
+                        // diffs without us reverse-parsing the nested-if
+                        // expression inside the action body.
+                        ["_oofmgr_source"] = new Dictionary<string, object?>
+                        {
+                            ["type"] = "Object",
+                            ["defaultValue"] = BuildSidecarPayload(schedule, tzId),
                         },
                     },
                     ["triggers"] = new Dictionary<string, object?>
@@ -415,6 +425,38 @@ public static class CloudSchedulePackageGenerator
         };
 
         return JsonSerializer.Serialize(wrapper, JsonOpts);
+    }
+
+    /// <summary>
+    /// Sidecar metadata stamped into the workflow definition under
+    /// <c>parameters._oofmgr_source.defaultValue</c>. Lets the
+    /// "Compare with cloud" feature recover the exact per-day schedule the
+    /// user generated the package with — much simpler than reverse-parsing
+    /// the nested-if Logic Apps expression in the action body. Backwards-
+    /// compatible additions are safe; bump <c>version</c> if the shape
+    /// changes incompatibly.
+    /// </summary>
+    private static Dictionary<string, object?> BuildSidecarPayload(WorkScheduleSnapshot schedule, string tzId)
+    {
+        var days = new Dictionary<string, object?>();
+        foreach (DayOfWeek d in new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday })
+        {
+            var start = schedule.GetStart(d);
+            var end = schedule.GetEnd(d);
+            days[d.ToString()] = new Dictionary<string, object?>
+            {
+                ["workday"] = schedule.IsWorkday(d),
+                ["start"] = $"{start.Hours:D2}:{start.Minutes:D2}",
+                ["end"] = $"{end.Hours:D2}:{end.Minutes:D2}",
+            };
+        }
+        return new Dictionary<string, object?>
+        {
+            ["version"] = 1,
+            ["tz"] = tzId,
+            ["generatedAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            ["days"] = days,
+        };
     }
 
     private static Dictionary<string, object?> BuildRecurrenceTrigger(int triggerHour, int triggerMinute, string[] triggerDays, string tzId)

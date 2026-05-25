@@ -135,12 +135,63 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 }
             }
 
-            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz);
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz,
+                perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen),
+                sidecarTimeZone: sidecarTz,
+                sidecarGeneratedAt: sidecarGen);
         }
         catch (Exception ex)
         {
             return new CloudScheduleDefinitionResult(PowerAutomateOutcome.OtherError,
                 $"Failed to parse PowerShell definition result: {ex.Message}", expectedFlowDisplayName, null, null, null, null);
+        }
+    }
+
+    /// <summary>
+    /// Decodes the OofManager sidecar metadata stamped by the generator
+    /// under <c>definition.parameters._oofmgr_source.defaultValue.days</c>.
+    /// Returns null when the sidecar is missing (older flow predates the
+    /// sidecar shipping) so the caller can fall back to the workday/trigger
+    /// compare path.
+    /// </summary>
+    private static IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? TryReadSidecar(JsonElement defEl, out string? tz, out string? generatedAt)
+    {
+        tz = null;
+        generatedAt = null;
+        if (!defEl.TryGetProperty("parameters", out var paramsEl) || paramsEl.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!paramsEl.TryGetProperty("_oofmgr_source", out var srcEl) || srcEl.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!srcEl.TryGetProperty("defaultValue", out var dvEl) || dvEl.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (dvEl.TryGetProperty("tz", out var tzEl) && tzEl.ValueKind == JsonValueKind.String) tz = tzEl.GetString();
+        if (dvEl.TryGetProperty("generatedAt", out var gEl) && gEl.ValueKind == JsonValueKind.String) generatedAt = gEl.GetString();
+
+        if (!dvEl.TryGetProperty("days", out var daysEl) || daysEl.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var map = new Dictionary<DayOfWeek, CloudDaySchedule>();
+        foreach (var dayProp in daysEl.EnumerateObject())
+        {
+            if (!Enum.TryParse<DayOfWeek>(dayProp.Name, true, out var dow)) continue;
+            if (dayProp.Value.ValueKind != JsonValueKind.Object) continue;
+            var dEl = dayProp.Value;
+            var isWorkday = dEl.TryGetProperty("workday", out var wEl) && wEl.ValueKind == JsonValueKind.True;
+            if (!isWorkday && wEl.ValueKind == JsonValueKind.False) isWorkday = false;
+            var start = ParseHm(dEl.TryGetProperty("start", out var sEl) ? sEl.GetString() : null);
+            var end = ParseHm(dEl.TryGetProperty("end", out var eEl) ? eEl.GetString() : null);
+            map[dow] = new CloudDaySchedule(isWorkday, start, end);
+        }
+        return map.Count == 0 ? null : map;
+
+        static TimeSpan ParseHm(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return TimeSpan.Zero;
+            var parts = s!.Split(':');
+            if (parts.Length < 2) return TimeSpan.Zero;
+            return int.TryParse(parts[0], out var h) && int.TryParse(parts[1], out var m)
+                ? new TimeSpan(h, m, 0) : TimeSpan.Zero;
         }
     }
     public async Task<CloudScheduleImportResult> ImportCloudScheduleSolutionAsync(
