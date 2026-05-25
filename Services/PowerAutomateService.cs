@@ -1340,17 +1340,38 @@ try {
         foreach ($f in $matched) {
             Report ""Found cloud flow '$($f.DisplayName)'. Reading definition...""
             $definition = $null
+            $defSource = '<none>'
             try {
                 if ($f.PSObject.Properties['Internal'] -and $f.Internal -and $f.Internal.properties) {
-                    $definition = $f.Internal.properties.definition
+                    $props = $f.Internal.properties
+                    # Trace what's actually present so we can debug missing-
+                    # definition cases on real tenants without re-shipping.
+                    $propNames = @($props.PSObject.Properties | ForEach-Object { $_.Name })
+                    Trace ""flow Internal.properties keys: $($propNames -join ',')""
+
+                    if ($props.PSObject.Properties['definition'] -and $props.definition) {
+                        $definition = $props.definition
+                        $defSource = 'definition'
+                    } elseif ($props.PSObject.Properties['definitionSummary'] -and $props.definitionSummary) {
+                        # Get-Flow's default response carries only a
+                        # 'definitionSummary' that retains the triggers
+                        # block (recurrence schedule included) but strips
+                        # actions. Good enough for the workday + trigger
+                        # comparison v1 does — full definition would need
+                        # a separate Invoke-PowerAppsApi call with
+                        # $expand=properties/definition.
+                        $definition = $props.definitionSummary
+                        $defSource = 'definitionSummary'
+                    }
                 }
             } catch {
                 Trace ""definition extract failed: $($_.Exception.Message)""
             }
+            Trace ""definition source: $defSource""
             if ($definition -ne $null) {
-                Emit 'Success' 'Cloud flow definition retrieved.' @($f.DisplayName) $null (Get-FlowReferences @($f)) $definition
+                Emit 'Success' (""Cloud flow definition retrieved from "" + $defSource + "".") @($f.DisplayName) $null (Get-FlowReferences @($f)) $definition
             }
-            Emit 'OtherError' 'Cloud flow was found, but its definition could not be read.' @($f.DisplayName) 'Unknown'
+            Emit 'OtherError' 'Cloud flow was found, but neither definition nor definitionSummary could be read.' @($f.DisplayName) 'Unknown'
         }
 
         Emit 'NoFlowFound' 'No cloud flow with the expected display name was found.' @() $null @()
