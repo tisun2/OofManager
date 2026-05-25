@@ -944,6 +944,84 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Phase-1 debug command for the research/manual-vacation-cloud-flows
+    /// branch: writes the Manual-Vacation solution zip to disk so it can be
+    /// imported via the maker portal manually and the two generated flows
+    /// can be inspected/exercised before we wire up automatic import. Pulls
+    /// the existing Cloud Schedule env id + runtime FlowName out of prefs
+    /// (populated by a prior Schedule-flow toggle) so the pause/resume
+    /// actions target the right flow; if neither is present yet, the start
+    /// flow ships AutoReply only and the end flow ships as a no-op.
+    /// </summary>
+    [RelayCommand]
+    private async Task GenerateManualVacationPackageAsync()
+    {
+        if (IsBusy) return;
+        var startLocal = VacationStartDate.Date.Add(VacationStartTime);
+        var endLocal = VacationEndDate.Date.Add(VacationEndTime);
+        if (endLocal <= startLocal)
+        {
+            await _dialog.AlertAsync(
+                "Invalid Vacation Window",
+                "Vacation end must be after vacation start.");
+            return;
+        }
+        if (endLocal <= DateTime.Now)
+        {
+            await _dialog.AlertAsync(
+                "Vacation Already Past",
+                "The vacation end is in the past — the one-shot triggers would never fire.");
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            // Pull the existing Schedule flow's runtime ids from the same prefs
+            // PowerAutomateService writes after the user's first successful
+            // toggle. See repo memory note on FlowName != WorkflowId.
+            var scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
+            var scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
+
+            var packageDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "OofManager",
+                "ManualVacation");
+            var outPath = System.IO.Path.Combine(packageDir, "OofManager-ManualVacation.zip");
+
+            StatusMessage = "📦 Generating manual vacation solution…";
+            var pkg = await Task.Run(() => ManualVacationPackageGenerator.GenerateWithIdentity(
+                userEmail: MailboxIdentity,
+                vacationStart: startLocal,
+                vacationEnd: endLocal,
+                internalReply: InternalReply,
+                externalReply: ExternalReply,
+                externalAudienceAll: true,
+                scheduleFlowEnvironmentId: scheduleEnvId,
+                scheduleFlowRuntimeFlowName: scheduleFlowName,
+                generateManaged: false,
+                outputPath: outPath));
+
+            var hasTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
+            var msg = hasTarget
+                ? $"📦 Generated v{pkg.SolutionVersion} → {pkg.Path}. Two flows ({pkg.StartFlowDisplayName}, {pkg.EndFlowDisplayName}) with pause/resume of the Cloud Schedule flow."
+                : $"📦 Generated v{pkg.SolutionVersion} → {pkg.Path}. AutoReply-only (no cached Schedule flow id; toggle Schedule flow once first to get pause/resume).";
+            StatusMessage = msg;
+            await _dialog.AlertAsync("Manual Vacation Package",
+                msg + "\n\nImport it manually via make.powerautomate.com → Solutions → Import solution.");
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to generate manual vacation solution: {ex.Message}";
+            await _dialog.AlertAsync("Manual Vacation Package", ex.Message);
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private async Task<(bool IsReady, string Message)> EnsureCloudScheduleFlowOnAfterImportAsync(string expectedFlowDisplayName)
     {
         var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
