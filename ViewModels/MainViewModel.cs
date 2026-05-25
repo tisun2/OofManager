@@ -590,7 +590,13 @@ public partial class MainViewModel : ObservableObject
         finally
         {
             IsBusy = false;
-            if (_hasLoadedOnce && IsManualMode)
+            // Refresh Cloud Schedule flow status on every load so the banner
+            // (now shown in Schedule mode) reflects the live M365 state at
+            // app start. Previously gated on IsManualMode because the banner
+            // lived in Manual mode as a "your cloud flow is still running"
+            // reminder; now that it's a live status control in Schedule
+            // mode it should reflect reality whenever the app is up.
+            if (_hasLoadedOnce)
             {
                 _ = RefreshCloudScheduleFlowStatusAsync();
             }
