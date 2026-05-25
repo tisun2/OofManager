@@ -40,6 +40,11 @@ public partial class MainViewModel : ObservableObject
     private bool _isCloudScheduleFlowStatusChecking;
     private bool _isCloudSchedulePackageRunning;
     private bool _isVacationFlowsStatusChecking;
+    // Set true around programmatic mutations of CloudScheduleFlowStateText so
+    // the IsCloudScheduleFlowOn setter (driven by the ToggleSwitch's two-way
+    // binding) doesn't kick a redundant Enable/Disable when we're just
+    // reflecting fresh server state into the UI.
+    private bool _suppressCloudScheduleFlowToggleCommit;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -55,6 +60,49 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _cloudScheduleFlowBannerText = "Power Automate flow: Not checked. Use the buttons to check or change the cloud schedule flow.";
     [ObservableProperty] private string _cloudScheduleFlowStateText = "Not checked";
     [ObservableProperty] private string _cloudScheduleFlowBannerDetail = "Use the buttons to check or change the cloud schedule flow.";
+
+    /// <summary>
+    /// Two-way bound to the inline ToggleSwitch that replaced the separate
+    /// Turn off / Turn on buttons. The getter reflects the current
+    /// <see cref="CloudScheduleFlowStateText"/>; the setter triggers the
+    /// matching Enable/Disable command — unless the change came from a
+    /// programmatic state refresh (in which case
+    /// <see cref="_suppressCloudScheduleFlowToggleCommit"/> blocks the
+    /// commit so we don't loop). Disabled in XAML when state is
+    /// Checking/Unknown/Not found so the user can't toggle into nonsense.
+    /// </summary>
+    public bool IsCloudScheduleFlowOn
+    {
+        get => string.Equals(CloudScheduleFlowStateText, "On", StringComparison.OrdinalIgnoreCase);
+        set
+        {
+            if (_suppressCloudScheduleFlowToggleCommit) return;
+            var currentlyOn = IsCloudScheduleFlowOn;
+            if (value == currentlyOn) return;
+            if (value)
+                _ = EnableCloudScheduleFlowAsync();
+            else
+                _ = DisableCloudScheduleFlowAsync();
+        }
+    }
+
+    partial void OnCloudScheduleFlowStateTextChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsCloudScheduleFlowOn));
+        OnPropertyChanged(nameof(CanToggleCloudScheduleFlow));
+    }
+
+    /// <summary>
+    /// Drives the ToggleSwitch's IsEnabled in XAML: only allow user toggles
+    /// when the cached / fetched state is a definite On or Off. Checking
+    /// progress, Unknown, Not found, etc. lock the switch.
+    /// </summary>
+    public bool CanToggleCloudScheduleFlow =>
+        !IsBusy &&
+        (string.Equals(CloudScheduleFlowStateText, "On", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(CloudScheduleFlowStateText, "Off", StringComparison.OrdinalIgnoreCase));
+
+    partial void OnIsBusyChanged(bool value) => OnPropertyChanged(nameof(CanToggleCloudScheduleFlow));
     // Manual-vacation cloud flows banner — sibling to the Cloud Schedule
     // banner but reports the combined state of the two flows (Vacation Start
     // + Vacation End). Combined state values: "On" (both On), "Off" (both
