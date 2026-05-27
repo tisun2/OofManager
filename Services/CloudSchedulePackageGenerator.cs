@@ -855,7 +855,7 @@ public static class CloudSchedulePackageGenerator
     /// the Office 365 connector accepts the value but Outlook renders the
     /// reply as a single line because the field expects HTML markup.
     /// </summary>
-    private static string PlainTextToHtml(string value)
+    public static string PlainTextToHtml(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
             return string.Empty;

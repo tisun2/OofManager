@@ -7,7 +7,7 @@ using OofManager.Wpf.Services;
 
 namespace OofManager.Wpf.ViewModels;
 
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IExchangeService _exchangeService;
     private readonly IPowerAutomateService _powerAutomate;
@@ -16,6 +16,11 @@ public partial class MainViewModel : ObservableObject
     private readonly INavigationService _navigation;
     private readonly IPreferencesService _prefs;
     private CancellationTokenSource? _automationCts;
+    // Cancelled on Dispose so background refresh helpers (fired with `_ =`)
+    // can short-circuit instead of running into a half-torn-down DI scope on
+    // shutdown. Underlying PowerShell pipelines still run to completion, but
+    // the post-await UI updates are skipped quietly.
+    private readonly CancellationTokenSource _lifetimeCts = new();
     private bool _hasLoadedOnce;
     // Last reply text we either fetched from Exchange (LoadAsync) or pushed
     // (any successful SetOofSettingsAsync). The cloud-sync zip / guide
@@ -41,10 +46,6 @@ public partial class MainViewModel : ObservableObject
     private bool _isCloudSchedulePackageRunning;
     private bool _isVacationFlowsStatusChecking;
     // Set true around programmatic mutations of CloudScheduleFlowStateText so
-    // the IsCloudScheduleFlowOn setter (driven by the ToggleSwitch's two-way
-    // binding) doesn't kick a redundant Enable/Disable when we're just
-    // reflecting fresh server state into the UI.
-    private bool _suppressCloudScheduleFlowToggleCommit;
     // Set to true around any programmatic mutation of IsOofEnabled so the
     // partial setter's auto-commit path (which only fires for genuine user
     // gestures on the OOF toggle) doesn't kick a Set against Exchange when
@@ -65,18 +66,17 @@ public partial class MainViewModel : ObservableObject
     /// Two-way bound to the inline ToggleSwitch that replaced the separate
     /// Turn off / Turn on buttons. The getter reflects the current
     /// <see cref="CloudScheduleFlowStateText"/>; the setter triggers the
-    /// matching Enable/Disable command — unless the change came from a
-    /// programmatic state refresh (in which case
-    /// <see cref="_suppressCloudScheduleFlowToggleCommit"/> blocks the
-    /// commit so we don't loop). Disabled in XAML when state is
-    /// Checking/Unknown/Not found so the user can't toggle into nonsense.
+    /// matching Enable/Disable command. Programmatic state refreshes raise
+    /// PropertyChanged on this property so the binding re-reads the getter;
+    /// the equality guard below then short-circuits before calling Enable/
+    /// Disable. Disabled in XAML when state is Checking/Unknown/Not found
+    /// so the user can't toggle into nonsense.
     /// </summary>
     public bool IsCloudScheduleFlowOn
     {
         get => string.Equals(CloudScheduleFlowStateText, "On", StringComparison.OrdinalIgnoreCase);
         set
         {
-            if (_suppressCloudScheduleFlowToggleCommit) return;
             var currentlyOn = IsCloudScheduleFlowOn;
             if (value == currentlyOn) return;
             if (value)
@@ -392,10 +392,13 @@ public partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(SyncButtonToolTip));
         RefreshOofStatusBar();
 
-        if (!value && !_suppressDirtyTracking && !_suppressWorkScheduleCommit)
-        {
-            _ = RefreshCloudScheduleFlowStatusAsync();
-        }
+        // Each mode remembers its own reply text. Pull the now-active
+        // mode's saved copy (if any) into the visible editors. Skipped
+        // during prefs hydration — at that point we have no editor input
+        // yet and OnLoadedAsync's Exchange-state assignment seeds the
+        // current mode's slot.
+        if (!_suppressDirtyTracking)
+            RestoreReplyMessagesForCurrentMode();
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
         // pass through the same setter; we only commit for genuine user
@@ -412,10 +415,57 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnInternalReplyChanged(string value)
     {
+        if (_suppressDirtyTracking || _suppressModeReplySwap) return;
+        _prefs.Set(GetReplyPrefKey(internalReply: true, weekly: IsScheduleMode), value);
     }
 
     partial void OnExternalReplyChanged(string value)
     {
+        if (_suppressDirtyTracking || _suppressModeReplySwap) return;
+        _prefs.Set(GetReplyPrefKey(internalReply: false, weekly: IsScheduleMode), value);
+    }
+
+    // Pref key naming: Reply.Weekly.Internal / Reply.Weekly.External /
+    // Reply.Manual.Internal / Reply.Manual.External. Each mode owns its
+    // own copy so flipping between Weekly and Manual restores the text the
+    // user last edited in that mode instead of carrying the other mode's
+    // text across.
+    private static string GetReplyPrefKey(bool internalReply, bool weekly)
+        => (weekly, internalReply) switch
+        {
+            (true,  true)  => "Reply.Weekly.Internal",
+            (true,  false) => "Reply.Weekly.External",
+            (false, true)  => "Reply.Manual.Internal",
+            (false, false) => "Reply.Manual.External",
+        };
+
+    // Set while we're rewriting InternalReply/ExternalReply from a saved
+    // per-mode pref during a mode switch — keeps the OnXxxReplyChanged
+    // partials from immediately writing the restored value back to prefs.
+    private bool _suppressModeReplySwap;
+
+    private void RestoreReplyMessagesForCurrentMode()
+    {
+        var weekly = IsScheduleMode;
+        var internalKey = GetReplyPrefKey(internalReply: true, weekly);
+        var externalKey = GetReplyPrefKey(internalReply: false, weekly);
+        var savedInternal = _prefs.GetString(internalKey);
+        var savedExternal = _prefs.GetString(externalKey);
+        // Only swap when the mode has previously-saved text; otherwise keep
+        // whatever's currently on screen so the very first mode flip after
+        // a fresh login doesn't blank the editor.
+        if (savedInternal is null && savedExternal is null) return;
+
+        _suppressModeReplySwap = true;
+        try
+        {
+            if (savedInternal is not null) InternalReply = savedInternal;
+            if (savedExternal is not null) ExternalReply = savedExternal;
+        }
+        finally
+        {
+            _suppressModeReplySwap = false;
+        }
     }
     // Vacation toggle drives both the work-schedule status caption (so the
     // user can see "paused" right on the schedule card) and a refresh of the
@@ -461,10 +511,24 @@ public partial class MainViewModel : ObservableObject
     partial void OnStartTimeChanged(TimeSpan value) => RefreshOofStatusBar();
     partial void OnEndDateChanged(DateTime value) => RefreshOofStatusBar();
     partial void OnEndTimeChanged(TimeSpan value) => RefreshOofStatusBar();
-    partial void OnVacationStartDateChanged(DateTime value) => RefreshOofStatusBar();
-    partial void OnVacationStartTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+    partial void OnVacationStartDateChanged(DateTime value) { RefreshOofStatusBar(); HintIfVacationStartInPast(); }
+    partial void OnVacationStartTimeChanged(TimeSpan value) { RefreshOofStatusBar(); HintIfVacationStartInPast(); }
     partial void OnVacationEndDateChanged(DateTime value) => RefreshOofStatusBar();
     partial void OnVacationEndTimeChanged(TimeSpan value) => RefreshOofStatusBar();
+
+    // A start that's already in the past means OOF "should be on" locally
+    // but Outlook hasn't been told yet. Nudge the user to click ⚡ Sync to
+    // Outlook so the mailbox catches up. Only fires for live user edits
+    // (not prefs restore / programmatic sets) and only when a vacation is
+    // actually planned but not yet pushed.
+    private void HintIfVacationStartInPast()
+    {
+        if (_suppressDirtyTracking) return;
+        if (!IsManualMode || !IsVacationWindowActive || IsOnLongVacation) return;
+        var startLocal = VacationStartDate.Date.Add(VacationStartTime);
+        if (startLocal >= DateTime.Now) return;
+        StatusMessage = "Vacation start is in the past. Click ⚡ Sync to Outlook to apply it now.";
+    }
 
     private void EnsureVacationShowsManualOofOn()
     {
@@ -592,7 +656,11 @@ public partial class MainViewModel : ObservableObject
 
             await Task.WhenAll(oofTask, templatesTask);
 
-            var oof = oofTask.Result;
+            // Tasks already completed above; await the individual tasks instead
+            // of using .Result so any exception propagates as itself (not as an
+            // AggregateException) and we never risk a sync-block on the UI thread.
+            var oof = await oofTask;
+            var templates = await templatesTask;
             // The toggle should reflect what Outlook is *actually doing right
             // now*, not the raw mailbox state. A Scheduled OOF whose window is
             // still in the future means OOF replies aren't being sent yet, so
@@ -621,8 +689,27 @@ public partial class MainViewModel : ObservableObject
             // the user had toggled the switch, which would otherwise lie to
             // the status label about what Exchange actually has.
             CurrentStatus = oof.Status;
-            InternalReply = oof.InternalReply;
-            ExternalReply = oof.ExternalReply;
+            // Reply text: prefer the per-mode saved copy (so the user gets
+            // back the text they last edited in the now-active mode). Fall
+            // back to Exchange's current text on first run / mode that has
+            // never been edited, and seed the slot from it so subsequent
+            // mode flips have something to restore.
+            _suppressModeReplySwap = true;
+            try
+            {
+                var internalKey = GetReplyPrefKey(internalReply: true, weekly: IsScheduleMode);
+                var externalKey = GetReplyPrefKey(internalReply: false, weekly: IsScheduleMode);
+                var savedInternal = _prefs.GetString(internalKey);
+                var savedExternal = _prefs.GetString(externalKey);
+                InternalReply = savedInternal ?? oof.InternalReply;
+                ExternalReply = savedExternal ?? oof.ExternalReply;
+                if (savedInternal is null) _prefs.Set(internalKey, InternalReply);
+                if (savedExternal is null) _prefs.Set(externalKey, ExternalReply);
+            }
+            finally
+            {
+                _suppressModeReplySwap = false;
+            }
             MarkOofClean(oof.Status);
             RememberConfirmedOofState(oof);
 
@@ -639,7 +726,7 @@ public partial class MainViewModel : ObservableObject
             EnsureVacationShowsManualOofOn();
 
             Templates.Clear();
-            foreach (var t in templatesTask.Result) Templates.Add(t);
+            foreach (var t in templates) Templates.Add(t);
 
             _hasLoadedOnce = true;
             RefreshOofStatusBar();
@@ -690,8 +777,10 @@ public partial class MainViewModel : ObservableObject
             // mode it should reflect reality whenever the app is up.
             if (_hasLoadedOnce)
             {
-                _ = RefreshCloudScheduleFlowStatusAsync();
-                _ = RefreshVacationFlowsStatusAsync();
+                // Fire-and-forget, but observe exceptions so a failed cloud-status
+                // probe doesn't silently leave the banner stuck on stale data.
+                _ = SafeRefreshAsync(RefreshCloudScheduleFlowStatusAsync, nameof(RefreshCloudScheduleFlowStatusAsync), _lifetimeCts.Token);
+                _ = SafeRefreshAsync(RefreshVacationFlowsStatusAsync, nameof(RefreshVacationFlowsStatusAsync), _lifetimeCts.Token);
             }
         }
     }
@@ -875,9 +964,20 @@ public partial class MainViewModel : ObservableObject
             await EndVacationAsync();
             return;
         }
-        // Vacation owns the OOF window outright; never let manual reassert
-        // overwrite the multi-day Scheduled block.
-        if (IsOnLongVacation) return;
+        // Vacation owns the OOF window outright; manual on/off must not
+        // overwrite the multi-day Scheduled block. But a user-initiated
+        // Sync click should still re-assert the existing vacation window
+        // to Exchange (in case Outlook desktop, OWA, or another client
+        // drifted the mailbox away). The auto tick keeps the old no-op
+        // behaviour so we don't hammer Exchange on every poll.
+        if (IsOnLongVacation)
+        {
+            if (isUserInitiated)
+            {
+                await ReassertVacationWindowAsync();
+            }
+            return;
+        }
 
         var desired = new OofSettings
         {
@@ -938,6 +1038,53 @@ public partial class MainViewModel : ObservableObject
             {
                 StatusMessage = $"Sync failed: {ex.Message}";
             }
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    // Re-push the currently-configured vacation Scheduled window to Exchange.
+    // Used by the user-initiated Sync button when IsOnLongVacation is already
+    // true on both sides — we re-assert instead of silently no-op'ing so the
+    // button visibly does something when another client drifted the mailbox.
+    private async Task ReassertVacationWindowAsync()
+    {
+        if (IsBusy) return;
+
+        var startLocal = VacationStartDate.Date.Add(VacationStartTime);
+        var endLocal = VacationEndDate.Date.Add(VacationEndTime);
+        if (endLocal <= startLocal || endLocal <= DateTime.Now)
+        {
+            StatusMessage = "Vacation window is invalid or already past; nothing to sync.";
+            return;
+        }
+
+        var startOffset = new DateTimeOffset(startLocal, TimeZoneInfo.Local.GetUtcOffset(startLocal));
+        var endOffset = new DateTimeOffset(endLocal, TimeZoneInfo.Local.GetUtcOffset(endLocal));
+        var settings = new OofSettings
+        {
+            Status = OofStatus.Scheduled,
+            InternalReply = InternalReply,
+            ExternalReply = ExternalReply,
+            StartTime = startOffset,
+            EndTime = endOffset,
+        };
+
+        IsBusy = true;
+        try
+        {
+            StatusMessage = "📤 Re-asserting vacation OOF window to Outlook...";
+            await _exchangeService.SetOofSettingsAsync(settings);
+            RememberConfirmedOofState(settings);
+            CurrentStatus = OofStatus.Scheduled;
+            StatusMessage = $"✅ Vacation OOF re-asserted: {startLocal:ddd MMM d HH:mm} → {endLocal:ddd MMM d HH:mm}.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Sync failed: {ex.Message}";
+            await _dialog.AlertAsync("Sync Failed", ex.Message);
         }
         finally
         {
@@ -1306,7 +1453,10 @@ public partial class MainViewModel : ObservableObject
                 UseShellExecute = true,
             });
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"OpenSolutionsPage failed to launch '{url}': {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -1337,7 +1487,10 @@ public partial class MainViewModel : ObservableObject
                 UseShellExecute = true,
             });
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"OpenConnectionReferencesPage failed to launch '{url}': {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -1467,10 +1620,32 @@ public partial class MainViewModel : ObservableObject
                     var cloudLocal = CloudTriggerToLocal(ch, cm, result.TriggerTimeZone);
                     triggerMatches = cloudLocal.Hours == let.Hours && cloudLocal.Minutes == let.Minutes;
                 }
-                catch { /* leave false */ }
+                catch (Exception ex)
+                {
+                    SyncLogger.Write($"CloudTriggerToLocal failed; trigger match left false: {ex.Message}");
+                }
             }
 
             var allMatch = workdaysMatch && triggerMatches;
+
+            // Reply text + audience diff. Generator wraps the user's plain
+            // text via CloudSchedulePackageGenerator.PlainTextToHtml, so run
+            // the same transform locally and string-equal the result. Older
+            // flows without these fields populated (shouldn't happen — the
+            // generator always writes them — but guard anyway) show "(n/a)".
+            var localInternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(InternalReply ?? string.Empty);
+            var localExternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(ExternalReply ?? string.Empty);
+            const string localAudience = "all"; // VM hard-codes externalAudienceAll: true when generating
+
+            bool internalMatches = result.InternalReplyHtml != null
+                && string.Equals(result.InternalReplyHtml, localInternalHtml, StringComparison.Ordinal);
+            bool externalMatches = result.ExternalReplyHtml != null
+                && string.Equals(result.ExternalReplyHtml, localExternalHtml, StringComparison.Ordinal);
+            bool audienceMatches = result.ExternalAudience != null
+                && string.Equals(result.ExternalAudience, localAudience, StringComparison.OrdinalIgnoreCase);
+            if (result.InternalReplyHtml != null && !internalMatches) allMatch = false;
+            if (result.ExternalReplyHtml != null && !externalMatches) allMatch = false;
+            if (result.ExternalAudience != null && !audienceMatches) allMatch = false;
 
             // Per-day diff (v2): only available when the cloud flow has the
             // sidecar metadata stamped by newer generator versions. Older
@@ -1500,6 +1675,27 @@ public partial class MainViewModel : ObservableObject
 
             var headline = allMatch ? "✅ Local and cloud match." : "⚠️ Local and cloud differ.";
 
+            // Short preview so the dialog stays readable even when the user
+            // has a multi-paragraph signature. Full diff is intentionally
+            // not shown — the user can re-import to push local if needed.
+            static string Preview(string? html)
+            {
+                if (string.IsNullOrEmpty(html)) return "(empty)";
+                var s = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+                s = System.Net.WebUtility.HtmlDecode(s).Replace('\n', ' ').Replace('\r', ' ').Trim();
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ");
+                return s.Length > 80 ? s.Substring(0, 77) + "..." : (s.Length == 0 ? "(empty)" : s);
+            }
+
+            var replySection = "  Reply messages:\n" +
+                $"    Internal:  {(internalMatches ? "✓" : (result.InternalReplyHtml == null ? "(n/a)" : "✗"))}\n" +
+                $"      Local: {Preview(localInternalHtml)}\n" +
+                $"      Cloud: {Preview(result.InternalReplyHtml)}\n" +
+                $"    External:  {(externalMatches ? "✓" : (result.ExternalReplyHtml == null ? "(n/a)" : "✗"))}\n" +
+                $"      Local: {Preview(localExternalHtml)}\n" +
+                $"      Cloud: {Preview(result.ExternalReplyHtml)}\n" +
+                $"    External audience:  Local={localAudience}  Cloud={result.ExternalAudience ?? "(n/a)"}  {(audienceMatches ? "✓" : (result.ExternalAudience == null ? "(n/a)" : "✗"))}\n\n";
+
             var body = headline + "\n\n" +
                        $"Flow: {result.FlowDisplayName ?? expectedFlowDisplayName}\n\n" +
                        $"  Workdays:\n" +
@@ -1511,6 +1707,7 @@ public partial class MainViewModel : ObservableObject
                        (result.PerDaySchedule != null
                           ? "  Per-day hours (from cloud sidecar metadata):\n" + string.Join("\n", perDayLines) + "\n\n"
                           : "  Per-day hours: (cloud flow lacks sidecar metadata — re-run 'Generate & Import Solution' once to enable)\n\n") +
+                       replySection +
                        (allMatch
                           ? "Everything we can check looks consistent."
                           : "If local is the authoritative version, click 'Generate & Import Solution' to push it to the cloud.");
@@ -1584,9 +1781,46 @@ public partial class MainViewModel : ObservableObject
 
             var startMatches = StartMatch(startResult.TriggerStartTimeUtc, localStart);
             var endMatches   = StartMatch(endResult.TriggerStartTimeUtc, localEnd);
+
+            // Reply text + audience diff. The vacation Start flow pushes the
+            // user's reply text into the mailbox; the End flow restores it
+            // (or pushes empty when no pre-vacation snapshot exists). Only
+            // the Start flow carries the user's current InternalReply /
+            // ExternalReply, so compare just that one.
+            var localInternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(InternalReply ?? string.Empty);
+            var localExternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(ExternalReply ?? string.Empty);
+            const string localAudience = "all";
+            bool internalMatches = startResult.InternalReplyHtml != null
+                && string.Equals(startResult.InternalReplyHtml, localInternalHtml, StringComparison.Ordinal);
+            bool externalMatches = startResult.ExternalReplyHtml != null
+                && string.Equals(startResult.ExternalReplyHtml, localExternalHtml, StringComparison.Ordinal);
+            bool audienceMatches = startResult.ExternalAudience != null
+                && string.Equals(startResult.ExternalAudience, localAudience, StringComparison.OrdinalIgnoreCase);
+
             var allMatch = startResult.Outcome == PowerAutomateOutcome.Success && startMatches
                            && endResult.Outcome == PowerAutomateOutcome.Success && endMatches;
+            if (startResult.InternalReplyHtml != null && !internalMatches) allMatch = false;
+            if (startResult.ExternalReplyHtml != null && !externalMatches) allMatch = false;
+            if (startResult.ExternalAudience != null && !audienceMatches) allMatch = false;
             var headline = allMatch ? "✅ Local and cloud vacation match." : "⚠️ Local and cloud vacation differ.";
+
+            static string Preview(string? html)
+            {
+                if (string.IsNullOrEmpty(html)) return "(empty)";
+                var s = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+                s = System.Net.WebUtility.HtmlDecode(s).Replace('\n', ' ').Replace('\r', ' ').Trim();
+                s = System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ");
+                return s.Length > 80 ? s.Substring(0, 77) + "..." : (s.Length == 0 ? "(empty)" : s);
+            }
+
+            var replySection = "  Reply messages (from Vacation Start flow):\n" +
+                $"    Internal:  {(internalMatches ? "✓" : (startResult.InternalReplyHtml == null ? "(n/a)" : "✗"))}\n" +
+                $"      Local: {Preview(localInternalHtml)}\n" +
+                $"      Cloud: {Preview(startResult.InternalReplyHtml)}\n" +
+                $"    External:  {(externalMatches ? "✓" : (startResult.ExternalReplyHtml == null ? "(n/a)" : "✗"))}\n" +
+                $"      Local: {Preview(localExternalHtml)}\n" +
+                $"      Cloud: {Preview(startResult.ExternalReplyHtml)}\n" +
+                $"    External audience:  Local={localAudience}  Cloud={startResult.ExternalAudience ?? "(n/a)"}  {(audienceMatches ? "✓" : (startResult.ExternalAudience == null ? "(n/a)" : "✗"))}\n\n";
 
             var body = headline + "\n\n" +
                        $"  Vacation Start flow ({identity.StartFlowDisplayName}):\n" +
@@ -1595,8 +1829,9 @@ public partial class MainViewModel : ObservableObject
                        $"  Vacation End flow ({identity.EndFlowDisplayName}):\n" +
                        $"    Local: {localEnd:yyyy-MM-dd HH:mm}\n" +
                        $"    Cloud: {FormatCloud(endResult)}   {(endMatches ? "✓" : "✗")}\n\n" +
+                       replySection +
                        (allMatch
-                          ? "Cloud-side trigger times line up with your pickers."
+                          ? "Cloud-side trigger times and reply text line up with your local state."
                           : "If local is the authoritative version, click 🏖️ Set up vacation in cloud to re-import.");
 
             StatusMessage = allMatch ? "🏖️ Local and cloud vacation match." : "🏖️ Local and cloud vacation differ — see dialog.";
@@ -1642,6 +1877,36 @@ public partial class MainViewModel : ObservableObject
         return asLocal.TimeOfDay;
     }
 
+    private static async Task SafeRefreshAsync(Func<Task> action, string label, CancellationToken ct = default)
+    {
+        if (ct.IsCancellationRequested) return;
+        try
+        {
+            await action();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            SyncLogger.Write($"{label} skipped: shutdown");
+        }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"{label} failed: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        // Signal in-flight fire-and-forget refreshes that the VM is going
+        // away so their post-await UI work no-ops instead of poking a
+        // half-disposed dependency graph.
+        try { _lifetimeCts.Cancel(); } catch { }
+        try { _lifetimeCts.Dispose(); } catch { }
+        try { _automationCts?.Cancel(); } catch { }
+        try { _automationCts?.Dispose(); } catch { }
+        _automationCts = null;
+        GC.SuppressFinalize(this);
+    }
+
     private async Task RefreshCloudScheduleFlowStatusAsync()
     {
         if (_isCloudScheduleFlowStatusChecking) return;
@@ -1675,8 +1940,8 @@ public partial class MainViewModel : ObservableObject
     {
         var (stateText, detailText) = state switch
         {
-            PowerAutomateFlowState.On => ("On", "Turn it off before vacation; turn it back on after."),
-            PowerAutomateFlowState.Off => ("Off", "Turn it back on after vacation to resume the cloud schedule."),
+            PowerAutomateFlowState.On => ("On", "Turn it off before a temporary vacation; turn it back on after."),
+            PowerAutomateFlowState.Off => ("Off", "Turn it back on after a temporary vacation to resume the weekly schedule."),
             PowerAutomateFlowState.NotFound => ("Not found", "Import the Cloud Schedule package first."),
             _ => ("Unknown", "Sign in to Power Automate to check or use the buttons."),
         };
@@ -1798,7 +2063,9 @@ public partial class MainViewModel : ObservableObject
         if (IsBusy) return;
         var verbLabel = disable ? "Turning off" : "Turning on";
         IsBusy = true;
-        StatusMessage = $"{verbLabel} vacation flows...";
+        // Toggle progress lives inline in the banner detail (same spot the
+        // steady-state description occupies), not in the top StatusMessage
+        // — same convention as the Weekly schedule flow banner.
         SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{verbLabel} both vacation flows...");
         try
         {
@@ -1812,7 +2079,7 @@ public partial class MainViewModel : ObservableObject
                 var progress = new Progress<string>(m =>
                 {
                     if (!string.IsNullOrWhiteSpace(m))
-                        StatusMessage = $"{label}: {m}";
+                        SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{label}: {m}");
                 });
                 return disable
                     ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress)
@@ -1853,7 +2120,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             StatusMessage = bothOk
-                ? $"✅ Vacation flows {(disable ? "turned off" : "turned on")}."
+                ? string.Empty
                 : $"⚠️ Vacation flows toggle finished with issues. Start: {startResult.Outcome} ({startResult.Message}). End: {endResult.Outcome} ({endResult.Message}).";
         }
         catch (Exception ex)
@@ -1872,7 +2139,11 @@ public partial class MainViewModel : ObservableObject
         if (IsBusy) return;
         var verbLabel = disable ? "Turning off" : "Turning on";
         IsBusy = true;
-        StatusMessage = $"{verbLabel} Power Automate flow. Preparing...";
+        // Show progress inline in the flow banner (same spot the steady-state
+        // detail text occupies) instead of in the top StatusMessage line —
+        // toggle progress is *about* the flow being toggled, so the user's
+        // eye is already on that row.
+        SetCloudScheduleFlowBannerProgress(verbLabel, $"{verbLabel} Power Automate flow. Preparing...");
         try
         {
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
@@ -1892,7 +2163,7 @@ public partial class MainViewModel : ObservableObject
             var toggleProgress = new Progress<string>(message =>
             {
                 if (!string.IsNullOrWhiteSpace(message))
-                    StatusMessage = message;
+                    SetCloudScheduleFlowBannerProgress(verbLabel, message);
             });
             var result = disable
                 ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, toggleProgress)
@@ -1905,9 +2176,11 @@ public partial class MainViewModel : ObservableObject
             {
                 case PowerAutomateOutcome.Success:
                     SetCloudScheduleFlowBanner(disable ? PowerAutomateFlowState.Off : PowerAutomateFlowState.On);
-                    StatusMessage = string.IsNullOrWhiteSpace(flowDisplayNames)
-                        ? "✅ " + result.Message
-                        : $"✅ {result.Message}: {flowDisplayNames}";
+                    // Success is already conveyed by the banner switching to
+                    // On/Off plus its detail text — keeping a separate
+                    // "Turned off Power Automate flow: ..." line above just
+                    // duplicates the banner and never auto-clears.
+                    StatusMessage = string.Empty;
                     break;
                 case PowerAutomateOutcome.NoFlowFound:
                     SetCloudScheduleFlowBanner(PowerAutomateFlowState.NotFound);

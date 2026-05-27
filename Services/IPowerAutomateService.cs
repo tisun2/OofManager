@@ -137,7 +137,10 @@ public sealed class CloudScheduleDefinitionResult
         IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? perDaySchedule = null,
         string? sidecarTimeZone = null,
         string? sidecarGeneratedAt = null,
-        DateTimeOffset? triggerStartTimeUtc = null)
+        DateTimeOffset? triggerStartTimeUtc = null,
+        string? internalReplyHtml = null,
+        string? externalReplyHtml = null,
+        string? externalAudience = null)
     {
         Outcome = outcome;
         Message = message;
@@ -150,6 +153,9 @@ public sealed class CloudScheduleDefinitionResult
         SidecarTimeZone = sidecarTimeZone;
         SidecarGeneratedAt = sidecarGeneratedAt;
         TriggerStartTimeUtc = triggerStartTimeUtc;
+        InternalReplyHtml = internalReplyHtml;
+        ExternalReplyHtml = externalReplyHtml;
+        ExternalAudience = externalAudience;
     }
 
     public PowerAutomateOutcome Outcome { get; }
@@ -177,6 +183,18 @@ public sealed class CloudScheduleDefinitionResult
     public IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? PerDaySchedule { get; }
     public string? SidecarTimeZone { get; }
     public string? SidecarGeneratedAt { get; }
+
+    /// <summary>
+    /// Reply text the cloud flow will push to the mailbox, as stored in the
+    /// Logic Apps action body. The generator wraps the user's plain text in
+    /// <c>&lt;html&gt;&lt;body&gt;...&lt;/body&gt;&lt;/html&gt;</c> with <c>&lt;br&gt;</c>
+    /// line breaks, so to compare against local plain text run the same
+    /// transform locally and string-equal the result.
+    /// </summary>
+    public string? InternalReplyHtml { get; }
+    public string? ExternalReplyHtml { get; }
+    /// <summary>"all" or "contactsOnly" — whatever was stamped into the action body.</summary>
+    public string? ExternalAudience { get; }
 }
 
 public sealed class CloudDaySchedule

@@ -297,18 +297,28 @@ public static class ManualVacationPackageGenerator
     /// action chain is ordered to defeat the SetAutoReply race against the
     /// Schedule flow (which may fire at the exact same instant — e.g. 18:00
     /// Monday — and otherwise overwrite the vacation reply with its daily OOF
-    /// text on the way past):
+    /// text on the way past), without leaving a window where the vacation
+    /// reply isn't live yet (matters when the vacation starts mid-day while
+    /// Weekly OOF is OFF — without this, clients emailing during the wait
+    /// would get no auto-reply at all):
     /// <list type="number">
     ///   <item><description><b>StopFlow</b> Schedule — prevents future
     ///   Schedule-flow triggers during the vacation.</description></item>
-    ///   <item><description><b>Delay 3 minutes</b> — lets any Schedule-flow
+    ///   <item><description><b>SetAutoReply (first write)</b> — vacation
+    ///   reply goes live immediately so anyone emailing during the next
+    ///   60 seconds gets the vacation text.</description></item>
+    ///   <item><description><b>Delay 60 seconds</b> — lets any Schedule-flow
     ///   run that was already in-flight at T0 finish its own SetAutoReply
-    ///   before we write ours.</description></item>
-    ///   <item><description><b>SetAutoReply</b> — last write wins; vacation
-    ///   reply is the final state Outlook sees.</description></item>
+    ///   (which would otherwise overwrite our first write). Schedule runs
+    ///   normally finish in 5–30 s; 60 s covers the vast majority and any
+    ///   rare slow run only briefly clobbers our first write before the
+    ///   second write below restores it.</description></item>
+    ///   <item><description><b>SetAutoReply (second write)</b> — last write
+    ///   wins; if the in-flight Schedule run clobbered our first write, this
+    ///   restores the vacation reply.</description></item>
     /// </list>
     /// When no Schedule-flow target is supplied (no cached runtime FlowName),
-    /// only SetAutoReply runs — there's nothing to race against.
+    /// only a single SetAutoReply runs — there's nothing to race against.
     /// </summary>
     private static string BuildVacationStartFlowJson(
         VacationIdentity identity,
@@ -343,28 +353,44 @@ public static class ManualVacationPackageGenerator
                 scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
                 runAfterStep: null);
 
-            // 2) Wait 3 minutes for any in-flight Schedule-flow run that was
+            // 2) Vacation SetAutoReply (FIRST write) — gives anyone emailing
+            //    during the upcoming 60-second wait the vacation reply right
+            //    away, instead of falling back to whatever Outlook had
+            //    (possibly OFF, if the vacation starts mid-day).
+            actions["Set_up_automatic_replies_first"] = BuildSetAutoReplyAction(
+                tzId: tzId,
+                autoReplyStart: autoReplyStart,
+                autoReplyEnd: autoReplyEnd,
+                audience: audience,
+                internalReply: internalReply,
+                externalReply: externalReply,
+                runAfterStep: "Pause_OofManager_Cloud_Schedule_flow");
+
+            // 3) Wait 60 seconds for any in-flight Schedule-flow run that was
             //    triggered at the same instant T0 to finish its own
             //    SetAutoReply. Built-in 'Wait' action — no connector reference
-            //    needed.
+            //    needed. Schedule runs normally finish in 5–30 s.
             actions["Wait_for_in_flight_Schedule_run"] = new Dictionary<string, object?>
             {
                 ["runAfter"] = new Dictionary<string, object?>
                 {
-                    ["Pause_OofManager_Cloud_Schedule_flow"] = new[] { "Succeeded", "Failed", "Skipped", "TimedOut" },
+                    ["Set_up_automatic_replies_first"] = new[] { "Succeeded", "Failed", "Skipped", "TimedOut" },
                 },
                 ["type"] = "Wait",
                 ["inputs"] = new Dictionary<string, object?>
                 {
                     ["interval"] = new Dictionary<string, object?>
                     {
-                        ["count"] = 3,
-                        ["unit"] = "Minute",
+                        ["count"] = 60,
+                        ["unit"] = "Second",
                     },
                 },
             };
 
-            // 3) Vacation SetAutoReply LAST — last write wins.
+            // 4) Vacation SetAutoReply (SECOND write) — last write wins. If
+            //    the in-flight Schedule run clobbered our first write during
+            //    the wait, this restores the vacation reply as the final
+            //    state Outlook sees.
             actions["Set_up_automatic_replies"] = BuildSetAutoReplyAction(
                 tzId: tzId,
                 autoReplyStart: autoReplyStart,

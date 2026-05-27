@@ -149,11 +149,16 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 }
             }
 
+            TryReadReplyAction(defEl, out var internalReplyHtml, out var externalReplyHtml, out var externalAudience);
+
             return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz,
                 perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen),
                 sidecarTimeZone: sidecarTz,
                 sidecarGeneratedAt: sidecarGen,
-                triggerStartTimeUtc: triggerStartTimeUtc);
+                triggerStartTimeUtc: triggerStartTimeUtc,
+                internalReplyHtml: internalReplyHtml,
+                externalReplyHtml: externalReplyHtml,
+                externalAudience: externalAudience);
         }
         catch (Exception ex)
         {
@@ -207,6 +212,35 @@ public sealed class PowerAutomateService : IPowerAutomateService
             if (parts.Length < 2) return TimeSpan.Zero;
             return int.TryParse(parts[0], out var h) && int.TryParse(parts[1], out var m)
                 ? new TimeSpan(h, m, 0) : TimeSpan.Zero;
+        }
+    }
+
+    // Pulls the reply text + audience out of the "Set up automatic replies (V2)"
+    // action's inputs.parameters. Field names match what the generator writes
+    // (body/automaticRepliesSetting/internalReplyMessage etc.). Any action key
+    // containing "automatic replies" matches, so the lookup survives a future
+    // localized rename of the action label in the designer.
+    private static void TryReadReplyAction(JsonElement defEl, out string? internalReplyHtml, out string? externalReplyHtml, out string? externalAudience)
+    {
+        internalReplyHtml = null;
+        externalReplyHtml = null;
+        externalAudience = null;
+        if (!defEl.TryGetProperty("actions", out var actionsEl) || actionsEl.ValueKind != JsonValueKind.Object)
+            return;
+        foreach (var actionProp in actionsEl.EnumerateObject())
+        {
+            if (actionProp.Value.ValueKind != JsonValueKind.Object) continue;
+            if (!actionProp.Value.TryGetProperty("inputs", out var inputsEl) || inputsEl.ValueKind != JsonValueKind.Object) continue;
+            if (!inputsEl.TryGetProperty("parameters", out var paramsEl) || paramsEl.ValueKind != JsonValueKind.Object) continue;
+            // Match by parameter presence rather than action key so a future
+            // rename (e.g. localization) doesn't break the compare.
+            if (!paramsEl.TryGetProperty("body/automaticRepliesSetting/internalReplyMessage", out var iEl)) continue;
+            if (iEl.ValueKind == JsonValueKind.String) internalReplyHtml = iEl.GetString();
+            if (paramsEl.TryGetProperty("body/automaticRepliesSetting/externalReplyMessage", out var eEl) && eEl.ValueKind == JsonValueKind.String)
+                externalReplyHtml = eEl.GetString();
+            if (paramsEl.TryGetProperty("body/automaticRepliesSetting/externalAudience", out var aEl) && aEl.ValueKind == JsonValueKind.String)
+                externalAudience = aEl.GetString();
+            return;
         }
     }
     public async Task<CloudScheduleImportResult> ImportCloudScheduleSolutionAsync(

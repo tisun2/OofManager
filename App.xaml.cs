@@ -55,7 +55,10 @@ public partial class App : Application
             prefs.Set("WorkSchedule.BackgroundSync", false);
             Services.GetRequiredService<IStartupService>().SetEnabled(false);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            SyncLogger.Write($"Legacy startup cleanup failed: {ex.Message}");
+        }
 
         // If the user has signed in successfully before, fire a silent reconnect
         // in the background while the WPF window is rendering. Connect-ExchangeOnline
@@ -86,6 +89,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // Dispose ViewModels explicitly: the DI container disposes singleton
+        // *services* it created, but it also tracks IDisposable VMs registered
+        // as singletons, so this is belt-and-braces in case lifetime changes.
+        try { (Services.GetService<LoginViewModel>() as IDisposable)?.Dispose(); } catch { }
+        try { (Services.GetService<MainViewModel>() as IDisposable)?.Dispose(); } catch { }
+
         // Dispose the DI container on shutdown so singletons that own native handles
         // (PowerShell runspace, SQLite connection) get a chance to flush + close cleanly.
         // Bounded wait so a hung runspace can't hang the whole exit.
