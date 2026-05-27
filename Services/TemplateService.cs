@@ -24,42 +24,42 @@ public class TemplateService : ITemplateService, IAsyncDisposable
         Directory.CreateDirectory(appDataDir);
         var dbPath = Path.Combine(appDataDir, "oofmanager.db3");
         _db = new SQLiteAsyncConnection(dbPath);
-        await _db.CreateTableAsync<OofTemplate>();
+        await _db.CreateTableAsync<OofTemplate>().ConfigureAwait(false);
         return _db;
     }
 
     public async Task<List<OofTemplate>> GetAllTemplatesAsync()
     {
-        var db = await GetDbAsync();
-        return await db.Table<OofTemplate>().OrderByDescending(t => t.UpdatedAt).ToListAsync();
+        var db = await GetDbAsync().ConfigureAwait(false);
+        return await db.Table<OofTemplate>().OrderByDescending(t => t.UpdatedAt).ToListAsync().ConfigureAwait(false);
     }
 
     public async Task<OofTemplate?> GetTemplateAsync(int id)
     {
-        var db = await GetDbAsync();
-        return await db.FindAsync<OofTemplate>(id);
+        var db = await GetDbAsync().ConfigureAwait(false);
+        return await db.FindAsync<OofTemplate>(id).ConfigureAwait(false);
     }
 
     public async Task SaveTemplateAsync(OofTemplate template)
     {
-        var db = await GetDbAsync();
+        var db = await GetDbAsync().ConfigureAwait(false);
         template.UpdatedAt = DateTime.UtcNow;
 
         if (template.Id == 0)
         {
             template.CreatedAt = DateTime.UtcNow;
-            await db.InsertAsync(template);
+            await db.InsertAsync(template).ConfigureAwait(false);
         }
         else
         {
-            await db.UpdateAsync(template);
+            await db.UpdateAsync(template).ConfigureAwait(false);
         }
     }
 
     public async Task DeleteTemplateAsync(int id)
     {
-        var db = await GetDbAsync();
-        await db.DeleteAsync<OofTemplate>(id);
+        var db = await GetDbAsync().ConfigureAwait(false);
+        await db.DeleteAsync<OofTemplate>(id).ConfigureAwait(false);
     }
 
     /// <summary>

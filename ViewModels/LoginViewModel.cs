@@ -5,7 +5,7 @@ using OofManager.Wpf.Services;
 
 namespace OofManager.Wpf.ViewModels;
 
-public partial class LoginViewModel : ObservableObject
+public partial class LoginViewModel : ObservableObject, IDisposable
 {
     // Stored across launches so we can ask MSAL/WAM for a silent token-cache
     // refresh on the next start instead of forcing the user to click Sign In.
@@ -52,6 +52,16 @@ public partial class LoginViewModel : ObservableObject
         // "Connecting to Microsoft 365\u2026" we surface that to the user instead
         // of leaving them staring at a frozen "Signing you in\u2026" line for ~10s.
         _exchangeService.SignInPhaseChanged += OnSignInPhaseChanged;
+    }
+
+    public void Dispose()
+    {
+        // Unsubscribe so the singleton ExchangeService doesn't keep this VM
+        // (and its event handler closure) alive past app shutdown, and to
+        // make the lifetime model robust if the VM is ever re-registered as
+        // transient/scoped in the future.
+        _exchangeService.SignInPhaseChanged -= OnSignInPhaseChanged;
+        GC.SuppressFinalize(this);
     }
 
     private void OnSignInPhaseChanged(string phase)

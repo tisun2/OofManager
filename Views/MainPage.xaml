@@ -15,7 +15,7 @@
             <!-- Bottom margin so stacked cards have visible breathing room.
                  Without it sibling cards share an edge and the user can't
                  tell where one section ends and the next begins. -->
-            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Margin" Value="0,0,0,20"/>
         </Style>
 
         <Style x:Key="SegmentedModeRadioStyle" TargetType="RadioButton">
@@ -159,13 +159,12 @@
                 </Style>
             </StackPanel.Resources>
 
-            <!-- User Info Card -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Margin="0">
-                    <TextBlock Text="{Binding UserDisplayName}" FontSize="18" FontWeight="Bold"/>
-                    <TextBlock Text="{Binding UserEmail}" FontSize="13" Opacity="0.6"/>
-                </StackPanel>
-            </Border>
+            <!-- User Info header (slim inline, no card chrome — just 2 short lines) -->
+            <StackPanel Orientation="Horizontal" Margin="2,0,0,8" VerticalAlignment="Center">
+                <TextBlock Text="{Binding UserDisplayName}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Text="·" FontSize="14" Opacity="0.45" Margin="8,0" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding UserEmail}" FontSize="12" Opacity="0.6" VerticalAlignment="Center"/>
+            </StackPanel>
 
             <!-- Status Message -->
             <TextBlock Text="{Binding OofStatusBarMessage}"
@@ -221,7 +220,7 @@
                                              Style="{StaticResource SegmentedModeRadioStyle}"
                                              Tag="5,0,0,5"
                                              IsChecked="{Binding IsScheduleMode, Mode=TwoWay}"
-                                             Content="🗓️ Schedule"
+                                             Content="🗓️ Weekly"
                                              ToolTip="Use the weekly work-hours grid below. Sync to Outlook pushes the next off-hours window; Power Automate keeps it running in the cloud."/>
                                 <Border Grid.Column="1"
                                         Width="1"
@@ -286,78 +285,51 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                <StackPanel Grid.ColumnSpan="2" Margin="0">
-                        <!-- Manual-control reminder. When the user turns
-                             Work Schedule off they regain full manual
-                             control of the OOF toggle here — but any Power
-                             Automate flow they previously imported still
-                             runs inside their M365 tenant on its own
-                             schedule and will silently re-flip OOF behind
-                             their back. Surface this exactly when manual
-                             mode kicks in so they remember to disable the
-                             flow in Power Automate too. The button shortcuts
-                             a two-step trip (open browser → type URL) into
-                             one click; it can't toggle the flow off itself
-                             (would need MSAL + Dataverse Web API), but it
-                             lands the user one toggle-click away on the
-                             /flows page where the imported solution flow
-                             shows up under Cloud flows. -->
-                        <Border Background="#FFF8E1" BorderBrush="#F4B400" BorderThickness="0,0,0,2"
-                            CornerRadius="4" Padding="10,8" Margin="0"
-                                HorizontalAlignment="Stretch"
-                                Visibility="{Binding IsOofAutoManaged, Converter={StaticResource InvertBoolToVisibility}}">
-                            <Grid VerticalAlignment="Center" Margin="0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <Grid Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
-                                               Text="Power Automate flow"
-                                               FontSize="12"
-                                               FontWeight="SemiBold"
-                                               Foreground="#3F2F00"
-                                               VerticalAlignment="Center"/>
-                                    <Border Grid.Column="1" Style="{StaticResource FlowStatusBadgeStyle}">
-                                        <TextBlock Text="{Binding CloudScheduleFlowStateText}"
-                                                   FontSize="11"
-                                                   FontWeight="Bold"
-                                                   Foreground="White"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
-                                    </Border>
-                                    <TextBlock Grid.Column="2"
-                                               FontSize="12"
-                                               Foreground="#3F2F00"
-                                               TextWrapping="Wrap"
-                                               Text="{Binding CloudScheduleFlowBannerDetail}"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                                <Button Grid.Column="1"
-                                        Padding="10,4" FontSize="11"
-                                        Content="🛑 Turn off Power Automate flow"
-                                        Command="{Binding DisableCloudScheduleFlowCommand}"
-                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
-                                        VerticalAlignment="Center"
-                                        Margin="0,0,6,0"
-                                        ToolTip="Signs in to Power Automate (first run only) and toggles the OofManager Cloud Schedule flow Off using the bundled PowerApps PowerShell module. Falls back to opening the browser if it can't."/>
-                                <Button Grid.Column="2"
-                                        Padding="10,4" FontSize="11"
-                                        Content="▶️ Turn on Power Automate flow"
-                                        Command="{Binding EnableCloudScheduleFlowCommand}"
-                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
-                                        VerticalAlignment="Center"
-                                        ToolTip="Re-enables the OofManager Cloud Schedule flow if you previously turned it off. Use this when you want the always-on cloud schedule running again."/>
-                            </Grid>
-                        </Border>
-                    </StackPanel>
-
+                <!-- Power Automate vacation-flows status banner (Manual
+                     mode). Mirrors the Cloud Schedule banner that lives in
+                     Schedule mode below: shows the combined state of the
+                     Vacation Start + Vacation End flows imported by 🏖️
+                     Set up vacation in cloud, with one-click turn-off /
+                     turn-on for both. -->
+                <Border Grid.ColumnSpan="2" Background="#E8F0FE" BorderBrush="#4285F4" BorderThickness="0,0,0,2"
+                        CornerRadius="4" Padding="10,8" Margin="0"
+                        HorizontalAlignment="Stretch">
+                    <Grid VerticalAlignment="Center" Margin="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="Vacation flows"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#1A3A75"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"/>
+                        <!-- Inline ToggleSwitch replaces the separate status
+                             badge + Turn off / Turn on vacation flows buttons.
+                             Disabled when state is Mixed / Partial / Not found /
+                             Unknown — those don't have a well-defined "On"
+                             position, the detail text on the right carries
+                             the explanation. -->
+                        <ui:ToggleSwitch Grid.Column="1"
+                                         IsOn="{Binding IsVacationFlowsOn, Mode=TwoWay}"
+                                         IsEnabled="{Binding CanToggleVacationFlows}"
+                                         OnContent="On"
+                                         OffContent="Off"
+                                         FocusVisualStyle="{x:Null}"
+                                         VerticalAlignment="Center"
+                                         Margin="0,0,12,0"
+                                         ToolTip="Toggle both Vacation Start and Vacation End flows in Power Automate together."/>
+                        <TextBlock Grid.Column="2"
+                                   FontSize="12"
+                                   Foreground="#1A3A75"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding VacationFlowsBannerDetail}"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
                     <StackPanel Grid.Row="1" Grid.ColumnSpan="2"
                               Orientation="Horizontal"
                               VerticalAlignment="Center"
@@ -421,7 +393,7 @@
                                  when the user hasn't planned a vacation,
                                  so an empty section is literally just the
                                  header line. -->
-                            <StackPanel Visibility="{Binding IsVacationWindowActive, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel Margin="0" Visibility="{Binding IsVacationWindowActive, Converter={StaticResource BoolToVisibility}}">
                                 <!-- Helper tip: only shown when no vacation
                                      is currently active on the server yet.
                                      Once it's live the VacationStatus line
@@ -553,6 +525,30 @@
                                         </Grid>
                                     </Grid>
                                 </Grid>
+
+                                <!-- Manual-vacation cloud orchestrator + diff.
+                                     Two side-by-side CTAs mirroring the
+                                     Weekly mode pair (Generate & Import +
+                                     Compare with cloud). -->
+                                <Grid Margin="0,16,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="8"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            Content="🏖️ Set up vacation in cloud"
+                                            Command="{Binding GenerateManualVacationPackageCommand}"
+                                            IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
+                                            Padding="12,6" HorizontalAlignment="Stretch"
+                                            ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Cloud Schedule at end, no local PC required."/>
+                                    <Button Grid.Column="2"
+                                            Content="☁️ Compare with cloud"
+                                            Command="{Binding CompareVacationFlowsCommand}"
+                                            IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
+                                            Padding="12,6" HorizontalAlignment="Stretch"
+                                            ToolTip="Reads the deployed Vacation Start + Vacation End flows from Power Automate and reports whether their one-shot trigger times match your local pickers above."/>
+                                </Grid>
                             </StackPanel>
                         </StackPanel>
                     </Grid>
@@ -564,6 +560,51 @@
                         dropped. -->
                     <StackPanel Margin="0,16,0,0" Grid.IsSharedSizeScope="True"
                                 Visibility="{Binding IsScheduleMode, Converter={StaticResource BoolToVisibility}}">
+                        <!-- Live status of the imported Cloud Schedule flow:
+                             reflects what's running in M365 right now and lets
+                             the user flip it on/off without leaving the app.
+                             Lives in Schedule mode because the controls act on
+                             the Schedule-mode cloud flow exclusively. -->
+                        <Border Background="#E8F0FE" BorderBrush="#4285F4" BorderThickness="0,0,0,2"
+                            CornerRadius="4" Padding="10,8" Margin="0,0,0,12"
+                                HorizontalAlignment="Stretch">
+                            <Grid VerticalAlignment="Center" Margin="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="Weekly schedule flow"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           Foreground="#1A3A75"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0"/>
+                                <!-- Inline ToggleSwitch replaces the separate
+                                     status badge + Turn off / Turn on buttons:
+                                     the switch IS the status (On/Off) AND the
+                                     action. Disabled while CanToggleCloudScheduleFlow
+                                     is false (Checking / Unknown / Not found),
+                                     in which case the detail text on the right
+                                     carries the explanation. -->
+                                <ui:ToggleSwitch Grid.Column="1"
+                                                 IsOn="{Binding IsCloudScheduleFlowOn, Mode=TwoWay}"
+                                                 IsEnabled="{Binding CanToggleCloudScheduleFlow}"
+                                                 OnContent="On"
+                                                 OffContent="Off"
+                                                 FocusVisualStyle="{x:Null}"
+                                                 VerticalAlignment="Center"
+                                                 Margin="0,0,12,0"
+                                                 ToolTip="Toggle the OofManager Cloud Schedule flow in Power Automate. First use signs you in; later toggles are silent."/>
+                                <TextBlock Grid.Column="2"
+                                           FontSize="12"
+                                           Foreground="#1A3A75"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding CloudScheduleFlowBannerDetail}"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
                         <TextBlock FontSize="12" Opacity="0.65"
                                    TextWrapping="Wrap"
                                    Margin="0,0,0,8">
@@ -645,15 +686,10 @@
                          for tenants where legacy package import is disabled.
                          Shown after the weekly editor so the main schedule
                          controls sit directly under the live status line. -->
-                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="0,12,0,0"
+                    <Border BorderThickness="0"
+                            Padding="0"
                             Margin="0,12,0,0">
                         <StackPanel Margin="0">
-                            <TextBlock Text="☁️ Power Automate cloud schedule"
-                                       FontSize="14" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                            <TextBlock Text="The flow runs inside your Microsoft 365 account, so your OOF schedule keeps updating in Outlook even with every device powered down."
-                                       FontSize="11" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"/>
                             <!-- Two equal-width CTAs side-by-side. The
                                  package is the recommended path; the manual
                                  setup guide is the fallback for tenants that
@@ -668,58 +704,39 @@
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
                                 <Button Grid.Column="0"
-                                        Content="📦 Generate &amp; Import Solution"
+                                        Content="☁️ Set up weekly schedule in cloud"
                                         Command="{Binding GenerateCloudSchedulePackageCommand}"
                                         IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
                                     ToolTip="Generates the Power Automate solution package, then tries to import it automatically. If automatic import is unavailable, Power Automate opens so you can import OofManager-CloudSchedule.zip manually. Recommended."/>
                                 <Button Grid.Column="2"
-                                        Content="📝 Flow Setup Guide"
-                                        Command="{Binding OpenCloudScheduleGuideCommand}"
+                                        Content="☁️ Compare with cloud"
+                                        Command="{Binding CompareCloudScheduleCommand}"
+                                        IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Opens a guide for creating the Power Automate flow in Power Automate instead of generating and importing a solution package."/>
+                                        ToolTip="Reads the deployed Cloud Schedule flow's definition from Power Automate and reports per-day differences between the local Weekly schedule and what's actually running in M365."/>
                             </Grid>
                         </StackPanel>
                     </Border>
                     </StackPanel>
-                </StackPanel>
-            </Border>
 
-            <!-- Reply Messages + Templates. Three cards (Internal reply,
-                 External reply, My Templates) used to sit stacked here; they
-                 form a single logical unit ("the reply text and the saved
-                 versions of it") so they're now one card with two
-                 side-by-side editors at the top and the templates list
-                 underneath, separated by a divider. The "Save current as
-                 template" button stays on the right of the card header so
-                 it's unambiguously about "snapshot the current replies
-                 into the list below". -->
-            <Border Style="{StaticResource CardStyle}">
-                <StackPanel Margin="0">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="✉️ Reply Messages"
-                                   FontSize="16" FontWeight="Bold"
-                                   VerticalAlignment="Center"/>
-                        <Button Grid.Column="1"
-                                Content="📋 Save as template"
-                                Command="{Binding SaveAsTemplateCommand}"
-                                Padding="10,4" FontSize="12"
-                                VerticalAlignment="Center"
-                                MinWidth="130"
-                                Height="32"
-                                Margin="0,0,13,0"
-                                ToolTip="Save the current Internal &amp; External reply text and external-audience choice as a new reusable template. Doesn't push anything to Outlook."/>
-                    </Grid>
+                    <!-- Reply Messages sub-section. Folded into the OOF
+                         Settings card because the reply text IS part of the
+                         OOF configuration the user is editing; a separate
+                         card made the page feel taller without adding
+                         conceptual separation. Each mode (Weekly / Manual)
+                         remembers its own last-edited reply text in prefs,
+                         so flipping modes restores the appropriate copy.
+                         No header row — the Internal/External titles on the
+                         editors below already announce what this section is. -->
+                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                            BorderThickness="0,1,0,0" Margin="0,16,0,0"/>
 
                     <!-- Two reply editors side-by-side. SharedSizeGroups keep
                          the title row and subtitle row vertically aligned
                          across the two halves so the TextBox tops line up
                          even if one subtitle wraps. -->
-                    <Grid Grid.IsSharedSizeScope="True" Margin="0,12,0,0">
+                    <Grid Grid.IsSharedSizeScope="True" Margin="0,16,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="12"/>
@@ -765,68 +782,87 @@
                         </Grid>
                     </Grid>
 
-                    <!-- Templates sub-section — same divider style we use
-                         elsewhere on the page to separate sub-sections within
-                         a single card. -->
-                    <Border BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                            BorderThickness="0,1,0,0"
-                            Padding="0,12,0,0"
-                            Margin="0,16,0,0">
-                        <StackPanel Margin="0">
+                    <!-- Save-as-template lives in the My Templates card header below. -->
+                </StackPanel>
+            </Border>
+
+            <!-- My Templates — promoted to its own card so the OOF Settings
+                 card stays focused on "what to send"; the templates list is
+                 a separate "snapshots I've saved" concept. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Margin="0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
                             <TextBlock Text="📁 My Templates"
-                                       FontSize="14" FontWeight="SemiBold"/>
-                            <TextBlock Text="Click a template to load it" FontSize="12" Opacity="0.6" Margin="0,4,0,8"/>
-
-                            <ItemsControl ItemsSource="{Binding Templates}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type models:OofTemplate}">
-                                        <Border CornerRadius="8" BorderThickness="1"
-                                                BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
-                                                Padding="12" Margin="0,4">
-                                            <Grid>
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Margin="0">
-                                                    <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
-                                                    <TextBlock Text="{Binding UpdatedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
-                                                               FontSize="11" Opacity="0.5"/>
-                                                </StackPanel>
-                                                <Button Grid.Column="1" Content="Load"
-                                                        Command="{Binding DataContext.LoadTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                        CommandParameter="{Binding}"
-                                                        Margin="8,0,4,0"
-                                                        Padding="10,4" FontSize="12"
-                                                        Width="63" Height="32"/>
-                                                <Button Grid.Column="2" Content="🗑️"
-                                                        Command="{Binding DataContext.DeleteTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                        CommandParameter="{Binding}"
-                                                        Padding="0,4" FontSize="12"
-                                                        Width="63" Height="32"/>
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <TextBlock Text="No templates yet. Save your current settings as a template to get started."
-                                       FontSize="13" Opacity="0.5"
-                                       HorizontalAlignment="Center" Margin="0,12">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding Templates.Count}" Value="0">
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
+                                       FontSize="16" FontWeight="Bold"/>
+                            <TextBlock Text="Click Load to apply a saved Internal/External reply pair to the editors above."
+                                       FontSize="12" Opacity="0.6" Margin="0,4,0,8"/>
                         </StackPanel>
-                    </Border>
+                        <Button Grid.Column="1"
+                                Content="📋 Save as template"
+                                Command="{Binding SaveAsTemplateCommand}"
+                                Padding="10,4" FontSize="12"
+                                VerticalAlignment="Top"
+                                MinWidth="130"
+                                Height="32"
+                                Margin="0,0,13,0"
+                                ToolTip="Save the current Internal &amp; External reply text and external-audience choice as a new reusable template. Doesn't push anything to Outlook."/>
+                    </Grid>
+
+                    <ItemsControl ItemsSource="{Binding Templates}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type models:OofTemplate}">
+                                <Border CornerRadius="8" BorderThickness="1"
+                                        BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                                        Padding="12" Margin="0,4">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0">
+                                            <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="Bold"/>
+                                            <TextBlock Text="{Binding UpdatedAt, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
+                                                       FontSize="11" Opacity="0.5"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="Load"
+                                                Command="{Binding DataContext.LoadTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                CommandParameter="{Binding}"
+                                                Margin="8,0,4,0"
+                                                Padding="10,4" FontSize="12"
+                                                Width="63" Height="32"
+                                                VerticalAlignment="Center"/>
+                                        <Button Grid.Column="2" Content="🗑️"
+                                                Command="{Binding DataContext.DeleteTemplateCommand, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                CommandParameter="{Binding}"
+                                                Padding="0,4" FontSize="12"
+                                                Width="63" Height="32"
+                                                VerticalAlignment="Center"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <TextBlock Text="No templates yet. Save your current settings as a template to get started."
+                               FontSize="13" Opacity="0.5"
+                               HorizontalAlignment="Center" Margin="0,12">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Templates.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                 </StackPanel>
             </Border>
 

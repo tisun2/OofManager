@@ -50,7 +50,10 @@ internal static class Program
         // first paint. The (singleton) ExchangeService instance later adopts
         // the prepared runspace in PrewarmCoreAsync. Safe and non-blocking.
         try { Services.ExchangeService.BeginEagerPrewarm(); }
-        catch { /* best-effort; instance prewarm will still run */ }
+        catch (Exception ex)
+        {
+            Services.SyncLogger.Write($"Eager prewarm kickoff failed; falling back to instance prewarm: {ex.Message}");
+        }
 
         // Returning-user fast path: if a previous successful sign-in remembered a
         // UPN, chain a silent Connect-ExchangeOnline onto the eager runspace right
@@ -63,7 +66,10 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(cachedUpn))
                 Services.ExchangeService.BeginEagerConnect(cachedUpn);
         }
-        catch { /* best-effort */ }
+        catch (Exception ex)
+        {
+            Services.SyncLogger.Write($"Eager silent connect kickoff failed: {ex.Message}");
+        }
 
         var app = new App();
         app.InitializeComponent();

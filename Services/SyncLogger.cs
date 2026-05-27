@@ -49,6 +49,22 @@ public static class SyncLogger
         }
     }
 
+    /// <summary>
+    /// Redacts a UPN / email address so sign-in events can be correlated in
+    /// the log without leaving the user's full identity in plaintext (the log
+    /// lives under %LOCALAPPDATA% and is readable by any local process).
+    /// "alice@example.com" -> "a***@example.com"; null/empty -> "&lt;none&gt;".
+    /// </summary>
+    public static string MaskUpn(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "<none>";
+        var trimmed = value!.Trim();
+        var at = trimmed.IndexOf('@');
+        if (at <= 0 || at == trimmed.Length - 1)
+            return trimmed.Length <= 1 ? "***" : trimmed[0] + "***";
+        return trimmed[0] + "***" + trimmed.Substring(at);
+    }
+
     private static void RotateIfNeeded()
     {
         try

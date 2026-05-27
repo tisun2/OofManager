@@ -190,8 +190,11 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             _runspace = adoptedRs;
             _eagerRunspaceAdopted = true;
             _eagerRunspace = null; // release static reference; instance now owns it
+            // Read+write _moduleImported under the same lock that gates _runspace
+            // so a concurrent ConnectAsync observing _runspace != null also sees
+            // the matching _moduleImported flip (and doesn't re-import the module).
+            if (_eagerModuleImported) _moduleImported = true;
         }
-        if (_eagerModuleImported) _moduleImported = true;
         return true;
     }
 
@@ -214,7 +217,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
             {
                 try { _eagerConnectPs?.Stop(); } catch { }
                 try { await task.ConfigureAwait(false); } catch { }
-                SyncLogger.Write($"SignIn eager connect cancelled: upnHint={trimmedUpn} differs from eager upn={eagerUpn ?? "<none>"}");
+                SyncLogger.Write($"SignIn eager connect cancelled: upnHint={SyncLogger.MaskUpn(trimmedUpn)} differs from eager upn={SyncLogger.MaskUpn(eagerUpn)}");
             }
             return false;
         }
@@ -364,7 +367,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
         }
 
         var total = Stopwatch.StartNew();
-        SyncLogger.Write($"SignIn eager connect start upn={upn}");
+        SyncLogger.Write($"SignIn eager connect start upn={SyncLogger.MaskUpn(upn)}");
         PowerShell? ps = null;
         try
         {
@@ -405,7 +408,7 @@ $connectParams = @{{
             }
 
             _eagerConnectSucceeded = true;
-            SyncLogger.Write($"SignIn eager connect succeeded in {total.Elapsed.TotalMilliseconds:0} ms upn={upn}");
+            SyncLogger.Write($"SignIn eager connect succeeded in {total.Elapsed.TotalMilliseconds:0} ms upn={SyncLogger.MaskUpn(upn)}");
         }
         catch (Exception ex)
         {
@@ -482,7 +485,7 @@ $connectParams = @{{
     {
         var connectTimeout = timeout ?? DefaultConnectTimeout;
         var total = Stopwatch.StartNew();
-        SyncLogger.Write($"SignIn ConnectAsync start timeout={connectTimeout.TotalSeconds:0}s upnHint={(string.IsNullOrWhiteSpace(upnHint) ? "<none>" : upnHint)}");
+        SyncLogger.Write($"SignIn ConnectAsync start timeout={connectTimeout.TotalSeconds:0}s upnHint={SyncLogger.MaskUpn(upnHint)}");
 
         // Wait for any in-flight pre-warm; if none was started, do the work now.
         if (_prewarmTask != null)
@@ -520,7 +523,7 @@ $connectParams = @{{
             _isConnected = true;
             SetSignInPhase(null);
             StartMailboxIdentityResolution(upnHint, _hasResolvedMailboxIdentity ? CachedMailboxRefreshDelay : null);
-            SyncLogger.Write($"SignIn ConnectAsync adopted eager session in {total.Elapsed.TotalMilliseconds:0} ms user={_userPrincipalName} target={_targetMailboxIdentity}");
+            SyncLogger.Write($"SignIn ConnectAsync adopted eager session in {total.Elapsed.TotalMilliseconds:0} ms user={SyncLogger.MaskUpn(_userPrincipalName)} target={SyncLogger.MaskUpn(_targetMailboxIdentity)}");
             return;
         }
 
@@ -681,7 +684,7 @@ $connectionInfoEnd = Get-Date
         _isConnected = true;
         SetSignInPhase(null);
         StartMailboxIdentityResolution(upnHint, _hasResolvedMailboxIdentity ? CachedMailboxRefreshDelay : null);
-        SyncLogger.Write($"SignIn ConnectAsync succeeded in {total.Elapsed.TotalMilliseconds:0} ms user={_userPrincipalName} target={_targetMailboxIdentity}");
+        SyncLogger.Write($"SignIn ConnectAsync succeeded in {total.Elapsed.TotalMilliseconds:0} ms user={SyncLogger.MaskUpn(_userPrincipalName)} target={SyncLogger.MaskUpn(_targetMailboxIdentity)}");
     }
 
     private void StartMailboxIdentityResolution(string? upnHint, TimeSpan? delay = null)
@@ -763,7 +766,7 @@ $mailboxEnd = Get-Date
         }
         if (!string.IsNullOrWhiteSpace(displayName))
             _userDisplayName = displayName!.Trim();
-        SyncLogger.Write($"SignIn mailbox identity resolved mailbox={mailboxMs}ms target={_targetMailboxIdentity} displayName={_userDisplayName ?? "<none>"}");
+        SyncLogger.Write($"SignIn mailbox identity resolved mailbox={mailboxMs}ms target={SyncLogger.MaskUpn(_targetMailboxIdentity)} displayName={_userDisplayName ?? "<none>"}");
     }
 
     private async Task EnsureMailboxIdentityResolvedAsync()
@@ -795,7 +798,7 @@ $mailboxEnd = Get-Date
 
         var updatedUtc = _preferences.GetString($"{cacheKey}.UpdatedUtc");
         SyncLogger.Write(
-            $"SignIn mailbox identity cache hit user={userPrincipalName} target={_targetMailboxIdentity} " +
+            $"SignIn mailbox identity cache hit user={SyncLogger.MaskUpn(userPrincipalName)} target={SyncLogger.MaskUpn(_targetMailboxIdentity)} " +
             $"displayName={_userDisplayName ?? "<none>"} updated={updatedUtc ?? "<unknown>"}");
         return true;
     }
@@ -810,7 +813,7 @@ $mailboxEnd = Get-Date
         _preferences.Set($"{cacheKey}.PrimarySmtp", trimmedPrimarySmtp);
         _preferences.Set($"{cacheKey}.DisplayName", string.IsNullOrWhiteSpace(displayName) ? null : displayName!.Trim());
         _preferences.Set($"{cacheKey}.UpdatedUtc", DateTimeOffset.UtcNow.ToString("O"));
-        SyncLogger.Write($"SignIn mailbox identity cache saved user={userPrincipalName} target={trimmedPrimarySmtp}");
+        SyncLogger.Write($"SignIn mailbox identity cache saved user={SyncLogger.MaskUpn(userPrincipalName)} target={SyncLogger.MaskUpn(trimmedPrimarySmtp)}");
     }
 
     private static string? GetMailboxIdentityCacheKey(string? userPrincipalName)
@@ -1305,12 +1308,27 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
         foreach (var directory in directories)
         {
+            // Two-phase so a benign race (AV / another instance deletes the
+            // directory between the age-check and the Delete) is logged as
+            // "vanished" rather than a misleading cleanup-failed message.
+            DateTime lastWrite;
+            try { lastWrite = Directory.GetLastWriteTimeUtc(directory); }
+            catch (DirectoryNotFoundException) { continue; }
+            catch (Exception ex)
+            {
+                SyncLogger.Write($"SignIn EXO module cache cleanup stat failed {Path.GetFileName(directory)}: {ex.GetType().Name}: {ex.Message}");
+                continue;
+            }
+
+            if (lastWrite >= cutoff) continue;
+
             try
             {
-                if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
-                {
-                    Directory.Delete(directory, recursive: true);
-                }
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // Already gone between stat and delete — that is the desired end state.
             }
             catch (Exception ex)
             {
