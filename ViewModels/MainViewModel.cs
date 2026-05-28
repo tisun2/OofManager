@@ -1221,17 +1221,80 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        // Pull the existing Schedule flow's runtime ids from the same prefs
+        // PowerAutomateService writes after the user's first successful
+        // toggle. See repo memory note on FlowName != WorkflowId. Without
+        // these, the zip ships with AutoReply only (no pause/resume of the
+        // Schedule flow).
+        var scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
+        var scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
+        var scheduleFlowDisplayName = _prefs.GetString("PowerAutomate.Flow.DisplayName");
+        var hasScheduleTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
+
+        // Past-start branch: the cloud Start flow's one-shot trigger only
+        // fires at vacation start time, so a past start means it would never
+        // run — AutoReply would never be set, and the Schedule pause action
+        // bundled into Start would never execute either. Offer to do both
+        // locally right now (Sync to Outlook + disable Schedule flow) so the
+        // imported End flow can still restore state at the end time.
+        if (startLocal <= DateTime.Now)
+        {
+            var stopLine = hasScheduleTarget && !string.IsNullOrWhiteSpace(scheduleFlowDisplayName)
+                ? "  • Turn off your weekly Cloud Schedule flow now (the End flow will turn it back on at vacation end)\n"
+                : string.Empty;
+            var confirmed = await _dialog.ConfirmAsync(
+                "Vacation start is in the past",
+                "The cloud Start flow only fires at the vacation start time, so it wouldn't run.\n\n" +
+                "I can do its work locally instead:\n" +
+                "  • Sync vacation AutoReply to Outlook now\n" +
+                stopLine +
+                $"  • Still import the cloud package so the End flow restores your normal state at {endLocal:ddd MMM d, HH:mm}\n\n" +
+                "Continue?",
+                accept: "Apply now & continue",
+                cancel: "Cancel");
+            if (!confirmed)
+            {
+                StatusMessage = "Manual vacation setup cancelled.";
+                return;
+            }
+
+            // 1. Push the vacation OOF window to Exchange immediately. Exchange
+            //    accepts a Scheduled window with a past start (treats it as
+            //    already active), and StartVacationAsync persists the
+            //    Vacation.* prefs the rest of the app keys off of.
+            await StartVacationAsync();
+            if (!IsOnLongVacation)
+            {
+                // StartVacationAsync surfaced its own error dialog/status.
+                return;
+            }
+
+            // 2. Disable the existing Cloud Schedule flow — this is what the
+            //    Start flow's StopFlow action would have done at vacation start.
+            if (hasScheduleTarget && !string.IsNullOrWhiteSpace(scheduleFlowDisplayName))
+            {
+                var schUpn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+                var schDisplay = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+                var schProgress = new Progress<string>(m =>
+                {
+                    if (!string.IsNullOrWhiteSpace(m))
+                        StatusMessage = $"🏖️ Weekly schedule: {m}";
+                });
+                try
+                {
+                    await _powerAutomate.DisableOofManagerFlowsAsync(schUpn, schDisplay, scheduleFlowDisplayName!, progress: schProgress);
+                }
+                catch (Exception schEx)
+                {
+                    StatusMessage = $"⚠️ Could not turn off weekly Cloud Schedule flow: {schEx.Message}. Continuing with vacation import.";
+                }
+            }
+            // Fall through — the End flow still needs to be imported & enabled.
+        }
+
         IsBusy = true;
         try
         {
-            // Pull the existing Schedule flow's runtime ids from the same prefs
-            // PowerAutomateService writes after the user's first successful
-            // toggle. See repo memory note on FlowName != WorkflowId. Without
-            // these, the zip ships with AutoReply only (no pause/resume of the
-            // Schedule flow).
-            var scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
-            var scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
-            var hasScheduleTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
 
             var packageDir = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
