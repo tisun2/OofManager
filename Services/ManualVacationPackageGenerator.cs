@@ -442,7 +442,7 @@ public static class ManualVacationPackageGenerator
         {
             connectionReferences["shared_flowmanagement"] =
                 BuildConnectionReferenceMap("shared_flowmanagement", identity.FlowMgmtConnRefLogicalName);
-            actions["Resume_OofManager_Cloud_Schedule_flow"] = BuildTurnOnFlowAction(
+            actions["Resume_OofManager_Weekly_Schedule_flow"] = BuildTurnOnFlowAction(
                 scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
                 runAfterStep: null);
         }
@@ -471,15 +471,19 @@ public static class ManualVacationPackageGenerator
     private static Dictionary<string, object?> BuildOneShotRecurrence(string startTimeUtcIso) =>
         new()
         {
-            // One-shot pattern: 1-year recurrence starting at the chosen
-            // instant with count=1. Power Automate caps frequency×interval
-            // at 500 days, so Year×99 (≈36k days) is rejected with
-            // InvalidWorkflowTriggerRecurrence "cannot be greater than
-            // 500.00:00:00". Year×1 (365 days) stays under the cap and
-            // count=1 still pins it to exactly one run.
+            // One-shot pattern: a Month×1 recurrence starting at the chosen
+            // instant with count=1. We previously used Year×1, but the new
+            // Power Automate designer's Frequency dropdown only lists
+            // Second/Minute/Hour/Day/Week/Month — "Year" is accepted by the
+            // engine but renders blank ("Select frequency.") in the UI, which
+            // looks broken and risks the required field being cleared if a
+            // user opens+saves the flow. Month×1 (≈30 days) displays correctly,
+            // stays well under the 500-day frequency×interval cap, and count=1
+            // still pins it to exactly one run at startTime (the frequency
+            // value is irrelevant to that single fire).
             ["recurrence"] = new Dictionary<string, object?>
             {
-                ["frequency"] = "Year",
+                ["frequency"] = "Month",
                 ["interval"] = 1,
                 ["startTime"] = startTimeUtcIso,
                 ["timeZone"] = "UTC",
@@ -780,12 +784,12 @@ public static class ManualVacationPackageGenerator
             $"  Start flow: '{identity.StartFlowDisplayName}'",
             $"     Fires once at {start:yyyy-MM-dd HH:mm} (local) — turns Outlook",
             "     automatic replies on and " + (hasScheduleFlowTarget
-                ? "pauses your OofManager Cloud Schedule flow."
+                ? "pauses your OofManager Weekly Schedule flow."
                 : "(no Schedule-flow target was provided; only AutoReply is set)."),
             "",
             $"  End flow:   '{identity.EndFlowDisplayName}'",
             $"     Fires once at {end:yyyy-MM-dd HH:mm} (local) — " + (hasScheduleFlowTarget
-                ? "re-enables your OofManager Cloud Schedule flow."
+                ? "re-enables your OofManager Weekly Schedule flow."
                 : "no-op (Outlook clears AutoReply on its own at this time)."),
             "",
             "How to import",
@@ -794,7 +798,7 @@ public static class ManualVacationPackageGenerator
             "2. Pick the environment named after you in the top-right env selector.",
             "3. Solutions → Import solution → Browse → pick this .zip.",
             "4. Map the 'OofManager Outlook' connection reference to your Office 365",
-            "   Outlook connection (same connection the Cloud Schedule flow uses).",
+            "   Outlook connection (same connection the Weekly Schedule flow uses).",
             hasScheduleFlowTarget
                 ? "5. Map the 'OofManager Flow Management' connection reference to a Power"
                 : "5. (No Flow Management connection reference in this build.)",

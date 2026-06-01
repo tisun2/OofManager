@@ -170,11 +170,13 @@ public static class CloudSchedulePackageGenerator
         var solutionVersion = BuildSolutionVersion(generatedAt);
 
         var tzId = TimeZoneInfo.Local.Id;
-        // Trigger fires at the earliest end-of-shift across all workdays.
-        // Days with a later end (e.g. Fri 18:00 on a Mon-Thu 17:30 / Fri 18:00
-        // schedule) get a future-dated OOF window that activates at their
-        // actual end-of-shift, computed in the action body via per-dow lookup.
-        var triggerEnd = ComputeRepresentativeEnd(schedule);
+        // Trigger fires at the earliest start-of-shift across all workdays.
+        // This always lands before any day's end-of-shift, giving the largest
+        // buffer so transient Power Automate delays/throttling can't make the
+        // flow miss a day's window. The OOF window itself is still future-
+        // dated per day in the action body via per-dow lookup (start = that
+        // day's end-of-shift, end = next workday's start-of-shift).
+        var triggerEnd = ComputeRepresentativeStart(schedule);
 
         var weekDays = new[]
         {
@@ -510,7 +512,7 @@ public static class CloudSchedulePackageGenerator
         <LocalizedName description=""{XmlEscape(PublisherDisplayName)}"" languagecode=""1033"" />
       </LocalizedNames>
       <Descriptions>
-        <Description description=""Default publisher for OofManager-generated cloud schedule solutions."" languagecode=""1033"" />
+        <Description description=""Default publisher for OofManager-generated weekly schedule solutions."" languagecode=""1033"" />
       </Descriptions>
       <EMailAddress xsi:nil=""true""></EMailAddress>
       <SupportingWebsiteUrl xsi:nil=""true""></SupportingWebsiteUrl>
@@ -680,16 +682,16 @@ public static class CloudSchedulePackageGenerator
         return sb.ToString();
     }
 
-    private static TimeSpan ComputeRepresentativeEnd(WorkScheduleSnapshot s)
+    private static TimeSpan ComputeRepresentativeStart(WorkScheduleSnapshot s)
     {
         TimeSpan? earliest = null;
         foreach (DayOfWeek d in Enum.GetValues(typeof(DayOfWeek)))
         {
             if (!s.IsWorkday(d)) continue;
-            var e = s.GetEnd(d);
-            if (earliest == null || e < earliest.Value) earliest = e;
+            var start = s.GetStart(d);
+            if (earliest == null || start < earliest.Value) earliest = start;
         }
-        return earliest ?? new TimeSpan(17, 30, 0);
+        return earliest ?? new TimeSpan(9, 0, 0);
     }
 
     private static string BuildReadme(string userEmail, CloudScheduleIdentity identity)
@@ -729,7 +731,7 @@ public static class CloudSchedulePackageGenerator
             "",
             "If anything fails",
             "-----------------",
-            "Re-run 'Set up cloud schedule' in OofManager — the regenerated zip uses",
+            "Re-run 'Set up weekly schedule' in OofManager — the regenerated zip uses",
             "the same solution + workflow GUIDs (derived from your alias '" + identity.Alias + "'),",
             "so a re-import becomes an upgrade rather than a duplicate. If solution",
             "import is also blocked by your tenant, switch to the manual setup guide",
@@ -753,9 +755,9 @@ public static class CloudSchedulePackageGenerator
         // Solution UniqueName must match [A-Za-z][A-Za-z0-9_]*. The base
         // is ASCII-safe; alias is already sanitized to alphanumerics by
         // SanitizeAlias, so concatenation stays valid.
-        var solutionUniqueName = $"OofManagerCloudSchedule_{alias}";
-        var solutionDisplayName = $"OofManager Cloud Schedule ({alias})";
-        var flowDisplayName = $"OofManager Cloud Schedule ({alias})";
+        var solutionUniqueName = $"OofManagerWeeklySchedule_{alias}";
+        var solutionDisplayName = $"OofManager Weekly Schedule ({alias})";
+        var flowDisplayName = $"OofManager Weekly Schedule ({alias})";
 
         // Connection-reference logical names must be prefixed with the
         // publisher's customization prefix and be Dataverse-safe. Lower

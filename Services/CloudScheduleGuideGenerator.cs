@@ -144,7 +144,7 @@ public static class CloudScheduleGuideGenerator
 <html lang=""en"">
 <head>
 <meta charset=""utf-8""/>
-<title>OofManager — Cloud Schedule Setup Guide</title>
+<title>OofManager — Weekly Schedule Setup Guide</title>
 <style>
   :root { --accent: #0078D4; --accent-dark: #005A9E; --bg: #FAFAFA; --card: #fff; --border: #E5E5E5; --muted: #666; --code-bg: #F4F4F4; }
   * { box-sizing: border-box; }
@@ -183,7 +183,7 @@ public static class CloudScheduleGuideGenerator
 </head>
 <body>
 <div class=""container"">
-  <h1>🌐 OofManager &mdash; Cloud Schedule Setup</h1>
+  <h1>🌐 OofManager &mdash; Weekly Schedule Setup</h1>
   <p class=""lede"">Set up a Power Automate scheduled cloud flow so your Out-of-Office window is pushed to Outlook every morning automatically &mdash; even when all of your computers are powered off. Takes about 5 minutes.</p>
 
   <div class=""card"">
@@ -223,7 +223,7 @@ public static class CloudScheduleGuideGenerator
     <p>Use these exact values:</p>
     <table>
       <tr><th>Field</th><th>Value</th></tr>
-      <tr><td>Flow name</td><td><code>OofManager Cloud Schedule</code></td></tr>
+      <tr><td>Flow name</td><td><code>OofManager Weekly Schedule</code></td></tr>
       <tr><td>Starting</td><td>(leave today's date, choose a time slightly after now)</td></tr>
       <tr><td>Repeat every</td><td><code>1 Day</code></td></tr>
       <tr><td>At these hours</td><td><code>");

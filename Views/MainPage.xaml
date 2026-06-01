@@ -541,7 +541,7 @@
                                             Command="{Binding GenerateManualVacationPackageCommand}"
                                             IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                             Padding="12,6" HorizontalAlignment="Stretch"
-                                            ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Cloud Schedule at end, no local PC required."/>
+                                            ToolTip="Generates and imports a Power Automate solution that runs this vacation entirely from Microsoft 365 — sets AutoReply at start, restores your Weekly Schedule at end, no local PC required."/>
                                     <Button Grid.Column="2"
                                             Content="☁️ Compare with cloud"
                                             Command="{Binding CompareVacationFlowsCommand}"
@@ -596,7 +596,7 @@
                                                  FocusVisualStyle="{x:Null}"
                                                  VerticalAlignment="Center"
                                                  Margin="0,0,12,0"
-                                                 ToolTip="Toggle the OofManager Cloud Schedule flow in Power Automate. First use signs you in; later toggles are silent."/>
+                                                 ToolTip="Toggle the OofManager Weekly Schedule flow in Power Automate. First use signs you in; later toggles are silent."/>
                                 <TextBlock Grid.Column="2"
                                            FontSize="12"
                                            Foreground="#1A3A75"
@@ -714,7 +714,7 @@
                                         Command="{Binding CompareCloudScheduleCommand}"
                                         IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBool}}"
                                         Padding="12,6" HorizontalAlignment="Stretch"
-                                        ToolTip="Reads the deployed Cloud Schedule flow's definition from Power Automate and reports per-day differences between the local Weekly schedule and what's actually running in M365."/>
+                                        ToolTip="Reads the deployed Weekly Schedule flow's definition from Power Automate and reports per-day differences between the local Weekly schedule and what's actually running in M365."/>
                             </Grid>
                         </StackPanel>
                     </Border>

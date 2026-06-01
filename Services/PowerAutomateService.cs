@@ -21,7 +21,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
     // The CloudSchedulePackageGenerator stamps every solution flow with
     // displayName "OofManager Cloud Schedule ({alias})". Matching on this prefix
     // is robust to alias differences and to re-imports.
-    private const string FlowDisplayNamePrefix = "OofManager Cloud Schedule";
+    private const string FlowDisplayNamePrefix = "OofManager Weekly Schedule";
     private const string ImportCacheUpnKey = "PowerAutomate.Import.Environment.Upn";
     private const string ImportCacheEnvironmentIdKey = "PowerAutomate.Import.Environment.Id";
     private const string ImportCacheEnvironmentDisplayNameKey = "PowerAutomate.Import.Environment.DisplayName";
@@ -507,7 +507,13 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
     private async Task<PowerAutomateStatusResult> RunStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct, IProgress<string>? progress)
     {
-        var json = await RunFlowScriptAsync("Get-Status", upnHint, displayNameHint, expectedFlowDisplayName, ct, progress).ConfigureAwait(false);
+        // Status is a read-only probe that runs automatically at startup (and
+        // after vacation operations). It must never pop a sign-in dialog on its
+        // own, so run the child window hidden — no visible console flash at
+        // launch. If silent auth isn't possible the probe degrades to an
+        // "Unknown" banner and the user authenticates via an explicit action
+        // (import / toggle / compare), which still uses the visible console.
+        var json = await RunFlowScriptAsync("Get-Status", upnHint, displayNameHint, expectedFlowDisplayName, ct, progress, interactive: false).ConfigureAwait(false);
         var result = ParseStatusResult(json.Json, json.ExitCode);
         if (result.Outcome == PowerAutomateOutcome.Success)
             SaveFlowReferenceCache(upnHint, expectedFlowDisplayName, result.FlowReferences);
@@ -527,7 +533,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
         return result;
     }
 
-    private Task<ChildResult> RunFlowScriptAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct, IProgress<string>? progress = null)
+    private Task<ChildResult> RunFlowScriptAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct, IProgress<string>? progress = null, bool interactive = true)
     {
         var cachedEnvironment = GetCachedImportEnvironment(upnHint);
         var cachedFlowReference = GetCachedFlowReference(upnHint, expectedFlowDisplayName, cachedEnvironment?.EnvironmentId);
@@ -556,7 +562,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
             envVars,
             timeout: TimeSpan.FromMinutes(5),
             ct: ct,
-            progress: progress);
+            progress: progress,
+            interactive: interactive);
     }
 
     private readonly struct ChildResult
@@ -580,7 +587,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
         IDictionary<string, string> envVars,
         TimeSpan timeout,
         CancellationToken ct,
-        IProgress<string>? progress = null)
+        IProgress<string>? progress = null,
+        bool interactive = true)
     {
         var modulesDir = Path.Combine(AppContext.BaseDirectory, "Modules");
         var psFile = Path.Combine(Path.GetTempPath(), $"oofmgr-pa-{Guid.NewGuid():N}.ps1");
@@ -617,7 +625,11 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 // auth dialog never appears, leaving the runspace blocked.
                 RedirectStandardOutput = false,
                 RedirectStandardError = false,
-                CreateNoWindow = false,
+                // Visible console only for interactive paths (import / toggle)
+                // where ADAL's sign-in dialog must anchor to a real console.
+                // Background read-only status probes pass interactive:false so
+                // the cmd/powershell child runs hidden — no startup flash.
+                CreateNoWindow = !interactive,
             };
             psi.EnvironmentVariables["OOFMGR_PA_MODULES"]    = modulesDir;
             psi.EnvironmentVariables["OOFMGR_PA_RESULTFILE"] = resultFile;
@@ -981,7 +993,7 @@ try {
             Add-PowerAppsAccount -Endpoint prod -ErrorAction Stop | Out-Null
         }
         Trace 'after  Add-PowerAppsAccount'
-        Report 'Signed in. Looking for your cloud schedule flow...'
+        Report 'Signed in. Looking for your weekly schedule flow...'
     } catch {
         Trace ""Add-PowerAppsAccount FAILED: $($_.Exception.Message)""
         Emit 'SignInFailed' (""Sign-in to Power Automate failed: "" + $_.Exception.Message) @()
@@ -1425,7 +1437,7 @@ try {
 
     if ($verb -eq 'Get-Status') {
         foreach ($f in $matched) {
-            Report ""Found cloud schedule flow '$($f.DisplayName)'. Reading current state...""
+            Report ""Found weekly schedule flow '$($f.DisplayName)'. Reading current state...""
             $freshState = Read-CurrentEnabled $f
             if ($freshState.Known) {
                 $state = if ($freshState.Enabled) { 'On' } else { 'Off' }

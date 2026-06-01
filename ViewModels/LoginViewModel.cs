@@ -98,11 +98,9 @@ public partial class LoginViewModel : ObservableObject, IDisposable
         // to the Windows UPN when we have nothing better — that's the case on
         // a brand-new install on a corporate Entra-joined device.
         var upnHint = _prefs.GetString(LastUpnPrefKey);
-        var fromWindows = false;
         if (string.IsNullOrWhiteSpace(upnHint))
         {
             upnHint = _windowsAccount.TryGetCurrentUserUpn();
-            fromWindows = !string.IsNullOrWhiteSpace(upnHint);
         }
 
         if (string.IsNullOrWhiteSpace(upnHint)) return;
@@ -120,49 +118,15 @@ public partial class LoginViewModel : ObservableObject, IDisposable
             return;
         }
 
-        IsBusy = true;
-        // Prefer the live phase from ExchangeService (likely "Preparing Exchange
-        // module…" by the time LoginPage paints) so the user sees what we're
-        // actually doing, not a generic banner.
-        StatusMessage = _exchangeService.CurrentSignInPhase
-            ?? (fromWindows
-                ? $"Signing you in as {upnHint} (Windows account)…"
-                : $"Signing you in as {upnHint}…");
-
-        try
-        {
-            // Reuses the in-flight startup-time connect attempt if one is
-            // already running; otherwise launches a fresh background connect.
-            // Either way, this awaits the same underlying ConnectAsync.
-            await AwaitWithSlowStatusAsync(
-                _exchangeService.TryAutoConnectAsync(upnHint!, AutoLoginConnectTimeout),
-                "Still connecting to Exchange Online. This can happen on cold starts or slow networks...");
-            if (!_exchangeService.IsConnected)
-            {
-                // Silent auto-login failed (token expired, password change, CA
-                // policy, network blip, etc.). Drop back to the Sign In button
-                // — the user can click it and go through interactive auth as before.
-                StatusMessage = "Sign in with your Microsoft 365 account";
-                return;
-            }
-            IsLoggedIn = true;
-            UserDisplayName = await _exchangeService.GetCurrentUserAsync();
-            // Refresh the cached UPN in case the canonical form differs from
-            // what the user originally typed (e.g. casing, alias vs. UPN).
-            _prefs.Set(LastUpnPrefKey, UserDisplayName);
-            StatusMessage = $"Welcome back, {UserDisplayName}!";
-            _navigation.NavigateToMain();
-        }
-        catch
-        {
-            // TryAutoConnectAsync swallows exceptions internally; defensive in
-            // case a future refactor leaks one.
-            StatusMessage = "Sign in with your Microsoft 365 account";
-        }
-        finally
-        {
-            IsBusy = false;
-        }
+        // Non-blocking sign-in: we have a UPN to try, so go straight to the main
+        // window and let MainViewModel.LoadAsync drive the silent connect in the
+        // background. The user sees the fully-populated window immediately instead
+        // of watching the login spinner for the entire 8-20s Exchange connect.
+        // App.OnStartup already kicked off TryAutoConnectAsync for this UPN, so the
+        // session is usually live (or nearly so) by the time LoadAsync awaits it.
+        // If the silent connect ultimately fails, LoadAsync navigates back here so
+        // the user can sign in interactively.
+        _navigation.NavigateToMain();
     }
 
     [RelayCommand]
