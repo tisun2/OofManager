@@ -1771,14 +1771,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             var weekDays = new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
             var localWorkdays = weekDays.Where(IsWorkday).ToList();
-            // Cloud trigger fires at the earliest start-of-shift across all
+            // Cloud trigger fires at the latest start-of-shift across all
             // workdays (matches CloudSchedulePackageGenerator), so compare
             // against the same anchor here.
             TimeSpan? localTriggerEnd = null;
             foreach (var d in localWorkdays)
             {
                 var e = GetStartTimeForDay(d);
-                if (localTriggerEnd == null || e < localTriggerEnd.Value) localTriggerEnd = e;
+                if (localTriggerEnd == null || e > localTriggerEnd.Value) localTriggerEnd = e;
             }
 
             string CloudTriggerLocalString()
@@ -1893,7 +1893,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                        $"  Workdays:\n" +
                        $"    Local: {localDaysStr}\n" +
                        $"    Cloud: {cloudDaysStr}   {(workdaysMatch ? "✓" : "✗")}\n\n" +
-                       $"  Earliest workday start (= cloud trigger time):\n" +
+                       $"  Latest workday start (= cloud trigger time):\n" +
                        $"    Local: {localTriggerStr}\n" +
                        $"    Cloud: {CloudTriggerLocalString()}   {(triggerMatches ? "✓" : "✗")}\n\n" +
                        (result.PerDaySchedule != null
