@@ -2067,6 +2067,34 @@ try {
                 return ($bare.Substring(0, $bare.Length - 2) + '.' + $bare.Substring($bare.Length - 2, 2) + '.environment.api.powerplatform.com')
             }
 
+            # POST a per-env connectivity action (getConsentLink /
+            # confirmConsentCode). Defined once at script scope (rather than
+            # nested inside New-OofConnectionInteractive) so re-defining it on
+            # every connector doesn't pollute the outer scope, and so the
+            # HttpWebRequest streams can be reliably disposed.
+            function Invoke-PpAction($ctx, $action, $bodyObj) {
+                $url = ""https://$($ctx.Host)/connectivity/connectors/$($ctx.Connector)/connections/$($ctx.Conn)/$action`?api-version=1&`$filter=$($ctx.Filter)""
+                $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
+                $req = [System.Net.HttpWebRequest]::Create($url)
+                $req.Method = 'POST'; $req.ContentType = 'application/json'
+                $req.Headers.Add('Authorization', ""Bearer $($ctx.Token)"")
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                $req.ContentLength = $bytes.Length
+                $reqStream = $null; $resp = $null; $reader = $null
+                try {
+                    $reqStream = $req.GetRequestStream()
+                    $reqStream.Write($bytes, 0, $bytes.Length)
+                    $reqStream.Close()
+                    $resp = $req.GetResponse()
+                    $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+                    return $reader.ReadToEnd()
+                } finally {
+                    if ($reader)    { try { $reader.Dispose() }    catch {} }
+                    if ($resp)      { try { $resp.Dispose() }      catch {} }
+                    if ($reqStream) { try { $reqStream.Dispose() } catch {} }
+                }
+            }
+
             # Create ONE user OAuth connection programmatically and authenticate
             # it via the connector's own OAuth consent page shown in an in-app
             # WebBrowser dialog. Steps (all verified against live APIs):
@@ -2080,6 +2108,12 @@ try {
             # Returns $true on success. Any failure returns $false so the caller
             # can fall back to the maker-portal New-connection page.
             function New-OofConnectionInteractive($connector, $envGuid) {
+                # Track the PUT-created connection so any failure path (early
+                # return, exception, cancel) can best-effort delete it instead
+                # of leaving an orphaned ''OofManager (auto-created)'' unauth
+                # connection in the user environment.
+                $createdConn = $null
+                $success = $false
                 try {
                     if (-not (Get-Command Get-JwtToken -ErrorAction SilentlyContinue)) {
                         if ($modulesDir -and (Test-Path -LiteralPath $modulesDir)) { $env:PSModulePath = $modulesDir + ';' + $env:PSModulePath }
@@ -2097,6 +2131,7 @@ try {
                     $createRoute = ""https://{powerAppsEndpoint}/providers/Microsoft.PowerApps/apis/$connector/connections/$connName`?api-version=2016-11-01""
                     $createBody = @{ properties = @{ environment = @{ id = ""/providers/Microsoft.PowerApps/environments/$envGuid""; name = $envGuid }; displayName = 'OofManager (auto-created)' } }
                     InvokeApi -Method PUT -Route $createRoute -Body $createBody -ApiVersion '2016-11-01' | Out-Null
+                    $createdConn = $connName
                     Trace ""created connection $connName for $connector""
 
                     # Token + host for the per-env connectivity actions.
@@ -2137,18 +2172,6 @@ try {
                     $filter = [System.Web.HttpUtility]::UrlEncode(""environment eq '$envGuid'"")
 
                     $pp = @{ Host = $ppHost; Token = $ppToken; Connector = $connector; Conn = $connName; Filter = $filter }
-                    function Invoke-PpAction($ctx, $action, $bodyObj) {
-                        $url = ""https://$($ctx.Host)/connectivity/connectors/$($ctx.Connector)/connections/$($ctx.Conn)/$action`?api-version=1&`$filter=$($ctx.Filter)""
-                        $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
-                        $req = [System.Net.HttpWebRequest]::Create($url)
-                        $req.Method = 'POST'; $req.ContentType = 'application/json'
-                        $req.Headers.Add('Authorization', ""Bearer $($ctx.Token)"")
-                        $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-                        $req.ContentLength = $bytes.Length
-                        $s = $req.GetRequestStream(); $s.Write($bytes, 0, $bytes.Length); $s.Close()
-                        $resp = $req.GetResponse()
-                        return (New-Object System.IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
-                    }
 
                     # 2. getConsentLink.
                     $redirectUrl = 'https://global.consent.azure-apim.net/redirect'
@@ -2181,10 +2204,20 @@ try {
                     # 4. confirmConsentCode -> connection becomes Connected.
                     Invoke-PpAction $pp 'confirmConsentCode' @{ code = $global:__oofConsentCode } | Out-Null
                     Trace ""confirmConsentCode posted for $connector (conn $connName)""
+                    $success = $true
                     return $true
                 } catch {
                     Trace ""New-OofConnectionInteractive failed for $connector : $($_.Exception.Message)""
                     return $false
+                } finally {
+                    if (-not $success -and $createdConn) {
+                        try {
+                            Remove-PowerAppConnection -ConnectorName $connector -ConnectionName $createdConn -EnvironmentName $envGuid -ErrorAction Stop | Out-Null
+                            Trace ""cleaned up unauthenticated connection $createdConn for $connector""
+                        } catch {
+                            Trace ""cleanup of $createdConn failed: $($_.Exception.Message)""
+                        }
+                    }
                 }
             }
 
@@ -2209,18 +2242,21 @@ try {
                 }
 
                 # Poll until every needed connector has a Connected connection,
-                # or we hit the wait budget (outer cap is 15 min).
+                # or we hit the wait budget (outer cap is 15 min). Check FIRST,
+                # then sleep: confirmConsentCode just returned 200 so the
+                # connection is usually already visible -- no need to burn the
+                # first 5s on a guaranteed-stale read.
                 $deadline = (Get-Date).AddMinutes(4)
                 $interval = 5
-                while ((Get-Date) -lt $deadline) {
-                    Start-Sleep -Seconds $interval
+                while ($missing.Count -gt 0 -and (Get-Date) -lt $deadline) {
                     $connByConnector = Get-ConnByConnector
                     $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
                     if ($missing.Count -eq 0) { break }
+                    Report ""Waiting for connection(s) to be ready: $($missing -join ', ')...""
+                    Start-Sleep -Seconds $interval
                     # Back off (5s -> 10s -> 15s -> 20s cap) so a slow consent
                     # doesn't spawn ~48 pac processes over the 4-minute budget.
                     if ($interval -lt 20) { $interval += 5 }
-                    Report ""Waiting for connection(s) to be ready: $($missing -join ', ')...""
                 }
                 if ($missing.Count -eq 0) {
                     Report 'Connection(s) ready. Binding them automatically...'
