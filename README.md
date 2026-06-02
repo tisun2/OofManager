@@ -39,6 +39,15 @@ Creating this flow manually is tedious. A user normally has to:
 
 OOF Manager turns that setup into one generated solution zip, imports it automatically when the tenant allows it, and keeps track of the generated flow afterward. From the desktop app you can refresh the flow state, turn the cloud schedule on or off, and still fall back to the Maker portal when a tenant policy blocks automation.
 
+### Connecting the flow (first time vs. later)
+
+The generated flow uses connection references (Office 365 Outlook, and Power Automate Management for vacation flows). A connection reference must be bound to an actual *connection* before the flow can run.
+
+- **First time:** there is no existing connection yet, so creating one requires a one-time interactive OAuth consent in the browser/portal — this step cannot be done silently (it is enforced by Microsoft Entra; on Microsoft corporate tenants the Dataverse Web API path is also blocked by AADSTS65002). If a flow stays Off after import or after you press Turn on, OOF Manager opens the **Connection references** page and guides you to bind it once. That single click also creates the connection.
+- **After that:** the connection already exists, so re-imports (new PC, reinstall, schedule changes) bind the references automatically at import time via a pac deployment settings file — no portal step, no extra clicks.
+
+There is no way to remove that very first consent from a desktop app: pre-creating the connection before importing the solution still triggers the same interactive consent (`pac connection create` only supports Dataverse service-principal connections, not user OAuth connectors). Making the first run fully silent would require a separately registered Entra application with admin pre-authorization, which is impractical for a tool distributed to individual users.
+
 ## Requirements
 
 - Windows 10 or later (x64)
