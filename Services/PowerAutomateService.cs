@@ -2047,11 +2047,17 @@ try {
                 }
             }
 
-            # Resolve each requested reference; require ALL to resolve before
-            # writing the settings file (a partial file would still leave one
-            # reference unbound, so the flow couldn't turn on anyway).
+            # Resolve each requested reference to an existing connection.
+            # Bind whatever we CAN (partial binding): the solution may list
+            # connectors the user has no connection for yet (true first run),
+            # or a reference that isn't even in this package (e.g. the vacation
+            # End flow's flow-management ref is omitted when there's no weekly
+            # flow to resume). Binding the resolvable refs is strictly better
+            # than binding none -- pac binds the listed refs, ignores any not
+            # in the solution, and leaves unresolved ones unbound exactly as a
+            # plain import would. The app's post-import status check + portal
+            # guidance still covers anything left unbound.
             $bindings = @()
-            $allResolved = $true
             foreach ($cr in $connRefs) {
                 $logical = [string]$cr.logical
                 $connectorId = [string]$cr.connectorId
@@ -2063,12 +2069,11 @@ try {
                         ConnectorId = $connectorId
                     }
                 } else {
-                    Trace ""no existing connection for connector=$connectorName (ref=$logical); skipping auto-bind""
-                    $allResolved = $false
+                    Trace ""no existing connection for connector=$connectorName (ref=$logical); leaving it unbound""
                 }
             }
 
-            if ($allResolved -and $bindings.Count -gt 0) {
+            if ($bindings.Count -gt 0) {
                 $settings = [ordered]@{
                     EnvironmentVariables = @()
                     ConnectionReferences = @($bindings)
@@ -2078,7 +2083,7 @@ try {
                 Trace ""wrote settings file with $($bindings.Count) binding(s): $settingsFile""
                 Report 'Found existing connections — binding them automatically...'
             } else {
-                Trace 'not all connection references could be auto-bound; importing without settings file'
+                Trace 'no connection references could be auto-bound; importing without settings file'
             }
         } catch {
             Trace ""auto-bind setup failed (continuing without settings file): $($_.Exception.Message)""
