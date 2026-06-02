@@ -1006,35 +1006,54 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (IsBusy) return;
 
-        // Vacation reconciliation runs first — the checkbox is a deferred-
-        // commit field, so a divergence between IsVacationWindowActive and
-        // IsOnLongVacation means this sync should push the start/end. After
-        // either branch fires we return: StartVacationAsync/EndVacationAsync
-        // both end up writing to Exchange themselves, and OOF on/off must
-        // not run on top.
-        if (IsVacationWindowActive && !IsOnLongVacation)
+        // Manual-mode precedence rule:
+        //   1) Auto-reply OFF: never sync/start/re-assert the vacation date
+        //      range, regardless of the checkbox. We only ensure Outlook OOF
+        //      is OFF (and clear an already-active vacation block if one
+        //      exists).
+        //   2) Auto-reply ON: vacation checkbox controls vacation sync.
+        if (!IsOofEnabled)
         {
-            await StartVacationAsync();
-            return;
-        }
-        if (!IsVacationWindowActive && IsOnLongVacation)
-        {
-            await EndVacationAsync();
-            return;
-        }
-        // Vacation owns the OOF window outright; manual on/off must not
-        // overwrite the multi-day Scheduled block. But a user-initiated
-        // Sync click should still re-assert the existing vacation window
-        // to Exchange (in case Outlook desktop, OWA, or another client
-        // drifted the mailbox away). The auto tick keeps the old no-op
-        // behaviour so we don't hammer Exchange on every poll.
-        if (IsOnLongVacation)
-        {
-            if (isUserInitiated)
+            if (IsOnLongVacation)
             {
-                await ReassertVacationWindowAsync();
+                await EndVacationAsync();
+                return;
             }
-            return;
+            // Planned vacation window (checked but not active) is deferred
+            // local intent only in this branch; do not push it on sync.
+        }
+        else
+        {
+            // Vacation reconciliation runs first when Auto-reply is ON — the
+            // checkbox is a deferred-commit field, so a divergence between
+            // IsVacationWindowActive and IsOnLongVacation means this sync
+            // should push the start/end. After either branch fires we return:
+            // StartVacationAsync/EndVacationAsync both end up writing to
+            // Exchange themselves, and OOF on/off must not run on top.
+            if (IsVacationWindowActive && !IsOnLongVacation)
+            {
+                await StartVacationAsync();
+                return;
+            }
+            if (!IsVacationWindowActive && IsOnLongVacation)
+            {
+                await EndVacationAsync();
+                return;
+            }
+            // Vacation owns the OOF window outright; manual on/off must not
+            // overwrite the multi-day Scheduled block. But a user-initiated
+            // Sync click should still re-assert the existing vacation window
+            // to Exchange (in case Outlook desktop, OWA, or another client
+            // drifted the mailbox away). The auto tick keeps the old no-op
+            // behaviour so we don't hammer Exchange on every poll.
+            if (IsOnLongVacation)
+            {
+                if (isUserInitiated)
+                {
+                    await ReassertVacationWindowAsync();
+                }
+                return;
+            }
         }
 
         var desired = new OofSettings
@@ -1601,8 +1620,33 @@ public partial class MainViewModel : ObservableObject, IDisposable
             switch (enable.Outcome)
             {
                 case PowerAutomateOutcome.Success:
-                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.On);
-                    return (true, "Power Automate flow was off and has been turned on.");
+                    // Enable was accepted — but on a fresh tenant the flow's
+                    // connection reference (Office 365 Outlook / Power
+                    // Automate Management) may be unbound, in which case the
+                    // Enable API silently refuses to activate it and the flow
+                    // stays Off. Re-read the live state; if it didn't come up,
+                    // deep-link the user to the Connection references page so
+                    // they can do the one-time bind (same fix as the manual
+                    // vacation import path).
+                    {
+                        var verify = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName);
+                        SetCloudScheduleFlowBanner(verify.State);
+                        if (verify.State == PowerAutomateFlowState.On)
+                        {
+                            return (true, "Power Automate flow was off and has been turned on.");
+                        }
+                        var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
+                        var solutionUniqueName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).SolutionUniqueName;
+                        OpenConnectionReferencesPage(envId, solutionUniqueName);
+                        await _dialog.AlertAsync("Bind the flow's connection to turn it on",
+                            "The weekly schedule flow was imported but couldn't be turned on automatically. Usually this means a connection reference inside the solution isn't bound to a connection yet — most often the Office 365 Outlook or Power Automate Management connector, because it's the first time you're using it on this tenant. pac CLI / Dataverse import can't bind it for you.\n\n" +
+                            "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                            "  1. Click the row's ⋯ → Edit\n" +
+                            "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                            "  3. Save\n\n" +
+                            "Then come back here and toggle the weekly schedule flow on. After this one-time setup, re-running 'Set up weekly schedule in cloud' reuses the bound connection automatically.");
+                        return (false, "Imported, but the flow's connection reference needs a one-time bind — Connection references page opened.");
+                    }
                 case PowerAutomateOutcome.NoFlowFound:
                     SetCloudScheduleFlowBanner(PowerAutomateFlowState.NotFound);
                     OpenPowerAutomateFlows();
@@ -2422,6 +2466,35 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     // "Turned off Power Automate flow: ..." line above just
                     // duplicates the banner and never auto-clears.
                     StatusMessage = string.Empty;
+                    // When TURNING ON, verify the flow actually came up. If
+                    // Power Automate accepted the Enable call but the flow
+                    // stays Off, the near-certain cause is an unbound
+                    // connection reference (Office 365 Outlook /
+                    // shared_flowmanagement) that the user has never bound on
+                    // this tenant — pac CLI / Dataverse import can't bind it
+                    // automatically and the Enable API silently refuses to
+                    // activate a flow with an unbound connection. This is
+                    // exactly the "toggle did nothing until I turned it on
+                    // once in the portal" symptom: the portal turn-on does
+                    // the one-time bind, after which this toggle works.
+                    if (!disable)
+                    {
+                        await RefreshCloudScheduleFlowStatusAsync();
+                        if (CloudScheduleFlowStateText != "On")
+                        {
+                            var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
+                            var solutionUniqueName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).SolutionUniqueName;
+                            OpenConnectionReferencesPage(envId, solutionUniqueName);
+                            StatusMessage = "⚠️ The weekly schedule flow accepted the Turn on but stayed Off — Connection references page opened.";
+                            await _dialog.AlertAsync("Bind the flow's connection",
+                                "The weekly schedule flow accepted the Turn on call but stayed Off. The usual cause is an unbound connection reference (Office 365 Outlook or the Power Automate Management connector) that needs a one-time bind in the portal. This is the same reason the toggle 'does nothing' until you turn the flow on once on the Power Automate website.\n\n" +
+                                "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                                "  1. Click the row's ⋯ → Edit\n" +
+                                "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                                "  3. Save\n\n" +
+                                "Then come back here and toggle the weekly schedule flow on again. After this one-time setup the in-app toggle works directly.");
+                        }
+                    }
                     break;
                 case PowerAutomateOutcome.NoFlowFound:
                     SetCloudScheduleFlowBanner(PowerAutomateFlowState.NotFound);
