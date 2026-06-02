@@ -2115,7 +2115,11 @@ try {
                             # Await-Task is private to the module; await the
                             # Task ourselves so we don't depend on it.
                             $ppTask = $global:currentSession.msalClientApp.AcquireTokenSilent($ppScopes, $global:currentSession.msalAccount).ExecuteAsync()
-                            while (-not $ppTask.AsyncWaitHandle.WaitOne(200)) { }
+                            # Bound the wait so a stalled network can't block
+                            # the whole import; ~10s then treat as a silent
+                            # failure and drop to the interactive fallback.
+                            $spins = 0
+                            while (-not $ppTask.AsyncWaitHandle.WaitOne(200)) { if (++$spins -gt 50) { throw 'silent token acquisition timed out' } }
                             $ar = $ppTask.GetAwaiter().GetResult()
                             $ppToken = $ar.AccessToken
                             Trace 'acquired api.powerplatform.com token silently'
@@ -2207,11 +2211,15 @@ try {
                 # Poll until every needed connector has a Connected connection,
                 # or we hit the wait budget (outer cap is 15 min).
                 $deadline = (Get-Date).AddMinutes(4)
+                $interval = 5
                 while ((Get-Date) -lt $deadline) {
-                    Start-Sleep -Seconds 5
+                    Start-Sleep -Seconds $interval
                     $connByConnector = Get-ConnByConnector
                     $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
                     if ($missing.Count -eq 0) { break }
+                    # Back off (5s -> 10s -> 15s -> 20s cap) so a slow consent
+                    # doesn't spawn ~48 pac processes over the 4-minute budget.
+                    if ($interval -lt 20) { $interval += 5 }
                     Report ""Waiting for connection(s) to be ready: $($missing -join ', ')...""
                 }
                 if ($missing.Count -eq 0) {
