@@ -338,24 +338,25 @@
                             Work Schedule is in charge. -->
                         <ui:ToggleSwitch IsOn="{Binding IsOofEnabled, Mode=TwoWay}"
                                      IsEnabled="{Binding IsOofAutoManaged, Converter={StaticResource InvertBool}}"
-                                     OnContent="OOF On"
-                                     OffContent="OOF Off"
-                                     Width="130"
+                                     OnContent="Auto-reply On"
+                                     OffContent="Auto-reply Off"
+                                     Width="175"
                                      Padding="0"
                                      HorizontalAlignment="Left"
-                                     VerticalAlignment="Center"/>
+                                     VerticalAlignment="Center"
+                                     Margin="0,0,8,0"/>
 
                             <!-- Vacation OOF window is an OOF override, so it sits
                             after the plain manual OOF toggle in the same
                             manual-control row. -->
-                            <CheckBox Content="🏖️ Vacation OOF window"
+                            <CheckBox Content="🏖️ Use a vacation date range"
                                 IsChecked="{Binding IsVacationWindowActive, Mode=TwoWay}"
                                 IsEnabled="{Binding CanToggleVacationWindow}"
                                 FocusVisualStyle="{x:Null}"
                                 FontSize="14" FontWeight="SemiBold"
                                 HorizontalAlignment="Left"
                                 VerticalAlignment="Center"
-                                Margin="22,0,0,0"
+                                Margin="12,0,0,0"
                                 ToolTip="Plan a single multi-day Scheduled OOF window. Checking the box doesn't push to Outlook immediately — click ⚡ Sync to Outlook to commit the vacation."/>
                     </StackPanel>
 

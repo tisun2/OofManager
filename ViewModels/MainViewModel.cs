@@ -561,7 +561,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void EnsureVacationShowsManualOofOn()
     {
-        if ((!IsVacationWindowActive && !IsOnLongVacation) || IsOofEnabled) return;
+        // Only force the manual toggle ON when a vacation is actually active
+        // on Outlook right now. A merely planned vacation window
+        // (IsVacationWindowActive=true, IsOnLongVacation=false) is deferred
+        // local intent and must not make the startup toggle pretend OOF is on.
+        if (!IsOnLongVacation || IsOofEnabled) return;
         _suppressOofToggleCommit = true;
         try { IsOofEnabled = true; } finally { _suppressOofToggleCommit = false; }
     }
