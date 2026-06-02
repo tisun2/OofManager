@@ -252,7 +252,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
         string? displayNameHint,
         bool forceOverwrite,
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null)
     {
         if (!File.Exists(solutionZipPath))
         {
@@ -275,7 +276,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 forceOverwrite,
                 cachedEnvironment,
                 progress,
-                ct).ConfigureAwait(false);
+                ct,
+                connectionReferences).ConfigureAwait(false);
 
             if (cachedResult.Outcome == CloudScheduleImportOutcome.Success)
             {
@@ -300,7 +302,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
             forceOverwrite,
             null,
             progress,
-            ct).ConfigureAwait(false);
+            ct,
+            connectionReferences).ConfigureAwait(false);
 
         if (result.Outcome == CloudScheduleImportOutcome.Success)
         {
@@ -320,8 +323,24 @@ public sealed class PowerAutomateService : IPowerAutomateService
         bool forceOverwrite,
         CachedImportEnvironment? cachedEnvironment,
         IProgress<string>? progress,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null)
     {
+        // Serialize the solution's connection references so the import script
+        // can try to auto-bind each to an existing connection of the same
+        // connector (via a pac deployment settings file). Empty/null when the
+        // caller doesn't know them — the script then imports without binding.
+        var connRefsJson = string.Empty;
+        if (connectionReferences != null && connectionReferences.Count > 0)
+        {
+            var payload = connectionReferences
+                .Where(c => !string.IsNullOrWhiteSpace(c.LogicalName) && !string.IsNullOrWhiteSpace(c.ConnectorId))
+                .Select(c => new { logical = c.LogicalName, connectorId = c.ConnectorId })
+                .ToList();
+            if (payload.Count > 0)
+                connRefsJson = JsonSerializer.Serialize(payload);
+        }
+
         var envVars = new Dictionary<string, string>
         {
             ["OOFMGR_PA_UPN"]          = upnHint ?? string.Empty,
@@ -330,6 +349,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
             ["OOFMGR_PA_SOLNAME"]      = solutionUniqueName,
             ["OOFMGR_PA_WORKFLOWID"]   = workflowId.ToString("D"),
             ["OOFMGR_PA_FORCE"]        = forceOverwrite ? "1" : "0",
+            ["OOFMGR_PA_CONNREFS"]     = connRefsJson,
             ["OOFMGR_PA_CACHED_INSTANCEURL"] = cachedEnvironment?.InstanceUrl ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVID"]       = cachedEnvironment?.EnvironmentId ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVDISPLAY"]  = cachedEnvironment?.EnvironmentDisplayName ?? string.Empty,
@@ -1574,6 +1594,7 @@ $zipPath      = $env:OOFMGR_PA_ZIPPATH
 $solName      = $env:OOFMGR_PA_SOLNAME
 $workflowId   = $env:OOFMGR_PA_WORKFLOWID
 $forceFlag    = $env:OOFMGR_PA_FORCE
+$connRefsJson = $env:OOFMGR_PA_CONNREFS
 $cachedInstanceUrl = $env:OOFMGR_PA_CACHED_INSTANCEURL
 $cachedEnvId       = $env:OOFMGR_PA_CACHED_ENVID
 $cachedEnvDisplay  = $env:OOFMGR_PA_CACHED_ENVDISPLAY
@@ -1982,6 +2003,89 @@ try {
         Report 'Signed in. Uploading solution to Power Automate...'
     }
 
+    # --- Auto-bind connection references to existing connections ---------
+    # On a fresh tenant the solution's connection references import unbound,
+    # so Power Automate refuses to turn the flow on (the 'toggle does nothing
+    # until I open it in the portal once' symptom). If the user already has a
+    # Connected connection for each required connector in this env, we can
+    # bind them at import time with a pac deployment settings file -- no
+    # manual step. If any connector has no existing connection (true first
+    # run), we skip the settings file and fall back to the manual one-time
+    # bind the app already guides the user through.
+    $settingsFile = $null
+    if ($connRefsJson -and ([string]$connRefsJson).Trim().Length -gt 2) {
+        try {
+            $connRefs = $connRefsJson | ConvertFrom-Json
+            if ($connRefs -and -not ($connRefs -is [System.Array])) { $connRefs = @($connRefs) }
+            Trace ""connRefs requested: $($connRefs.Count)""
+
+            # List existing connections in the target env. Output columns:
+            # Id | Name | API Id (/providers/.../shared_xxx) | Status. Values
+            # have no embedded spaces, so split on whitespace and pick by role:
+            # first token = Id, last = Status, the /providers token = connector.
+            $connLines = @()
+            try {
+                $connLines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
+                foreach ($cl in $connLines) { Trace ""conn> $cl"" }
+            } catch {
+                Trace ""pac connection list failed: $($_.Exception.Message)""
+            }
+
+            # Build connectorId -> connectionId map (first Connected wins).
+            $connByConnector = @{}
+            foreach ($line in $connLines) {
+                $apiToken = ($line -split '\s+' | Where-Object { $_ -like '/providers/*/apis/*' } | Select-Object -First 1)
+                if (-not $apiToken) { continue }
+                $tokens = @($line -split '\s+' | Where-Object { $_ -ne '' })
+                if ($tokens.Count -lt 2) { continue }
+                $connId = [string]$tokens[0]
+                $status = [string]$tokens[-1]
+                $connector = ($apiToken -split '/apis/')[-1]
+                if ($status -ieq 'Connected' -and -not $connByConnector.ContainsKey($connector)) {
+                    $connByConnector[$connector] = $connId
+                    Trace ""connection available: connector=$connector id=$connId""
+                }
+            }
+
+            # Resolve each requested reference; require ALL to resolve before
+            # writing the settings file (a partial file would still leave one
+            # reference unbound, so the flow couldn't turn on anyway).
+            $bindings = @()
+            $allResolved = $true
+            foreach ($cr in $connRefs) {
+                $logical = [string]$cr.logical
+                $connectorId = [string]$cr.connectorId
+                $connectorName = ($connectorId -split '/apis/')[-1]
+                if ($connByConnector.ContainsKey($connectorName)) {
+                    $bindings += [pscustomobject]@{
+                        LogicalName = $logical
+                        ConnectionId = $connByConnector[$connectorName]
+                        ConnectorId = $connectorId
+                    }
+                } else {
+                    Trace ""no existing connection for connector=$connectorName (ref=$logical); skipping auto-bind""
+                    $allResolved = $false
+                }
+            }
+
+            if ($allResolved -and $bindings.Count -gt 0) {
+                $settings = [ordered]@{
+                    EnvironmentVariables = @()
+                    ConnectionReferences = @($bindings)
+                }
+                $settingsFile = Join-Path $env:TEMP ('oofmgr-deploy-settings-' + [Guid]::NewGuid().ToString('N') + '.json')
+                [System.IO.File]::WriteAllText($settingsFile, ($settings | ConvertTo-Json -Depth 6), [System.Text.UTF8Encoding]::new($false))
+                Trace ""wrote settings file with $($bindings.Count) binding(s): $settingsFile""
+                Report 'Found existing connections — binding them automatically...'
+            } else {
+                Trace 'not all connection references could be auto-bound; importing without settings file'
+            }
+        } catch {
+            Trace ""auto-bind setup failed (continuing without settings file): $($_.Exception.Message)""
+            $settingsFile = $null
+        }
+    }
+
     $importArgs = @(
         'solution', 'import',
         '--path', $zipPath,
@@ -1989,11 +2093,15 @@ try {
         '--publish-changes',
         '--max-async-wait-time', '10'
     )
+    if ($settingsFile) {
+        $importArgs += @('--settings-file', $settingsFile)
+    }
     if ($forceFlag -eq '1') {
         $importArgs += '--force-overwrite'
     }
 
     $importCode = Invoke-Pac 'solution import' $importArgs
+    if ($settingsFile) { try { Remove-Item -LiteralPath $settingsFile -ErrorAction SilentlyContinue } catch {} }
     if ($importCode -ne 0) {
         Emit 'ImportFailed' (""Power Automate rejected the solution import for '$solName' in '$envDisplay'."" ) $envId $envDisplay $instance $null
     }

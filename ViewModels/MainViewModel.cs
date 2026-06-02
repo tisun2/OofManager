@@ -1242,7 +1242,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 MailboxIdentity,
                 UserDisplayName,
                 forceOverwrite: false,
-                progress: importProgress);
+                progress: importProgress,
+                connectionReferences: new[]
+                {
+                    new PowerAutomateConnectionReference(pkg.ConnectionReferenceLogicalName, pkg.ConnectorId),
+                });
 
             if (import.Outcome == CloudScheduleImportOutcome.Success)
             {
@@ -1482,7 +1486,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 MailboxIdentity,
                 UserDisplayName,
                 forceOverwrite: false,
-                progress: importProgress);
+                progress: importProgress,
+                connectionReferences: new[]
+                {
+                    new PowerAutomateConnectionReference(pkg.OutlookConnRefLogicalName, pkg.OutlookConnectorId),
+                    new PowerAutomateConnectionReference(pkg.FlowMgmtConnRefLogicalName, pkg.FlowMgmtConnectorId),
+                });
 
             if (import.Outcome != CloudScheduleImportOutcome.Success)
             {

@@ -112,7 +112,9 @@ public static class ManualVacationPackageGenerator
             string startFlowDisplayName,
             string endFlowDisplayName,
             Guid startWorkflowId,
-            Guid endWorkflowId)
+            Guid endWorkflowId,
+            string outlookConnRefLogicalName = "",
+            string flowMgmtConnRefLogicalName = "")
         {
             Path = path;
             SolutionUniqueName = solutionUniqueName;
@@ -121,6 +123,8 @@ public static class ManualVacationPackageGenerator
             EndFlowDisplayName = endFlowDisplayName;
             StartWorkflowId = startWorkflowId;
             EndWorkflowId = endWorkflowId;
+            OutlookConnRefLogicalName = outlookConnRefLogicalName;
+            FlowMgmtConnRefLogicalName = flowMgmtConnRefLogicalName;
         }
 
         public string Path { get; }
@@ -130,6 +134,14 @@ public static class ManualVacationPackageGenerator
         public string EndFlowDisplayName { get; }
         public Guid StartWorkflowId { get; }
         public Guid EndWorkflowId { get; }
+        /// <summary>Dataverse logical name of the Office 365 Outlook connection reference.</summary>
+        public string OutlookConnRefLogicalName { get; }
+        /// <summary>Dataverse logical name of the Power Automate Management connection reference.</summary>
+        public string FlowMgmtConnRefLogicalName { get; }
+        /// <summary>Connector id for the Outlook connection reference (shared_office365).</summary>
+        public string OutlookConnectorId => ManualVacationPackageGenerator.OutlookConnectorId;
+        /// <summary>Connector id for the Flow Management connection reference (shared_flowmanagement).</summary>
+        public string FlowMgmtConnectorId => ManualVacationPackageGenerator.FlowMgmtConnectorId;
     }
 
     /// <summary>
@@ -147,7 +159,9 @@ public static class ManualVacationPackageGenerator
             startFlowDisplayName: i.StartFlowDisplayName,
             endFlowDisplayName: i.EndFlowDisplayName,
             startWorkflowId: i.StartWorkflowId,
-            endWorkflowId: i.EndWorkflowId);
+            endWorkflowId: i.EndWorkflowId,
+            outlookConnRefLogicalName: i.OutlookConnRefLogicalName,
+            flowMgmtConnRefLogicalName: i.FlowMgmtConnRefLogicalName);
     }
 
     /// <summary>
@@ -264,7 +278,9 @@ public static class ManualVacationPackageGenerator
             startFlowDisplayName: identity.StartFlowDisplayName,
             endFlowDisplayName: identity.EndFlowDisplayName,
             startWorkflowId: identity.StartWorkflowId,
-            endWorkflowId: identity.EndWorkflowId);
+            endWorkflowId: identity.EndWorkflowId,
+            outlookConnRefLogicalName: identity.OutlookConnRefLogicalName,
+            flowMgmtConnRefLogicalName: identity.FlowMgmtConnRefLogicalName);
     }
 
     private static string BuildSolutionVersion(DateTime generatedAt)

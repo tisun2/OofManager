@@ -103,19 +103,29 @@ public static class CloudSchedulePackageGenerator
     /// </summary>
     public sealed class GenerateResult
     {
-        public GenerateResult(string path, string solutionUniqueName, string flowDisplayName, Guid workflowId, string solutionVersion = "")
+        public GenerateResult(string path, string solutionUniqueName, string flowDisplayName, Guid workflowId, string solutionVersion = "", string connectionReferenceLogicalName = "")
         {
             Path = path;
             SolutionUniqueName = solutionUniqueName;
             FlowDisplayName = flowDisplayName;
             WorkflowId = workflowId;
             SolutionVersion = solutionVersion;
+            ConnectionReferenceLogicalName = connectionReferenceLogicalName;
         }
         public string Path { get; }
         public string SolutionUniqueName { get; }
         public string SolutionVersion { get; }
         public string FlowDisplayName { get; }
         public Guid WorkflowId { get; }
+        /// <summary>
+        /// Dataverse logical name of the single Office 365 Outlook connection
+        /// reference baked into this solution. Callers use it to build a pac
+        /// deployment settings file that auto-binds the reference to an
+        /// existing connection at import time.
+        /// </summary>
+        public string ConnectionReferenceLogicalName { get; }
+        /// <summary>Connector id for <see cref="ConnectionReferenceLogicalName"/> (shared_office365).</summary>
+        public string ConnectorId => CloudSchedulePackageGenerator.ConnectorId;
     }
 
     /// <summary>
@@ -145,7 +155,7 @@ public static class CloudSchedulePackageGenerator
     public static GenerateResult ComputeFlowIdentity(string userEmail)
     {
         var i = BuildIdentity(userEmail);
-        return new GenerateResult(string.Empty, i.SolutionUniqueName, i.FlowDisplayName, i.WorkflowId);
+        return new GenerateResult(string.Empty, i.SolutionUniqueName, i.FlowDisplayName, i.WorkflowId, string.Empty, i.ConnectionReferenceLogicalName);
     }
 
     /// <summary>
@@ -270,7 +280,7 @@ public static class CloudSchedulePackageGenerator
             WriteEntry(zip, "OofManager-README.txt", BuildReadme(userEmail, identity));
         }
 
-        return new GenerateResult(outputPath, identity.SolutionUniqueName, identity.FlowDisplayName, identity.WorkflowId, solutionVersion);
+        return new GenerateResult(outputPath, identity.SolutionUniqueName, identity.FlowDisplayName, identity.WorkflowId, solutionVersion, identity.ConnectionReferenceLogicalName);
     }
 
     private static string BuildSolutionVersion(DateTime generatedAt)

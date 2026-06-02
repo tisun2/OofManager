@@ -210,9 +210,30 @@ public sealed class CloudDaySchedule
     public TimeSpan End { get; }
 }
 
-public interface IPowerAutomateService
+/// <summary>
+/// One connection reference baked into a solution package, paired with the
+/// connector it needs. Passed into the import so it can auto-bind the
+/// reference to an existing connection of the same connector via a pac
+/// deployment settings file (avoids the one-time manual bind when a matching
+/// connection already exists in the target environment).
+/// </summary>
+public sealed class PowerAutomateConnectionReference
 {
-    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
+    public PowerAutomateConnectionReference(string logicalName, string connectorId)
+    {
+        LogicalName = logicalName;
+        ConnectorId = connectorId;
+    }
+
+    /// <summary>Dataverse logical name of the connection reference, e.g. <c>ofm_oofmanageroutlookconn_alice</c>.</summary>
+    public string LogicalName { get; }
+
+    /// <summary>Connector id, e.g. <c>/providers/Microsoft.PowerApps/apis/shared_office365</c>.</summary>
+    public string ConnectorId { get; }
+}
+
+public interface IPowerAutomateService
+{    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
     Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
     Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
 
@@ -242,5 +263,6 @@ public interface IPowerAutomateService
         string? displayNameHint,
         bool forceOverwrite,
         IProgress<string>? progress = null,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null);
 }
