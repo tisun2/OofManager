@@ -350,6 +350,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
             ["OOFMGR_PA_WORKFLOWID"]   = workflowId.ToString("D"),
             ["OOFMGR_PA_FORCE"]        = forceOverwrite ? "1" : "0",
             ["OOFMGR_PA_CONNREFS"]     = connRefsJson,
+            ["OOFMGR_PA_PRECREATE_CONN"] = connRefsJson.Length > 0 ? "1" : "0",
             ["OOFMGR_PA_CACHED_INSTANCEURL"] = cachedEnvironment?.InstanceUrl ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVID"]       = cachedEnvironment?.EnvironmentId ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVDISPLAY"]  = cachedEnvironment?.EnvironmentDisplayName ?? string.Empty,
@@ -1595,6 +1596,7 @@ $solName      = $env:OOFMGR_PA_SOLNAME
 $workflowId   = $env:OOFMGR_PA_WORKFLOWID
 $forceFlag    = $env:OOFMGR_PA_FORCE
 $connRefsJson = $env:OOFMGR_PA_CONNREFS
+$preCreateConn = $env:OOFMGR_PA_PRECREATE_CONN
 $cachedInstanceUrl = $env:OOFMGR_PA_CACHED_INSTANCEURL
 $cachedEnvId       = $env:OOFMGR_PA_CACHED_ENVID
 $cachedEnvDisplay  = $env:OOFMGR_PA_CACHED_ENVDISPLAY
@@ -2019,31 +2021,203 @@ try {
             if ($connRefs -and -not ($connRefs -is [System.Array])) { $connRefs = @($connRefs) }
             Trace ""connRefs requested: $($connRefs.Count)""
 
-            # List existing connections in the target env. Output columns:
-            # Id | Name | API Id (/providers/.../shared_xxx) | Status. Values
-            # have no embedded spaces, so split on whitespace and pick by role:
-            # first token = Id, last = Status, the /providers token = connector.
-            $connLines = @()
-            try {
-                $connLines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
-                foreach ($cl in $connLines) { Trace ""conn> $cl"" }
-            } catch {
-                Trace ""pac connection list failed: $($_.Exception.Message)""
+            # Reads existing connections in the target env and returns a
+            # connector -> connectionId map of CONNECTED connections. Output
+            # columns: Id | Name | API Id (/providers/.../shared_xxx) | Status.
+            # Values have no embedded spaces: first token = Id, last = Status,
+            # the /providers token = connector.
+            function Get-ConnByConnector {
+                $map = @{}
+                $lines = @()
+                try {
+                    $lines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
+                } catch {
+                    Trace ""pac connection list failed: $($_.Exception.Message)""
+                }
+                foreach ($line in $lines) {
+                    $apiToken = ($line -split '\s+' | Where-Object { $_ -like '/providers/*/apis/*' } | Select-Object -First 1)
+                    if (-not $apiToken) { continue }
+                    $tokens = @($line -split '\s+' | Where-Object { $_ -ne '' })
+                    if ($tokens.Count -lt 2) { continue }
+                    $connId = [string]$tokens[0]
+                    $status = [string]$tokens[-1]
+                    $connector = ($apiToken -split '/apis/')[-1]
+                    if ($status -ieq 'Connected' -and -not $map.ContainsKey($connector)) {
+                        $map[$connector] = $connId
+                    }
+                }
+                return $map
             }
 
-            # Build connectorId -> connectionId map (first Connected wins).
-            $connByConnector = @{}
-            foreach ($line in $connLines) {
-                $apiToken = ($line -split '\s+' | Where-Object { $_ -like '/providers/*/apis/*' } | Select-Object -First 1)
-                if (-not $apiToken) { continue }
-                $tokens = @($line -split '\s+' | Where-Object { $_ -ne '' })
-                if ($tokens.Count -lt 2) { continue }
-                $connId = [string]$tokens[0]
-                $status = [string]$tokens[-1]
-                $connector = ($apiToken -split '/apis/')[-1]
-                if ($status -ieq 'Connected' -and -not $connByConnector.ContainsKey($connector)) {
-                    $connByConnector[$connector] = $connId
-                    Trace ""connection available: connector=$connector id=$connId""
+            $connByConnector = Get-ConnByConnector
+            foreach ($k in $connByConnector.Keys) { Trace ""connection available: connector=$k id=$($connByConnector[$k])"" }
+
+            # Distinct connectors this solution actually needs.
+            $neededConnectors = @($connRefs | ForEach-Object { ($_.connectorId -split '/apis/')[-1] } | Where-Object { $_ } | Select-Object -Unique)
+            $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
+
+            # Derive the per-environment Power Platform connectivity host from
+            # the environment GUID: strip dashes (32 chars) then split as
+            # {first30}.{last2}.environment.api.powerplatform.com. This is the
+            # host that serves the getConsentLink / confirmConsentCode actions
+            # (verified against the maker portal's own network traffic).
+            function Get-PpHost($envGuid) {
+                $bare = ([string]$envGuid -replace '-', '')
+                if ($bare.Length -lt 3) { return $null }
+                return ($bare.Substring(0, $bare.Length - 2) + '.' + $bare.Substring($bare.Length - 2, 2) + '.environment.api.powerplatform.com')
+            }
+
+            # Create ONE user OAuth connection programmatically and authenticate
+            # it via the connector's own OAuth consent page shown in an in-app
+            # WebBrowser dialog. Steps (all verified against live APIs):
+            #   1. PUT a new (unauthenticated) connection on api.powerapps.com.
+            #   2. POST getConsentLink on the per-env connectivity host to get
+            #      the sign-in URL.
+            #   3. Open that URL in a WebBrowser; the user signs in; the page
+            #      redirects to our redirectUrl carrying a one-time ?code=.
+            #   4. POST confirmConsentCode with that code -> connection becomes
+            #      Connected.
+            # Returns $true on success. Any failure returns $false so the caller
+            # can fall back to the maker-portal New-connection page.
+            function New-OofConnectionInteractive($connector, $envGuid) {
+                try {
+                    if (-not (Get-Command Get-JwtToken -ErrorAction SilentlyContinue)) {
+                        if ($modulesDir -and (Test-Path -LiteralPath $modulesDir)) { $env:PSModulePath = $modulesDir + ';' + $env:PSModulePath }
+                        Import-Module Microsoft.PowerApps.PowerShell -DisableNameChecking -ErrorAction Stop | Out-Null
+                    }
+                    if (-not $global:__oofSignedIn -and $global:currentSession.loggedIn -ne $true) {
+                        if ($upn) { Add-PowerAppsAccount -Endpoint prod -Username $upn -ErrorAction Stop | Out-Null }
+                        else      { Add-PowerAppsAccount -Endpoint prod -ErrorAction Stop | Out-Null }
+                        $global:__oofSignedIn = $true
+                    }
+
+                    $connName = [guid]::NewGuid().ToString('N')
+
+                    # 1. PUT create (api.powerapps.com via module InvokeApi).
+                    $createRoute = ""https://{powerAppsEndpoint}/providers/Microsoft.PowerApps/apis/$connector/connections/$connName`?api-version=2016-11-01""
+                    $createBody = @{ properties = @{ environment = @{ id = ""/providers/Microsoft.PowerApps/environments/$envGuid""; name = $envGuid }; displayName = 'OofManager (auto-created)' } }
+                    InvokeApi -Method PUT -Route $createRoute -Body $createBody -ApiVersion '2016-11-01' | Out-Null
+                    Trace ""created connection $connName for $connector""
+
+                    # Token + host for the per-env connectivity actions.
+                    # Switching audience via Add-PowerAppsAccount would wipe the
+                    # in-memory session ($global:currentSession = $null) and pop
+                    # a SECOND sign-in dialog. Instead reuse the MSAL client we
+                    # already signed in above and acquire the api.powerplatform
+                    # token SILENTLY (the refresh token is in memory + the
+                    # persisted MSAL cache). Only fall back to the interactive
+                    # path if silent acquisition genuinely fails, so the normal
+                    # case shows just the single connector-consent popup.
+                    $ppToken = $null
+                    try {
+                        if ($global:currentSession -and $global:currentSession.msalClientApp -and $global:currentSession.msalAccount) {
+                            [string[]]$ppScopes = 'https://api.powerplatform.com//.default'
+                            # Await-Task is private to the module; await the
+                            # Task ourselves so we don't depend on it.
+                            $ppTask = $global:currentSession.msalClientApp.AcquireTokenSilent($ppScopes, $global:currentSession.msalAccount).ExecuteAsync()
+                            while (-not $ppTask.AsyncWaitHandle.WaitOne(200)) { }
+                            $ar = $ppTask.GetAwaiter().GetResult()
+                            $ppToken = $ar.AccessToken
+                            Trace 'acquired api.powerplatform.com token silently'
+                        }
+                    } catch {
+                        Trace ""silent api.powerplatform.com token failed: $($_.Exception.Message)""
+                    }
+                    if (-not $ppToken) {
+                        Add-PowerAppsAccount -Audience 'https://api.powerplatform.com/' -ErrorAction Stop | Out-Null
+                        $ppToken = Get-JwtToken 'https://api.powerplatform.com/'
+                    }
+                    $ppHost = Get-PpHost $envGuid
+                    if (-not $ppHost -or -not $ppToken) { Trace 'missing pp host/token'; return $false }
+                    Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue | Out-Null
+                    $filter = [System.Web.HttpUtility]::UrlEncode(""environment eq '$envGuid'"")
+
+                    $pp = @{ Host = $ppHost; Token = $ppToken; Connector = $connector; Conn = $connName; Filter = $filter }
+                    function Invoke-PpAction($ctx, $action, $bodyObj) {
+                        $url = ""https://$($ctx.Host)/connectivity/connectors/$($ctx.Connector)/connections/$($ctx.Conn)/$action`?api-version=1&`$filter=$($ctx.Filter)""
+                        $body = $bodyObj | ConvertTo-Json -Depth 6 -Compress
+                        $req = [System.Net.HttpWebRequest]::Create($url)
+                        $req.Method = 'POST'; $req.ContentType = 'application/json'
+                        $req.Headers.Add('Authorization', ""Bearer $($ctx.Token)"")
+                        $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+                        $req.ContentLength = $bytes.Length
+                        $s = $req.GetRequestStream(); $s.Write($bytes, 0, $bytes.Length); $s.Close()
+                        $resp = $req.GetResponse()
+                        return (New-Object System.IO.StreamReader($resp.GetResponseStream())).ReadToEnd()
+                    }
+
+                    # 2. getConsentLink.
+                    $redirectUrl = 'https://global.consent.azure-apim.net/redirect'
+                    $gcTxt = Invoke-PpAction $pp 'getConsentLink' @{ redirectUrl = $redirectUrl; principalType = 'NotSpecified' }
+                    $consent = $gcTxt | ConvertFrom-Json
+                    $consentLink = [string]$consent.consentLink
+                    if (-not $consentLink) { Trace 'getConsentLink returned no consentLink'; return $false }
+
+                    # 3. Show the sign-in page; capture the redirect's ?code=.
+                    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+                    $global:__oofConsentCode = $null
+                    $form = New-Object System.Windows.Forms.Form
+                    $form.Width = 620; $form.Height = 820
+                    $form.StartPosition = 'CenterScreen'
+                    $form.Text = ""Sign in to create the connection ($connector)""
+                    $web = New-Object System.Windows.Forms.WebBrowser
+                    $web.Dock = 'Fill'; $web.ScriptErrorsSuppressed = $true
+                    $web.Add_DocumentCompleted({
+                        $u = [string]$web.Url.AbsoluteUri
+                        if ($u -match '[?&]code=([^&]+)') { $global:__oofConsentCode = $matches[1]; $form.Close() }
+                        elseif ($u -match '[?&]error=') { Trace ""consent error in redirect: $u""; $form.Close() }
+                    })
+                    $web.Url = [Uri]$consentLink
+                    $form.Controls.Add($web)
+                    $form.Add_Shown({ $form.Activate() })
+                    $form.ShowDialog() | Out-Null
+                    $form.Dispose()
+                    if (-not $global:__oofConsentCode) { Trace 'no consent code captured (cancelled)'; return $false }
+
+                    # 4. confirmConsentCode -> connection becomes Connected.
+                    Invoke-PpAction $pp 'confirmConsentCode' @{ code = $global:__oofConsentCode } | Out-Null
+                    Trace ""confirmConsentCode posted for $connector (conn $connName)""
+                    return $true
+                } catch {
+                    Trace ""New-OofConnectionInteractive failed for $connector : $($_.Exception.Message)""
+                    return $false
+                }
+            }
+
+            # Pre-create missing connections (opt-in) so the flow can turn on
+            # on the FIRST import instead of importing unbound and making the
+            # user bind afterward. We create each missing connection in-app and
+            # authenticate it with a single sign-in popup (the only browser
+            # step). Connectors the user already has are skipped. If the
+            # programmatic create fails for any connector, we fall back to the
+            # maker-portal New-connection page for that connector. Best-effort:
+            # on timeout we fall back to a plain import + post-import guidance.
+            if ($preCreateConn -eq '1' -and $envId -and $missing.Count -gt 0) {
+                Report ""Creating the required connection(s): $($missing -join ', '). A sign-in window will appear...""
+                foreach ($conn in @($missing)) {
+                    $ok = New-OofConnectionInteractive $conn $envId
+                    if (-not $ok) {
+                        $url = ""https://make.powerautomate.com/environments/$envId/connections/available?apiName=$conn""
+                        Trace ""programmatic create failed for $conn; opening portal page: $url""
+                        try { Start-Process $url | Out-Null } catch { Trace ""Start-Process failed: $($_.Exception.Message)"" }
+                        Report ""Finish creating the '$conn' connection in your browser...""
+                    }
+                }
+
+                # Poll until every needed connector has a Connected connection,
+                # or we hit the wait budget (outer cap is 15 min).
+                $deadline = (Get-Date).AddMinutes(4)
+                while ((Get-Date) -lt $deadline) {
+                    Start-Sleep -Seconds 5
+                    $connByConnector = Get-ConnByConnector
+                    $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
+                    if ($missing.Count -eq 0) { break }
+                    Report ""Waiting for connection(s) to be ready: $($missing -join ', ')...""
+                }
+                if ($missing.Count -eq 0) {
+                    Report 'Connection(s) ready. Binding them automatically...'
+                } else {
+                    Trace ""timed out waiting for connections: $($missing -join ', '); importing without them""
                 }
             }
 
