@@ -1455,6 +1455,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var outPath = System.IO.Path.Combine(packageDir, "OofManager-ManualVacation.zip");
 
             SetVacationFlowsBannerProgress("Setting up", "Generating manual vacation solution…");
+            // The End flow restores the user's normal weekly off-hours
+            // AutoReply window at vacation end (immediately, in addition to
+            // resuming the weekly schedule flow). Without this hand-off the
+            // user would have no AutoReply between vacation end and the
+            // weekly flow's next recurrence fire (recurrences don't backfill),
+            // which can be 2+ days when vacation ends on a weekend. We pass
+            // the user's WEEKLY reply text (not the current in-editor text,
+            // which may be the vacation copy when on the Manual tab) so the
+            // restored window matches what the weekly flow itself writes.
+            var weeklySnapshot = new WorkScheduleSnapshot(_prefs);
+            var weeklyInternal = _prefs.GetString(GetReplyPrefKey(internalReply: true,  weekly: true)) ?? string.Empty;
+            var weeklyExternal = _prefs.GetString(GetReplyPrefKey(internalReply: false, weekly: true)) ?? string.Empty;
             var pkg = await Task.Run(() => ManualVacationPackageGenerator.GenerateWithIdentity(
                 userEmail: MailboxIdentity,
                 vacationStart: startLocal,
@@ -1464,6 +1476,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 externalAudienceAll: true,
                 scheduleFlowEnvironmentId: scheduleEnvId,
                 scheduleFlowRuntimeFlowName: scheduleFlowName,
+                weeklySchedule: weeklySnapshot,
+                weeklyInternalReply: weeklyInternal,
+                weeklyExternalReply: weeklyExternal,
+                weeklyExternalAudienceAll: true,
                 generateManaged: false,
                 outputPath: outPath));
 

@@ -199,52 +199,9 @@ public static class CloudSchedulePackageGenerator
             .Select(d => d.ToString())
             .ToArray();
 
-        // Per-day-of-week lookup tables, indexed by Power Automate's
-        // dayOfWeek (0=Sunday..6=Saturday — same as .NET DayOfWeek).
-        // Start is anchored to the most recent configured workday's end-of-
-        // shift (Sat/Sun point back to Friday for a normal Mon-Fri schedule),
-        // and end jumps forward to the next workday's start-of-shift.
-        var startHopDays = new int[7];
-        var startH = new int[7];
-        var startM = new int[7];
-        var hopDays = new int[7];
-        var nextStartH = new int[7];
-        var nextStartM = new int[7];
-        for (int dow = 0; dow < 7; dow++)
-        {
-            for (int back = 0; back <= 6; back++)
-            {
-                var candidate = (DayOfWeek)((dow - back + 7) % 7);
-                if (schedule.IsWorkday(candidate))
-                {
-                    startHopDays[dow] = -back;
-                    var end = schedule.GetEnd(candidate);
-                    startH[dow] = end.Hours;
-                    startM[dow] = end.Minutes;
-                    break;
-                }
-            }
-            for (int hop = 1; hop <= 7; hop++)
-            {
-                var candidate = (DayOfWeek)((dow + hop) % 7);
-                if (schedule.IsWorkday(candidate))
-                {
-                    hopDays[dow] = hop;
-                    var start = schedule.GetStart(candidate);
-                    nextStartH[dow] = start.Hours;
-                    nextStartM[dow] = start.Minutes;
-                    break;
-                }
-            }
-        }
-
-        // Both expressions use the same shape:
-        //   addDays(localToday, hopDays[dow]) + hour[dow] + minute[dow]
-        // For start, hopDays points to the most recent workday end. For end,
-        // hopDays jumps ahead to the next configured workday and we pick up
-        // that day's start-of-shift.
-        var startExpr = $"@{{{BuildPerDowTimestampExpression(startHopDays, startH, startM, tzId)}}}";
-        var endExpr = $"@{{{BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId)}}}";
+        var (startExpr, endExpr) = BuildOffHoursWindowExpressions(schedule, tzId);
+        if (startExpr == null || endExpr == null)
+            throw new InvalidOperationException("Work schedule has no configured workdays — cannot build weekly Cloud Schedule flow.");
 
         var workflowJson = BuildWorkflowFileJson(
             identity: identity,
@@ -681,6 +638,74 @@ public static class CloudSchedulePackageGenerator
         var hourExpr = BuildPerDowLookup(hourByDow, localDow);
         var minuteExpr = BuildPerDowLookup(minuteByDow, localDow);
         return $"formatDateTime(addMinutes(addHours(addDays({localToday}, {hopExpr}), {hourExpr}), {minuteExpr}), 'yyyy-MM-ddTHH:mm:ss')";
+    }
+
+    /// <summary>
+    /// Builds the per-day-of-week Logic Apps expressions the weekly Cloud
+    /// Schedule flow uses as <c>scheduledStartDateTime</c> /
+    /// <c>scheduledEndDateTime</c> on its Outlook SetAutoReply action.
+    /// They evaluate at runtime to "most recent end-of-shift" and "next
+    /// start-of-shift" relative to <c>utcNow()</c> in <paramref name="tzId"/>.
+    /// Exposed so the vacation End flow can write the SAME off-hours window
+    /// at vacation end — without it there's a gap between vacation end and
+    /// the next weekly recurrence fire (recurrences don't backfill) where
+    /// Outlook reports no AutoReply.
+    /// Returns <c>(null, null)</c> when no workday is configured, in which
+    /// case no defensible window exists and the caller should skip the
+    /// SetAutoReply.
+    /// </summary>
+    public static (string? StartExpr, string? EndExpr) BuildOffHoursWindowExpressions(
+        WorkScheduleSnapshot schedule, string tzId)
+    {
+        var hasAnyWorkday = false;
+        foreach (DayOfWeek d in Enum.GetValues(typeof(DayOfWeek)))
+        {
+            if (schedule.IsWorkday(d)) { hasAnyWorkday = true; break; }
+        }
+        if (!hasAnyWorkday) return (null, null);
+
+        // Per-day-of-week lookup tables, indexed by Power Automate's
+        // dayOfWeek (0=Sunday..6=Saturday — same as .NET DayOfWeek).
+        // Start is anchored to the most recent configured workday's end-of-
+        // shift (Sat/Sun point back to Friday for a normal Mon-Fri schedule),
+        // and end jumps forward to the next workday's start-of-shift.
+        var startHopDays = new int[7];
+        var startH = new int[7];
+        var startM = new int[7];
+        var hopDays = new int[7];
+        var nextStartH = new int[7];
+        var nextStartM = new int[7];
+        for (int dow = 0; dow < 7; dow++)
+        {
+            for (int back = 0; back <= 6; back++)
+            {
+                var candidate = (DayOfWeek)((dow - back + 7) % 7);
+                if (schedule.IsWorkday(candidate))
+                {
+                    startHopDays[dow] = -back;
+                    var end = schedule.GetEnd(candidate);
+                    startH[dow] = end.Hours;
+                    startM[dow] = end.Minutes;
+                    break;
+                }
+            }
+            for (int hop = 1; hop <= 7; hop++)
+            {
+                var candidate = (DayOfWeek)((dow + hop) % 7);
+                if (schedule.IsWorkday(candidate))
+                {
+                    hopDays[dow] = hop;
+                    var start = schedule.GetStart(candidate);
+                    nextStartH[dow] = start.Hours;
+                    nextStartM[dow] = start.Minutes;
+                    break;
+                }
+            }
+        }
+
+        var startExpr = $"@{{{BuildPerDowTimestampExpression(startHopDays, startH, startM, tzId)}}}";
+        var endExpr = $"@{{{BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId)}}}";
+        return (startExpr, endExpr);
     }
 
     private static string BuildPerDowLookup(int[] table, string dowExpr)

@@ -18,9 +18,17 @@ namespace OofManager.Wpf.Services;
 ///   <em>OofManager Cloud Schedule</em> flow so the weekly schedule doesn't
 ///   keep flipping OOF on/off during the vacation.</description></item>
 ///   <item><description><b>Vacation End</b> — fires once at the user's
-///   vacation end time. Turns the Cloud Schedule flow back ON. Outlook
-///   automatically clears the AutoReply at the scheduledEndDateTime set by
-///   the Start flow, so we don't need a second AutoReply action here.</description></item>
+///   vacation end time. First writes the user's normal off-hours
+///   AutoReply window (same per-DOW expressions the weekly flow uses)
+///   so there's no gap between vacation end and the next weekly
+///   recurrence fire — recurrences don't backfill, so without this the
+///   user could land in a non-work window (e.g. Sunday morning) with
+///   no AutoReply until the next workday's end-of-shift. Then turns the
+///   Cloud Schedule flow back ON so subsequent weekly windows roll out
+///   normally. If no weekly schedule was supplied / has no workdays,
+///   the AutoReply step is skipped and Outlook just clears the vacation
+///   reply on its own via the scheduledEndDateTime the Start flow
+///   set.</description></item>
 /// </list>
 /// Companion to <see cref="CloudSchedulePackageGenerator"/>; identifiers
 /// are derived from the signed-in user's alias the same way so re-importing
@@ -191,6 +199,24 @@ public static class ManualVacationPackageGenerator
     /// repo memory note on <c>FlowName</c> != WorkflowId after import) of the
     /// Schedule flow. Pulled from the Power Automate flow-reference cache.
     /// Pass null/empty to omit pause/resume actions.</param>
+    /// <param name="weeklySchedule">The user's per-day work schedule. When
+    /// supplied alongside a Schedule-flow target, the End flow writes the
+    /// user's normal off-hours AutoReply window at vacation end (same
+    /// per-DOW expressions the weekly flow uses) so there's no gap before
+    /// the weekly flow's next recurrence fires. Pass null to skip the
+    /// handoff step.</param>
+    /// <param name="weeklyInternalReply">Internal AutoReply body used by the
+    /// End-flow handoff step. Should be the user's WEEKLY internal reply text
+    /// (not the vacation text). Ignored when <paramref name="weeklySchedule"/>
+    /// is null.</param>
+    /// <param name="weeklyExternalReply">External AutoReply body used by the
+    /// End-flow handoff step. Should be the user's WEEKLY external reply text
+    /// (not the vacation text). Ignored when <paramref name="weeklySchedule"/>
+    /// is null.</param>
+    /// <param name="weeklyExternalAudienceAll">External audience for the
+    /// End-flow handoff step: all senders if true, contacts only if false.
+    /// Should match the audience the weekly flow was set up with. Ignored
+    /// when <paramref name="weeklySchedule"/> is null.</param>
     public static GenerateResult GenerateWithIdentity(
         string userEmail,
         DateTime vacationStart,
@@ -200,6 +226,10 @@ public static class ManualVacationPackageGenerator
         bool externalAudienceAll,
         string? scheduleFlowEnvironmentId,
         string? scheduleFlowRuntimeFlowName,
+        WorkScheduleSnapshot? weeklySchedule = null,
+        string weeklyInternalReply = "",
+        string weeklyExternalReply = "",
+        bool weeklyExternalAudienceAll = true,
         bool generateManaged = true,
         string? outputPath = null)
     {
@@ -246,9 +276,14 @@ public static class ManualVacationPackageGenerator
 
         var endFlowJson = BuildVacationEndFlowJson(
             identity: identity,
+            tzId: tzId,
             triggerStartUtc: endUtc,
             scheduleFlowEnvironmentId: scheduleFlowEnvironmentId,
-            scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName);
+            scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName,
+            weeklySchedule: weeklySchedule,
+            weeklyAudience: weeklyExternalAudienceAll ? "all" : "contactsOnly",
+            weeklyInternalReply: PlainTextToHtml(weeklyInternalReply ?? string.Empty),
+            weeklyExternalReply: PlainTextToHtml(weeklyExternalReply ?? string.Empty));
 
         var solutionXml = BuildSolutionXml(generateManaged, identity, solutionVersion);
         var customizationsXml = BuildCustomizationsXml(identity, hasScheduleFlowTarget);
@@ -365,7 +400,7 @@ public static class ManualVacationPackageGenerator
                 BuildConnectionReferenceMap("shared_flowmanagement", identity.FlowMgmtConnRefLogicalName);
 
             // 1) Pause the Schedule flow FIRST so no future recurrence fires.
-            actions["Pause_OofManager_Cloud_Schedule_flow"] = BuildTurnOffFlowAction(
+            actions["Pause_OofManager_Weekly_Schedule_flow"] = BuildTurnOffFlowAction(
                 scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
                 runAfterStep: null);
 
@@ -380,7 +415,7 @@ public static class ManualVacationPackageGenerator
                 audience: audience,
                 internalReply: internalReply,
                 externalReply: externalReply,
-                runAfterStep: "Pause_OofManager_Cloud_Schedule_flow");
+                runAfterStep: "Pause_OofManager_Weekly_Schedule_flow");
 
             // 3) Wait 60 seconds for any in-flight Schedule-flow run that was
             //    triggered at the same instant T0 to finish its own
@@ -438,29 +473,80 @@ public static class ManualVacationPackageGenerator
 
     /// <summary>
     /// Builds the vacation-end workflow JSON. One-shot Recurrence trigger at
-    /// vacation end; single action turning the Cloud Schedule flow back on.
-    /// Omitted entirely (zero actions) when no Schedule-flow target is
-    /// supplied, in which case the flow becomes a no-op — Outlook will still
-    /// clear the AutoReply on its own via the scheduledEndDateTime set by
-    /// the start flow.
+    /// vacation end. When a Schedule-flow target is supplied, action chain is:
+    /// <list type="number">
+    ///   <item><description><b>SetAutoReply (handoff)</b> — writes the user's
+    ///   normal off-hours window using the same per-DOW expressions the
+    ///   weekly flow uses. Evaluates at runtime to <c>[most-recent-end-of-
+    ///   shift → next-start-of-shift]</c>, which covers any gap between
+    ///   vacation end and the weekly flow's next recurrence fire
+    ///   (recurrences don't backfill).</description></item>
+    ///   <item><description><b>StartFlow</b> — turns the weekly Schedule
+    ///   flow back on so subsequent windows roll out
+    ///   normally.</description></item>
+    /// </list>
+    /// SetAutoReply runs first so even if StartFlow fails, the user still
+    /// has the correct OOF state. The handoff is skipped (Resume only) when
+    /// the schedule has no configured workdays — in which case Outlook
+    /// auto-clears the vacation reply via the Start flow's
+    /// scheduledEndDateTime instead.
+    /// When no Schedule-flow target is supplied, the flow becomes a no-op
+    /// (zero actions) — Outlook still clears the AutoReply on its own.
     /// </summary>
     private static string BuildVacationEndFlowJson(
         VacationIdentity identity,
+        string tzId,
         string triggerStartUtc,
         string? scheduleFlowEnvironmentId,
-        string? scheduleFlowRuntimeFlowName)
+        string? scheduleFlowRuntimeFlowName,
+        WorkScheduleSnapshot? weeklySchedule,
+        string weeklyAudience,
+        string weeklyInternalReply,
+        string weeklyExternalReply)
     {
         var connectionReferences = new Dictionary<string, object?>();
         var actions = new Dictionary<string, object?>();
 
-        if (!string.IsNullOrWhiteSpace(scheduleFlowEnvironmentId) &&
-            !string.IsNullOrWhiteSpace(scheduleFlowRuntimeFlowName))
+        var hasScheduleTarget =
+            !string.IsNullOrWhiteSpace(scheduleFlowEnvironmentId) &&
+            !string.IsNullOrWhiteSpace(scheduleFlowRuntimeFlowName);
+
+        var (handoffStartExpr, handoffEndExpr) = weeklySchedule != null
+            ? CloudSchedulePackageGenerator.BuildOffHoursWindowExpressions(weeklySchedule, tzId)
+            : (null, null);
+        var canHandoff = hasScheduleTarget && handoffStartExpr != null && handoffEndExpr != null;
+
+        if (canHandoff)
+        {
+            connectionReferences["shared_office365"] =
+                BuildConnectionReferenceMap("shared_office365", identity.OutlookConnRefLogicalName);
+
+            // 1) Restore the normal off-hours window immediately, so there's
+            //    no gap before the next weekly recurrence fires.
+            actions["Set_up_automatic_replies"] = BuildSetAutoReplyAction(
+                tzId: tzId,
+                autoReplyStart: handoffStartExpr!,
+                autoReplyEnd: handoffEndExpr!,
+                audience: weeklyAudience,
+                internalReply: weeklyInternalReply,
+                externalReply: weeklyExternalReply,
+                runAfterStep: null);
+        }
+
+        if (hasScheduleTarget)
         {
             connectionReferences["shared_flowmanagement"] =
                 BuildConnectionReferenceMap("shared_flowmanagement", identity.FlowMgmtConnRefLogicalName);
+
+            // 2) Resume the weekly schedule flow — runs even if the handoff
+            //    SetAutoReply above reported a non-Succeeded state, since
+            //    the user definitely wants their weekly flow back on.
             actions["Resume_OofManager_Weekly_Schedule_flow"] = BuildTurnOnFlowAction(
                 scheduleFlowEnvironmentId!, scheduleFlowRuntimeFlowName!,
-                runAfterStep: null);
+                runAfterStep: canHandoff ? "Set_up_automatic_replies" : null,
+                runAfterStatuses: canHandoff
+                    ? new[] { "Succeeded", "Failed", "Skipped", "TimedOut" }
+                    : null);
         }
 
         return SerializeWorkflowEnvelope(
@@ -557,10 +643,14 @@ public static class ManualVacationPackageGenerator
     }
 
     private static Dictionary<string, object?> BuildTurnOffFlowAction(string envId, string flowName, string? runAfterStep)
-        => BuildFlowMgmtAction("StopFlow", envId, flowName, runAfterStep);
+        => BuildFlowMgmtAction("StopFlow", envId, flowName, runAfterStep, runAfterStatuses: null);
 
-    private static Dictionary<string, object?> BuildTurnOnFlowAction(string envId, string flowName, string? runAfterStep)
-        => BuildFlowMgmtAction("StartFlow", envId, flowName, runAfterStep);
+    private static Dictionary<string, object?> BuildTurnOnFlowAction(
+        string envId,
+        string flowName,
+        string? runAfterStep,
+        string[]? runAfterStatuses = null)
+        => BuildFlowMgmtAction("StartFlow", envId, flowName, runAfterStep, runAfterStatuses);
 
     /// <summary>
     /// Builds a Power Automate Management connector action. operationId
@@ -574,12 +664,13 @@ public static class ManualVacationPackageGenerator
         string operationId,
         string envId,
         string flowName,
-        string? runAfterStep)
+        string? runAfterStep,
+        string[]? runAfterStatuses)
     {
         var runAfter = new Dictionary<string, object?>();
         if (!string.IsNullOrWhiteSpace(runAfterStep))
         {
-            runAfter[runAfterStep!] = new[] { "Succeeded" };
+            runAfter[runAfterStep!] = runAfterStatuses ?? new[] { "Succeeded" };
         }
 
         return new Dictionary<string, object?>
@@ -805,7 +896,7 @@ public static class ManualVacationPackageGenerator
             "",
             $"  End flow:   '{identity.EndFlowDisplayName}'",
             $"     Fires once at {end:yyyy-MM-dd HH:mm} (local) — " + (hasScheduleFlowTarget
-                ? "re-enables your OofManager Weekly Schedule flow."
+                ? "restores your normal off-hours AutoReply window (same one your weekly schedule rolls out) so there's no gap before the next weekly run, then re-enables your OofManager Weekly Schedule flow."
                 : "no-op (Outlook clears AutoReply on its own at this time)."),
             "",
             "How to import",
