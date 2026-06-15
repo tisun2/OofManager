@@ -1569,6 +1569,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// registering it — the status check returning <c>NotFound</c> in that
     /// window would otherwise make us bail without ever calling Enable.
     /// One quick retry after a short delay covers the registration lag.
+    /// After Enable reports success, the live flow state is re-read: an
+    /// accepted Enable still leaves the flow Off when a connection reference
+    /// (e.g. shared_flowmanagement) is unbound, so we only report ready when
+    /// the flow actually came up On.
     /// </summary>
     private async Task<(bool IsReady, string Message)> EnsureManualVacationFlowOnAsync(string expectedFlowDisplayName, string label)
     {
@@ -1594,9 +1598,23 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 await Task.Delay(TimeSpan.FromSeconds(10));
                 enable = await TryEnableOnceAsync();
             }
-            return enable.Outcome == PowerAutomateOutcome.Success
+            if (enable.Outcome != PowerAutomateOutcome.Success)
+                return (false, $"{label} could not be turned on: {enable.Message}");
+
+            // Enable being ACCEPTED is not proof the flow is actually On.
+            // When a connection reference is unbound — most often
+            // shared_flowmanagement (Power Automate Management), which the
+            // vacation flows use but the weekly flow doesn't, so it's
+            // typically unbound the first time — the Enable API silently
+            // leaves the flow Off. Re-read the live state and only report
+            // ready if it truly came up On, so the caller's "flows still Off"
+            // branch can deep-link the user to bind connections (mirrors the
+            // weekly EnsureCloudScheduleFlowOnAfterImportAsync verify step).
+            var verify = await _powerAutomate.GetOofManagerFlowStatusAsync(
+                upn, displayName, expectedFlowDisplayName, progress: statusProgress);
+            return verify.State == PowerAutomateFlowState.On
                 ? (true, $"{label} turned on.")
-                : (false, $"{label} could not be turned on: {enable.Message}");
+                : (false, $"{label} was accepted but is still Off (a connection reference is probably unbound): {verify.Message}");
         }
         catch (Exception ex)
         {

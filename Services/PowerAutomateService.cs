@@ -1546,8 +1546,40 @@ try {
                 & $verb -FlowName $f.FlowName -ErrorAction Stop | Out-Null
             }
             Trace ""after  $verb OK: $($f.DisplayName)""
-            Report 'Power Automate accepted the change. Finishing...'
-            $changed += $f.DisplayName
+
+            # Double-insurance: the cmdlet ACCEPTING the change is not proof
+            # the flow reached the desired state. When a connection reference
+            # is unbound, Enable-Flow is accepted but the flow silently stays
+            # Off. Re-read the live state and only count it as changed if it
+            # actually flipped. Retry a couple times to absorb write-
+            # propagation lag (a real success breaks out on the first read, so
+            # only the genuine still-Off / unbound case pays the wait). An
+            # unreadable state is treated as accepted so a transient read
+            # failure can't turn a real success into a false alarm.
+            $verified = $false
+            $lastKnown = $false
+            $lastEnabled = $null
+            for ($vi = 0; $vi -lt 3; $vi++) {
+                $after = Read-CurrentEnabled $f
+                $lastKnown = $after.Known
+                $lastEnabled = $after.Enabled
+                if ($after.Known -and ($after.Enabled -eq $desiredEnabled)) { $verified = $true; break }
+                if (-not $after.Known) { break }
+                if ($vi -lt 2) { Start-Sleep -Seconds 3 }
+            }
+            if ($verified) {
+                Trace ""post-$verb verify OK: $($f.DisplayName) is $targetState""
+                Report 'Power Automate accepted the change. Finishing...'
+                $changed += $f.DisplayName
+            } elseif (-not $lastKnown) {
+                Trace ""post-$verb verify inconclusive (state unreadable); treating as accepted: $($f.DisplayName)""
+                Report 'Power Automate accepted the change. Finishing...'
+                $changed += $f.DisplayName
+            } else {
+                $actual = if ($lastEnabled) { 'on' } else { 'off' }
+                Trace ""post-$verb verify FAILED: $($f.DisplayName) still $actual, expected $targetState (connection reference likely unbound)""
+                $errors += ($f.DisplayName + "": the change was accepted but the flow is still "" + $actual + "" (a connection reference is probably unbound)."")
+            }
         } catch {
             Trace ""$verb FAILED on $($f.DisplayName): $($_.Exception.Message)""
             $errors += ($f.DisplayName + "": "" + $_.Exception.Message)
