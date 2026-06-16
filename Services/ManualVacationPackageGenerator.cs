@@ -573,19 +573,29 @@ public static class ManualVacationPackageGenerator
     private static Dictionary<string, object?> BuildOneShotRecurrence(string startTimeUtcIso) =>
         new()
         {
-            // One-shot pattern: a Month×1 recurrence starting at the chosen
-            // instant with count=1. We previously used Year×1, but the new
-            // Power Automate designer's Frequency dropdown only lists
-            // Second/Minute/Hour/Day/Week/Month — "Year" is accepted by the
-            // engine but renders blank ("Select frequency.") in the UI, which
-            // looks broken and risks the required field being cleared if a
-            // user opens+saves the flow. Month×1 (≈30 days) displays correctly,
-            // stays well under the 500-day frequency×interval cap, and count=1
-            // still pins it to exactly one run at startTime (the frequency
-            // value is irrelevant to that single fire).
+            // One-shot pattern: an Hour×1 recurrence starting at the chosen
+            // instant with count=1, so it fires exactly ONCE at startTime.
+            //
+            // Frequency MUST be sub-day (Hour). Per Microsoft docs, the Day,
+            // Week, and Month frequencies "might skip the first recurrence"
+            // unless the flow is set up well in advance — Day ≥24h, Week
+            // ≥7 days, Month ≥1 month. We previously used Month×1, but a
+            // vacation is almost never set up a full month ahead, so Power
+            // Automate would skip its first occurrence; combined with count=1
+            // (no second occurrence) the enabled flow simply never fired at
+            // vacation start. Hour is NOT subject to that advance-setup
+            // requirement, so the single occurrence is honored no matter how
+            // short the lead time. (Earlier Year×1 was rejected separately
+            // because the designer renders "Year" as a blank Frequency field.)
+            //
+            // Hour×1 renders correctly in the designer, interval=1 is always
+            // valid, and count=1 pins it to exactly one run at startTime (the
+            // frequency value is otherwise irrelevant to that single fire). If
+            // a designer round-trip ever stripped count=1, the blast radius is
+            // a benign hourly poll rather than per-minute.
             ["recurrence"] = new Dictionary<string, object?>
             {
-                ["frequency"] = "Month",
+                ["frequency"] = "Hour",
                 ["interval"] = 1,
                 ["startTime"] = startTimeUtcIso,
                 ["timeZone"] = "UTC",
