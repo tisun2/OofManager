@@ -1353,12 +1353,32 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
 
             // Fall back to whatever PowerAutomateService last cached from a
-            // successful status check / toggle.
+            // successful status check / toggle — but ONLY if that cache is
+            // actually the WEEKLY flow. The PowerAutomate.Flow.* cache keys are
+            // SHARED across every flow we probe, including the vacation
+            // Start/End flows that EnsureManualVacationFlowOnAsync re-reads
+            // right after import (its status/enable calls run through
+            // SaveFlowReferenceCache too). So this cache is routinely left
+            // holding a *vacation* flow's identity. If the live weekly lookup
+            // above didn't resolve (env flaky, or the user's weekly flow still
+            // carries the older "Cloud Schedule" display name), trusting the
+            // cache blindly would bake a VACATION flow's runtime GUID into the
+            // Start flow's StopFlow target and the End flow's StartFlow target.
+            // That turns the wrong flow off/on: the weekly schedule never
+            // pauses or resumes, and at vacation end the End flow re-enables a
+            // vacation flow — whose one-shot Recurrence (count:1 is not honored
+            // by Power Automate) then re-fires on enable because its startTime
+            // is in the past. Guard on the cached DisplayName so we only adopt
+            // the cache when it really is the weekly flow.
             if (string.IsNullOrWhiteSpace(scheduleEnvId) || string.IsNullOrWhiteSpace(scheduleFlowName))
             {
-                scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
-                scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
-                scheduleFlowDisplayName = _prefs.GetString("PowerAutomate.Flow.DisplayName");
+                var cachedDisplayName = _prefs.GetString("PowerAutomate.Flow.DisplayName");
+                if (string.Equals(cachedDisplayName, expectedScheduleFlowDisplayName, StringComparison.OrdinalIgnoreCase))
+                {
+                    scheduleEnvId = _prefs.GetString("PowerAutomate.Flow.Environment.Id");
+                    scheduleFlowName = _prefs.GetString("PowerAutomate.Flow.Name");
+                    scheduleFlowDisplayName = cachedDisplayName;
+                }
             }
         }
         var hasScheduleTarget = !string.IsNullOrWhiteSpace(scheduleEnvId) && !string.IsNullOrWhiteSpace(scheduleFlowName);
