@@ -2053,18 +2053,27 @@ try {
             if ($connRefs -and -not ($connRefs -is [System.Array])) { $connRefs = @($connRefs) }
             Trace ""connRefs requested: $($connRefs.Count)""
 
-            # Reads existing connections in the target env and returns a
-            # connector -> connectionId map of CONNECTED connections. Output
-            # columns: Id | Name | API Id (/providers/.../shared_xxx) | Status.
-            # Values have no embedded spaces: first token = Id, last = Status,
-            # the /providers token = connector.
-            function Get-ConnByConnector {
-                $map = @{}
+            # Reads existing connections in the target env. Output columns:
+            # Id | Name | API Id (/providers/.../shared_xxx) | Status. Values
+            # have no embedded spaces: first token = Id, last = Status, the
+            # /providers token = connector. Returns a hashtable:
+            #   Connected = @{connector -> id}  first CONNECTED conn (for binding)
+            #   Present   = @{connector -> id}  first conn of ANY status (for the
+            #                                   'does one already exist' test)
+            #   Ok        = $true/$false         did the list call SUCCEED (so we
+            #                                   can tell 'no connections' apart
+            #                                   from 'could not read connections')
+            function Get-ConnInventory {
+                $connected = @{}
+                $present = @{}
+                $ok = $false
                 $lines = @()
                 try {
                     $lines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
+                    $ok = ($LASTEXITCODE -eq 0)
                 } catch {
                     Trace ""pac connection list failed: $($_.Exception.Message)""
+                    $ok = $false
                 }
                 foreach ($line in $lines) {
                     $apiToken = ($line -split '\s+' | Where-Object { $_ -like '/providers/*/apis/*' } | Select-Object -First 1)
@@ -2074,19 +2083,37 @@ try {
                     $connId = [string]$tokens[0]
                     $status = [string]$tokens[-1]
                     $connector = ($apiToken -split '/apis/')[-1]
-                    if ($status -ieq 'Connected' -and -not $map.ContainsKey($connector)) {
-                        $map[$connector] = $connId
+                    if (-not $present.ContainsKey($connector)) { $present[$connector] = $connId }
+                    if ($status -ieq 'Connected' -and -not $connected.ContainsKey($connector)) {
+                        $connected[$connector] = $connId
                     }
                 }
-                return $map
+                return @{ Connected = $connected; Present = $present; Ok = $ok }
             }
 
-            $connByConnector = Get-ConnByConnector
-            foreach ($k in $connByConnector.Keys) { Trace ""connection available: connector=$k id=$($connByConnector[$k])"" }
+            $inv = Get-ConnInventory
+            $connByConnector = $inv.Connected
+            foreach ($k in $connByConnector.Keys) { Trace ""connection Connected: connector=$k id=$($connByConnector[$k])"" }
+            foreach ($k in $inv.Present.Keys) { Trace ""connection present(any): connector=$k id=$($inv.Present[$k])"" }
 
             # Distinct connectors this solution actually needs.
             $neededConnectors = @($connRefs | ForEach-Object { ($_.connectorId -split '/apis/')[-1] } | Where-Object { $_ } | Select-Object -Unique)
-            $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
+
+            # A connector is 'missing' only when the user has NO connection of
+            # that type in ANY status -- not merely because none is currently
+            # 'Connected'. An idle office365/flowmanagement connection often
+            # lapses to a non-Connected state between vacations; the old
+            # Connected-only test treated that as missing and made pre-create
+            # mint a DUPLICATE every run. Reuse the existing one instead.
+            $missing = @($neededConnectors | Where-Object { -not $inv.Present.ContainsKey($_) })
+
+            # If the list call FAILED we cannot tell what exists, so do NOT
+            # pre-create -- minting duplicates is worse than the one-time
+            # manual bind the post-import guidance already covers.
+            if (-not $inv.Ok) {
+                if ($missing.Count -gt 0) { Trace ""connection list unavailable (Ok=false); skipping pre-create to avoid duplicates"" }
+                $missing = @()
+            }
 
             # Derive the per-environment Power Platform connectivity host from
             # the environment GUID: strip dashes (32 chars) then split as
@@ -2161,7 +2188,12 @@ try {
 
                     # 1. PUT create (api.powerapps.com via module InvokeApi).
                     $createRoute = ""https://{powerAppsEndpoint}/providers/Microsoft.PowerApps/apis/$connector/connections/$connName`?api-version=2016-11-01""
-                    $createBody = @{ properties = @{ environment = @{ id = ""/providers/Microsoft.PowerApps/environments/$envGuid""; name = $envGuid }; displayName = 'OofManager (auto-created)' } }
+                    $autoName = switch ($connector) {
+                        'shared_office365'      { 'OofManager Outlook (auto)' }
+                        'shared_flowmanagement' { 'OofManager Flow Management (auto)' }
+                        default                 { ""OofManager $connector (auto)"" }
+                    }
+                    $createBody = @{ properties = @{ environment = @{ id = ""/providers/Microsoft.PowerApps/environments/$envGuid""; name = $envGuid }; displayName = $autoName } }
                     InvokeApi -Method PUT -Route $createRoute -Body $createBody -ApiVersion '2016-11-01' | Out-Null
                     $createdConn = $connName
                     Trace ""created connection $connName for $connector""
@@ -2264,8 +2296,8 @@ try {
             if ($preCreateConn -eq '1' -and $envId -and $missing.Count -gt 0) {
                 Report ""Creating the required connection(s): $($missing -join ', '). A sign-in window will appear...""
                 foreach ($conn in @($missing)) {
-                    $ok = New-OofConnectionInteractive $conn $envId
-                    if (-not $ok) {
+                    $created = New-OofConnectionInteractive $conn $envId
+                    if (-not $created) {
                         $url = ""https://make.powerautomate.com/environments/$envId/connections/available?apiName=$conn""
                         Trace ""programmatic create failed for $conn; opening portal page: $url""
                         try { Start-Process $url | Out-Null } catch { Trace ""Start-Process failed: $($_.Exception.Message)"" }
@@ -2273,27 +2305,30 @@ try {
                     }
                 }
 
-                # Poll until every needed connector has a Connected connection,
-                # or we hit the wait budget (outer cap is 15 min). Check FIRST,
-                # then sleep: confirmConsentCode just returned 200 so the
-                # connection is usually already visible -- no need to burn the
-                # first 5s on a guaranteed-stale read.
+                # Poll until every connector we JUST created has a Connected
+                # connection (so the binding below can use it), or we hit the
+                # wait budget. Only wait on the connectors we created -- not on
+                # any pre-existing-but-not-Connected ones we deliberately reuse.
+                # Check FIRST, then sleep: confirmConsentCode just returned 200
+                # so the connection is usually already visible.
+                $pendingCreate = @($missing)
                 $deadline = (Get-Date).AddMinutes(4)
                 $interval = 5
-                while ($missing.Count -gt 0 -and (Get-Date) -lt $deadline) {
-                    $connByConnector = Get-ConnByConnector
-                    $missing = @($neededConnectors | Where-Object { -not $connByConnector.ContainsKey($_) })
-                    if ($missing.Count -eq 0) { break }
-                    Report ""Waiting for connection(s) to be ready: $($missing -join ', ')...""
+                while ($pendingCreate.Count -gt 0 -and (Get-Date) -lt $deadline) {
+                    $inv = Get-ConnInventory
+                    $connByConnector = $inv.Connected
+                    $pendingCreate = @($missing | Where-Object { -not $connByConnector.ContainsKey($_) })
+                    if ($pendingCreate.Count -eq 0) { break }
+                    Report ""Waiting for connection(s) to be ready: $($pendingCreate -join ', ')...""
                     Start-Sleep -Seconds $interval
                     # Back off (5s -> 10s -> 15s -> 20s cap) so a slow consent
                     # doesn't spawn ~48 pac processes over the 4-minute budget.
                     if ($interval -lt 20) { $interval += 5 }
                 }
-                if ($missing.Count -eq 0) {
+                if ($pendingCreate.Count -eq 0) {
                     Report 'Connection(s) ready. Binding them automatically...'
                 } else {
-                    Trace ""timed out waiting for connections: $($missing -join ', '); importing without them""
+                    Trace ""timed out waiting for connections: $($pendingCreate -join ', '); importing without them""
                 }
             }
 
@@ -2312,10 +2347,22 @@ try {
                 $logical = [string]$cr.logical
                 $connectorId = [string]$cr.connectorId
                 $connectorName = ($connectorId -split '/apis/')[-1]
+                $bindConnId = $null
                 if ($connByConnector.ContainsKey($connectorName)) {
+                    # Prefer a Connected connection.
+                    $bindConnId = $connByConnector[$connectorName]
+                } elseif ($inv.Present.ContainsKey($connectorName)) {
+                    # Fall back to an existing connection that isn't currently
+                    # Connected: binding the ref to it (instead of leaving it
+                    # unbound or minting a duplicate) means the user only has to
+                    # re-consent that one connection to finish setup.
+                    $bindConnId = $inv.Present[$connectorName]
+                    Trace ""binding ref=$logical to non-Connected existing connection $bindConnId (connector=$connectorName; may need re-consent)""
+                }
+                if ($bindConnId) {
                     $bindings += [pscustomobject]@{
                         LogicalName = $logical
-                        ConnectionId = $connByConnector[$connectorName]
+                        ConnectionId = $bindConnId
                         ConnectorId = $connectorId
                     }
                 } else {

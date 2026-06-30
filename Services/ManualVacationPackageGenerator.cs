@@ -464,10 +464,27 @@ public static class ManualVacationPackageGenerator
                 runAfterStep: null);
         }
 
+        if (hasScheduleTarget)
+        {
+            // Turn THIS vacation flow off after its single start-time run so
+            // the count-less Hour recurrence doesn't keep firing every hour.
+            // Targets itself via @workflow()?['name'] (its runtime FlowName)
+            // in the same environment as the weekly schedule flow. Reuses the
+            // shared_flowmanagement connection already wired for the pause
+            // action. Runs after the final AutoReply write regardless of
+            // that step's status.
+            actions["Disable_this_vacation_flow"] = BuildDisableSelfAction(
+                scheduleFlowEnvironmentId!,
+                runAfterStep: "Set_up_automatic_replies");
+        }
+
         return SerializeWorkflowEnvelope(
             displayName: identity.StartFlowDisplayName,
             connectionReferences: connectionReferences,
-            trigger: BuildOneShotRecurrence(triggerStartUtc),
+            // Omit count when the flow self-disables (above) so the single
+            // occurrence fires reliably; keep count=1 only for the no-target
+            // build, which has no connection to self-disable with.
+            trigger: BuildOneShotRecurrence(triggerStartUtc, includeCount: !hasScheduleTarget),
             actions: actions);
     }
 
@@ -547,12 +564,22 @@ public static class ManualVacationPackageGenerator
                 runAfterStatuses: canHandoff
                     ? new[] { "Succeeded", "Failed", "Skipped", "TimedOut" }
                     : null);
+
+            // 3) Turn THIS end flow off after its single run so the count-less
+            //    Hour recurrence doesn't keep firing every hour. Targets
+            //    itself via @workflow()?['name'], reusing the
+            //    shared_flowmanagement connection already wired for Resume.
+            actions["Disable_this_vacation_flow"] = BuildDisableSelfAction(
+                scheduleFlowEnvironmentId!,
+                runAfterStep: "Resume_OofManager_Weekly_Schedule_flow");
         }
 
         return SerializeWorkflowEnvelope(
             displayName: identity.EndFlowDisplayName,
             connectionReferences: connectionReferences,
-            trigger: BuildOneShotRecurrence(triggerStartUtc),
+            // Omit count when the flow self-disables (above); keep count=1
+            // only for the no-target no-op build.
+            trigger: BuildOneShotRecurrence(triggerStartUtc, includeCount: !hasScheduleTarget),
             actions: actions);
     }
 
@@ -570,39 +597,45 @@ public static class ManualVacationPackageGenerator
             },
         };
 
-    private static Dictionary<string, object?> BuildOneShotRecurrence(string startTimeUtcIso) =>
-        new()
+    private static Dictionary<string, object?> BuildOneShotRecurrence(string startTimeUtcIso, bool includeCount)
+    {
+        // One-shot pattern: an Hour×1 recurrence starting at the chosen
+        // instant. Frequency MUST be sub-day (Hour): per Microsoft docs the
+        // Day/Week/Month frequencies "might skip the first recurrence" unless
+        // the flow is set up well in advance (Day ≥24h, Week ≥7d, Month
+        // ≥1 month), and a vacation is rarely set up that far ahead. Hour is
+        // exempt, so the occurrence at startTime is honored at any lead time.
+        //
+        // `count` is DELIBERATELY omitted when the flow self-disables after
+        // its single run (see BuildDisableSelfAction). Field evidence
+        // (2026-06-30) showed a `count:1` recurrence enabled ~25h ahead, with
+        // a correct future startTime, that NEVER fired its one occurrence —
+        // `count` is undocumented on the Power Automate Recurrence trigger
+        // and its single-occurrence state can survive an in-place re-import
+        // and suppress the run. Dropping `count` makes the flow a standard,
+        // reliable Hour recurrence that fires at startTime; the explicit
+        // self-disable (not `count`) is what stops it from repeating hourly.
+        //
+        // `count:1` is kept ONLY for the no-schedule-target build, which has
+        // no flow-management connection to self-disable with; there a stray
+        // hourly poll is the benign fallback if `count` is ignored.
+        var recurrence = new Dictionary<string, object?>
         {
-            // One-shot pattern: an Hour×1 recurrence starting at the chosen
-            // instant with count=1, so it fires exactly ONCE at startTime.
-            //
-            // Frequency MUST be sub-day (Hour). Per Microsoft docs, the Day,
-            // Week, and Month frequencies "might skip the first recurrence"
-            // unless the flow is set up well in advance — Day ≥24h, Week
-            // ≥7 days, Month ≥1 month. We previously used Month×1, but a
-            // vacation is almost never set up a full month ahead, so Power
-            // Automate would skip its first occurrence; combined with count=1
-            // (no second occurrence) the enabled flow simply never fired at
-            // vacation start. Hour is NOT subject to that advance-setup
-            // requirement, so the single occurrence is honored no matter how
-            // short the lead time. (Earlier Year×1 was rejected separately
-            // because the designer renders "Year" as a blank Frequency field.)
-            //
-            // Hour×1 renders correctly in the designer, interval=1 is always
-            // valid, and count=1 pins it to exactly one run at startTime (the
-            // frequency value is otherwise irrelevant to that single fire). If
-            // a designer round-trip ever stripped count=1, the blast radius is
-            // a benign hourly poll rather than per-minute.
-            ["recurrence"] = new Dictionary<string, object?>
-            {
-                ["frequency"] = "Hour",
-                ["interval"] = 1,
-                ["startTime"] = startTimeUtcIso,
-                ["timeZone"] = "UTC",
-                ["count"] = 1,
-            },
+            ["frequency"] = "Hour",
+            ["interval"] = 1,
+            ["startTime"] = startTimeUtcIso,
+            ["timeZone"] = "UTC",
+        };
+        if (includeCount)
+        {
+            recurrence["count"] = 1;
+        }
+        return new()
+        {
+            ["recurrence"] = recurrence,
             ["type"] = "Recurrence",
         };
+    }
 
     private static Dictionary<string, object?> BuildSetAutoReplyAction(
         string tzId,
@@ -661,6 +694,28 @@ public static class ManualVacationPackageGenerator
         string? runAfterStep,
         string[]? runAfterStatuses = null)
         => BuildFlowMgmtAction("StartFlow", envId, flowName, runAfterStep, runAfterStatuses);
+
+    /// <summary>
+    /// Turns THIS flow off (StopFlow on its own runtime FlowName) as the
+    /// final action, so the count-less one-shot Recurrence doesn't keep
+    /// firing every hour after the single vacation start/end run.
+    /// <para>
+    /// The flow targets ITSELF with the runtime expression
+    /// <c>@workflow()?['name']</c>, NOT its deterministic WorkflowId: Power
+    /// Automate assigns each imported flow a fresh runtime FlowName that does
+    /// NOT equal the WorkflowId we stamp into the solution (verified
+    /// 2026-06-30: stamped 1d6838b0… vs runtime d47b9144…), and StopFlow
+    /// targets the runtime FlowName. <c>workflow()['name']</c> resolves to
+    /// that runtime GUID at execution time. The environment is the same one
+    /// the weekly schedule flow lives in, passed as a literal. Runs after the
+    /// preceding step regardless of that step's status.
+    /// </para>
+    /// </summary>
+    private static Dictionary<string, object?> BuildDisableSelfAction(string envId, string runAfterStep)
+        => BuildFlowMgmtAction(
+            "StopFlow", envId, "@workflow()?['name']",
+            runAfterStep,
+            runAfterStatuses: new[] { "Succeeded", "Failed", "Skipped", "TimedOut" });
 
     /// <summary>
     /// Builds a Power Automate Management connector action. operationId
