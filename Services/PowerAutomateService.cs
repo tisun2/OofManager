@@ -653,6 +653,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 CreateNoWindow = !interactive,
             };
             psi.EnvironmentVariables["OOFMGR_PA_MODULES"]    = modulesDir;
+            psi.EnvironmentVariables["OOFMGR_APPDIR"]        = AppContext.BaseDirectory;
             psi.EnvironmentVariables["OOFMGR_PA_RESULTFILE"] = resultFile;
             psi.EnvironmentVariables["OOFMGR_PA_PROGRESSFILE"] = progressFile;
             foreach (var kv in envVars)
@@ -1619,6 +1620,7 @@ try {
     private static string BuildImportScript() => @"
 $ErrorActionPreference = 'Stop'
 $modulesDir   = $env:OOFMGR_PA_MODULES
+$appDir       = $env:OOFMGR_APPDIR
 $upn          = $env:OOFMGR_PA_UPN
 $displayName  = $env:OOFMGR_PA_DISPLAYNAME
 $resultFile   = $env:OOFMGR_PA_RESULTFILE
@@ -2156,14 +2158,17 @@ try {
 
             # Create ONE user OAuth connection programmatically and authenticate
             # it via the connector's own OAuth consent page shown in an in-app
-            # WebBrowser dialog. Steps (all verified against live APIs):
+            # WebView2 dialog. Steps (all verified against live APIs 2026-07-02):
             #   1. PUT a new (unauthenticated) connection on api.powerapps.com.
             #   2. POST getConsentLink on the per-env connectivity host to get
             #      the sign-in URL.
-            #   3. Open that URL in a WebBrowser; the user signs in; the page
-            #      redirects to our redirectUrl carrying a one-time ?code=.
-            #   4. POST confirmConsentCode with that code -> connection becomes
-            #      Connected.
+            #   3. Open that URL in WebView2; the user signs in and clicks
+            #      ""Allow access"". The apihub finalizes the grant server-side
+            #      at its /confirm/Allow step -- there is NO code for us to
+            #      redeem (the old confirmConsentCode step is a legacy no-op that
+            #      now always 400s).
+            #   4. Poll the connection status; when it flips to Connected we
+            #      close the window. Connected == success.
             # Returns $true on success. Any failure returns $false so the caller
             # can fall back to the maker-portal New-connection page.
             function New-OofConnectionInteractive($connector, $envGuid) {
@@ -2237,38 +2242,201 @@ try {
 
                     $pp = @{ Host = $ppHost; Token = $ppToken; Connector = $connector; Conn = $connName; Filter = $filter }
 
-                    # 2. getConsentLink.
+                    # 2. getConsentLink. The redirectUrl is where the apihub
+                    # sends the browser at the END of the OAuth chain, carrying
+                    # the real consent code. Intermediate hops
+                    # (login.microsoftonline.com, {connector}.consent.azure-
+                    # apim.net) also carry ?code=, but closing the window on one
+                    # of those interrupts the apihub's server-side token
+                    # exchange before it stores the durable REFRESH token -> the
+                    # connection then expires in ~1-2h and any flow using it
+                    # fails a few hours later with 'token exchange: missing
+                    # connection ACL' (verified 2026-07-02: office365 conn
+                    # created 17:38Z, expirationTime 19:05Z). So we only capture
+                    # once the browser lands back on THIS host (see below).
                     $redirectUrl = 'https://global.consent.azure-apim.net/redirect'
                     $gcTxt = Invoke-PpAction $pp 'getConsentLink' @{ redirectUrl = $redirectUrl; principalType = 'NotSpecified' }
                     $consent = $gcTxt | ConvertFrom-Json
                     $consentLink = [string]$consent.consentLink
                     if (-not $consentLink) { Trace 'getConsentLink returned no consentLink'; return $false }
 
-                    # 3. Show the sign-in page; capture the redirect's ?code=.
-                    Add-Type -AssemblyName System.Windows.Forms | Out-Null
+                    # 3. Show the sign-in page in an embedded WebView2 (Edge/
+                    # Chromium) and capture the redirect's ?code=. The legacy
+                    # WinForms WebBrowser (Trident/IE) CANNOT run Microsoft's
+                    # modern connector consent confirmation page — its ""Allow
+                    # access"" button silently no-ops (submits allowed_plr=False)
+                    # so consent never completes and the connection ends up with
+                    # only a ~1-2h access token (no refresh) that breaks
+                    # unattended flow runs later. WebView2 renders the modern
+                    # page correctly so the user can actually grant access ->
+                    # durable (~90-day, refreshable) connection. If WebView2 or
+                    # its runtime isn't available we return $false and the caller
+                    # opens the portal in the real system browser instead.
                     $global:__oofConsentCode = $null
+                    $global:__oofWv2Ok = $false
+                    $wv2Loaded = $false
+                    $wv2Udf = $null
+                    try {
+                        $wfDll   = Join-Path $appDir 'Microsoft.Web.WebView2.WinForms.dll'
+                        $coreDll = Join-Path $appDir 'Microsoft.Web.WebView2.Core.dll'
+                        if (-not $appDir -or -not (Test-Path -LiteralPath $wfDll) -or -not (Test-Path -LiteralPath $coreDll)) {
+                            Trace ""WebView2 assemblies not found in app dir '$appDir'""
+                        } else {
+                            # The native WebView2Loader.dll ships next to the exe;
+                            # ensure it's on PATH so the managed loader finds it.
+                            if ($env:Path -notlike ""*$appDir*"") { $env:Path = $appDir + ';' + $env:Path }
+                            $wv2Udf = Join-Path $env:TEMP ('oofmgr-wv2-' + [guid]::NewGuid().ToString('N'))
+                            $env:WEBVIEW2_USER_DATA_FOLDER = $wv2Udf
+                            Add-Type -AssemblyName System.Windows.Forms | Out-Null
+                            Add-Type -Path $coreDll -ErrorAction Stop | Out-Null
+                            Add-Type -Path $wfDll   -ErrorAction Stop | Out-Null
+                            $wv2Loaded = $true
+                        }
+                    } catch {
+                        Trace ""WebView2 load failed: $($_.Exception.Message)""
+                    }
+                    if (-not $wv2Loaded) {
+                        Trace 'WebView2 unavailable; returning false so the caller opens the portal in the real browser'
+                        return $false
+                    }
+
+                    # Create the WebView2 environment with OS-primary-account
+                    # SSO enabled. On managed/corporate tenants a Conditional
+                    # Access policy often requires a COMPLIANT DEVICE; an
+                    # embedded webview normally can't present the device state
+                    # and gets ""You can't get there from here"". Enabling OS
+                    # account SSO lets WebView2 use the device-joined account +
+                    # its compliance claim via the Windows account broker, so CA
+                    # passes the same way the system Edge browser does.
+                    $global:__oofWv2Env = $null
+                    try {
+                        # ctor: (additionalBrowserArguments, language,
+                        # targetCompatibleBrowserVersion, allowSingleSignOnUsingOSPrimaryAccount)
+                        $wv2Opts = New-Object Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions -ArgumentList $null, $null, $null, $true
+                        $wv2EnvTask = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $wv2Udf, $wv2Opts)
+                        $spins = 0
+                        while (-not $wv2EnvTask.AsyncWaitHandle.WaitOne(200)) { if (++$spins -gt 150) { throw 'environment create timed out' } }
+                        $global:__oofWv2Env = $wv2EnvTask.GetAwaiter().GetResult()
+                        Trace 'WebView2 environment created (OS-account SSO enabled)'
+                    } catch {
+                        Trace ""WebView2 environment create failed: $($_.Exception.Message)""
+                        return $false
+                    }
+
                     $form = New-Object System.Windows.Forms.Form
                     $form.Width = 620; $form.Height = 820
                     $form.StartPosition = 'CenterScreen'
-                    $form.Text = ""Sign in to create the connection ($connector)""
-                    $web = New-Object System.Windows.Forms.WebBrowser
-                    $web.Dock = 'Fill'; $web.ScriptErrorsSuppressed = $true
-                    $web.Add_DocumentCompleted({
-                        $u = [string]$web.Url.AbsoluteUri
-                        if ($u -match '[?&]code=([^&]+)') { $global:__oofConsentCode = $matches[1]; $form.Close() }
-                        elseif ($u -match '[?&]error=') { Trace ""consent error in redirect: $u""; $form.Close() }
-                    })
-                    $web.Url = [Uri]$consentLink
+                    $form.Text = ""Sign in and click Allow access to create the connection ($connector)""
+                    $web = New-Object Microsoft.Web.WebView2.WinForms.WebView2
+                    $web.Dock = 'Fill'
                     $form.Controls.Add($web)
-                    $form.Add_Shown({ $form.Activate() })
-                    $form.ShowDialog() | Out-Null
-                    $form.Dispose()
-                    if (-not $global:__oofConsentCode) { Trace 'no consent code captured (cancelled)'; return $false }
+                    $global:__oofForm = $form
+                    $global:__oofConsentLink = $consentLink
+                    $global:__oofConnected = $false
+                    $global:__oofConnector = $connector
+                    $global:__oofConnName = $connName
+                    $global:__oofEnvGuid = $envGuid
+                    $global:__oofPollBusy = $false
 
-                    # 4. confirmConsentCode -> connection becomes Connected.
-                    Invoke-PpAction $pp 'confirmConsentCode' @{ code = $global:__oofConsentCode } | Out-Null
-                    Trace ""confirmConsentCode posted for $connector (conn $connName)""
+                    # HOW THE CONNECTION ACTUALLY GETS AUTHENTICATED (verified
+                    # 2026-07-02 with an isolated harness): it becomes Connected
+                    # purely by the user completing sign-in and clicking ""Allow
+                    # access"" in THIS window -- the apihub finalizes the grant
+                    # server-side at its /confirm/Allow step. There is no code
+                    # for us to redeem: the old confirmConsentCode call is a
+                    # legacy no-op that now always returns 400, and the previous
+                    # code-capture logic closed the window on the FIRST redirect
+                    # hop -- which fires BEFORE the user ever reaches the Allow
+                    # page -- leaving the connection unauthenticated and sending
+                    # us to the portal fallback every time. So we no longer touch
+                    # any consent code: we POLL the connection status and close
+                    # the window the instant it flips to Connected. Polling
+                    # begins only once we're back on an apihub /redirect or
+                    # /confirm stage (i.e. past AAD sign-in) so the status calls
+                    # don't stutter the password/MFA UI.
+                    $global:__oofPollTimer = New-Object System.Windows.Forms.Timer
+                    $global:__oofPollTimer.Interval = 2500
+                    $global:__oofPollTimer.add_Tick({
+                        if ($global:__oofPollBusy) { return }
+                        $global:__oofPollBusy = $true
+                        try {
+                            $c = Get-PowerAppConnection -ConnectorName $global:__oofConnector -ConnectionName $global:__oofConnName -EnvironmentName $global:__oofEnvGuid -ErrorAction Stop
+                            if ($c -is [array]) { $c = $c[0] }
+                            $st = $null
+                            try { $st = [string]$c.Statuses[0].status } catch {}
+                            if (-not $st) { try { $st = [string]$c.Internal.properties.statuses[0].status } catch {} }
+                            if ($st -eq 'Connected') {
+                                $global:__oofConnected = $true
+                                $global:__oofPollTimer.Stop()
+                                Trace 'connection reached Connected; closing consent window'
+                                $global:__oofForm.Close()
+                            }
+                        } catch {
+                        } finally {
+                            $global:__oofPollBusy = $false
+                        }
+                    })
+                    # Absolute safety close so the window can never hang if the
+                    # user cancels or never finishes the consent.
+                    $global:__oofMaxTimer = New-Object System.Windows.Forms.Timer
+                    $global:__oofMaxTimer.Interval = 300000
+                    $global:__oofMaxTimer.add_Tick({ $global:__oofMaxTimer.Stop(); Trace 'consent window max time reached; closing'; $global:__oofForm.Close() })
+
+                    $web.add_CoreWebView2InitializationCompleted({
+                        param($s, $e)
+                        if (-not $e.IsSuccess) {
+                            Trace ""WebView2 init failed: $($e.InitializationException)""
+                            $global:__oofForm.Close(); return
+                        }
+                        $global:__oofWv2Ok = $true
+                        $s.CoreWebView2.add_NavigationStarting({
+                            param($s2, $e2)
+                            $u = [string]$e2.Uri
+                            try { $nav = [Uri]$u; Trace ""consent nav: $($nav.Host)$($nav.AbsolutePath)"" } catch {}
+                            if (($u -match 'consent\.azure-apim\.net/redirect' -or $u -match 'consent\.azure-apim\.net/confirm') -and -not $global:__oofPollTimer.Enabled -and -not $global:__oofConnected) {
+                                Trace 'reached apihub consent/redirect stage; starting status poll'
+                                $global:__oofPollTimer.Start()
+                            }
+                            if ($u -match '[?&]error=([^&]+)') { Trace ""consent error in redirect: $($matches[1])""; $global:__oofForm.Close() }
+                        })
+                        $s.CoreWebView2.Navigate($global:__oofConsentLink)
+                    })
+                    $form.Add_Shown({
+                        try { $global:__oofMaxTimer.Start(); $web.EnsureCoreWebView2Async($global:__oofWv2Env) | Out-Null }
+                        catch { Trace ""EnsureCoreWebView2Async threw: $($_.Exception.Message)""; $form.Close() }
+                    })
+                    $form.ShowDialog() | Out-Null
+                    try { $global:__oofPollTimer.Stop(); $global:__oofMaxTimer.Stop() } catch {}
+                    try { $web.Dispose() } catch {}
+                    $form.Dispose()
+                    if ($wv2Udf) { try { Remove-Item $wv2Udf -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+
+                    if (-not $global:__oofWv2Ok) { Trace 'WebView2 did not initialize; returning false for portal fallback'; return $false }
+
+                    # Confirm the final status. The poll normally closes the
+                    # window the instant it sees Connected (so the flag is set);
+                    # re-check once here to cover the max-timeout close path.
+                    if (-not $global:__oofConnected) {
+                        try {
+                            $c = Get-PowerAppConnection -ConnectorName $connector -ConnectionName $connName -EnvironmentName $envGuid -ErrorAction Stop
+                            if ($c -is [array]) { $c = $c[0] }
+                            $st = $null
+                            try { $st = [string]$c.Statuses[0].status } catch {}
+                            if (-not $st) { try { $st = [string]$c.Internal.properties.statuses[0].status } catch {} }
+                            if ($st -eq 'Connected') { $global:__oofConnected = $true }
+                            Trace ""final connection status check: $st""
+                        } catch {
+                            Trace ""final status check failed: $($_.Exception.Message)""
+                        }
+                    }
+
+                    if (-not $global:__oofConnected) {
+                        Trace ""connection $connName not Connected (cancelled or consent incomplete); returning false for portal fallback""
+                        return $false
+                    }
+
                     $success = $true
+                    Trace ""connection $connName is Connected""
                     return $true
                 } catch {
                     Trace ""New-OofConnectionInteractive failed for $connector : $($_.Exception.Message)""
@@ -2309,8 +2477,8 @@ try {
                 # connection (so the binding below can use it), or we hit the
                 # wait budget. Only wait on the connectors we created -- not on
                 # any pre-existing-but-not-Connected ones we deliberately reuse.
-                # Check FIRST, then sleep: confirmConsentCode just returned 200
-                # so the connection is usually already visible.
+                # Check FIRST, then sleep: New-OofConnectionInteractive already
+                # waited for Connected, so the connection is usually visible.
                 $pendingCreate = @($missing)
                 $deadline = (Get-Date).AddMinutes(4)
                 $interval = 5
