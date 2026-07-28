@@ -1,0 +1,135 @@
+<UserControl x:Class="OofManager.Wpf.Views.HtmlEditor"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.modernwpf.com/2019"
+             x:Name="Root">
+    <UserControl.Resources>
+        <!-- Toolbar buttons are deliberately small and flat: the strip sits
+             directly above a 180px editor, so a themed button's default
+             padding would eat a third of the available height. -->
+        <Style x:Key="ToolStripToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,2,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="ToolStripButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0,0,2,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Border BorderBrush="{DynamicResource TextControlBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            Background="{DynamicResource TextControlBackground}">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- Formatting strip. Every command targets the RichTextBox
+                 explicitly; without CommandTarget the routed EditingCommands
+                 would look for focus scope and no-op once the user clicks a
+                 toolbar button (which moves focus off the editor). -->
+            <Border Grid.Row="0"
+                    BorderBrush="{DynamicResource TextControlBorderBrush}"
+                    BorderThickness="0,0,0,1"
+                    Padding="4,3">
+                <WrapPanel Orientation="Horizontal">
+                    <ComboBox x:Name="FontFamilyBox"
+                              Width="120" Height="26" Margin="0,0,4,0"
+                              FontSize="12"
+                              ToolTip="Font"
+                              SelectionChanged="OnFontFamilyChanged"/>
+
+                    <ComboBox x:Name="FontSizeBox"
+                              Width="58" Height="26" Margin="0,0,6,0"
+                              FontSize="12"
+                              ToolTip="Font size (pt)"
+                              SelectionChanged="OnFontSizeChanged"/>
+
+                    <ToggleButton x:Name="BoldButton" Style="{StaticResource ToolStripToggle}"
+                                  ToolTip="Bold (Ctrl+B)" Click="OnBoldClick">
+                        <TextBlock Text="B" FontWeight="Bold"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="ItalicButton" Style="{StaticResource ToolStripToggle}"
+                                  ToolTip="Italic (Ctrl+I)" Click="OnItalicClick">
+                        <TextBlock Text="I" FontStyle="Italic"/>
+                    </ToggleButton>
+                    <ToggleButton x:Name="UnderlineButton" Style="{StaticResource ToolStripToggle}"
+                                  ToolTip="Underline (Ctrl+U)" Click="OnUnderlineClick" Margin="0,0,6,0">
+                        <TextBlock Text="U" TextDecorations="Underline"/>
+                    </ToggleButton>
+
+                    <ComboBox x:Name="ColorBox"
+                              Width="52" Height="26" Margin="0,0,6,0"
+                              ToolTip="Text color"
+                              SelectionChanged="OnColorChanged">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="24" Height="12" CornerRadius="2"
+                                        BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                        BorderThickness="1"
+                                        Background="{Binding Brush}"
+                                        ToolTip="{Binding Name}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <Button Style="{StaticResource ToolStripButton}"
+                            Command="EditingCommands.ToggleBullets"
+                            CommandTarget="{Binding ElementName=Editor}"
+                            ToolTip="Bulleted list" Content="•"/>
+                    <Button Style="{StaticResource ToolStripButton}"
+                            Command="EditingCommands.ToggleNumbering"
+                            CommandTarget="{Binding ElementName=Editor}"
+                            ToolTip="Numbered list" Content="1." FontSize="11" Margin="0,0,6,0"/>
+
+                    <Button Style="{StaticResource ToolStripButton}"
+                            ToolTip="Insert or edit link (Ctrl+K)" Content="🔗"
+                            Click="OnInsertLinkClick"/>
+                    <Button Style="{StaticResource ToolStripButton}"
+                            ToolTip="Remove link" Content="⛓"
+                            Click="OnRemoveLinkClick"/>
+                </WrapPanel>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <RichTextBox x:Name="Editor"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             Padding="6,4"
+                             FontSize="14.6667"
+                             AcceptsTab="False"
+                             IsDocumentEnabled="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             SpellCheck.IsEnabled="True"
+                             TextChanged="OnEditorTextChanged"
+                             SelectionChanged="OnEditorSelectionChanged"/>
+
+                <!-- RichTextBox has no PlaceholderText equivalent, so the hint
+                     is an overlay. IsHitTestVisible=False keeps clicks landing
+                     on the editor underneath. -->
+                <TextBlock x:Name="PlaceholderText"
+                           Text="{Binding Placeholder, ElementName=Root}"
+                           Margin="10,6,6,0"
+                           FontSize="14"
+                           Opacity="0.5"
+                           IsHitTestVisible="False"
+                           Visibility="Collapsed"
+                           TextWrapping="Wrap"/>
+            </Grid>
+        </Grid>
+    </Border>
+</UserControl>

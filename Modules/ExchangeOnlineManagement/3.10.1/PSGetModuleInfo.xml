@@ -1,0 +1,239 @@
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <TN RefId="0">
+      <T>Microsoft.PowerShell.Commands.PSRepositoryItemInfo</T>
+      <T>System.Management.Automation.PSCustomObject</T>
+      <T>System.Object</T>
+    </TN>
+    <MS>
+      <S N="Name">ExchangeOnlineManagement</S>
+      <S N="Version">3.10.1</S>
+      <S N="Type">Module</S>
+      <S N="Description">This is a General Availability (GA) release of the Exchange Online Powershell V3 module. Exchange Online cmdlets in this module are REST-backed and do not require Basic Authentication to be enabled in WinRM. REST-based connections in Windows require the PowerShellGet module, and by dependency, the PackageManagement module._x000D__x000A_Please check the documentation here - https://aka.ms/exov3-module._x000D__x000A_For issues related to the module, contact Microsoft support.</S>
+      <S N="Author">Microsoft Corporation</S>
+      <S N="CompanyName">ExchangeManageabilityTeam</S>
+      <S N="Copyright">(c) 2021 Microsoft. All rights reserved.</S>
+      <DT N="PublishedDate">2026-07-24T09:57:50+08:00</DT>
+      <Nil N="InstalledDate" />
+      <Nil N="UpdatedDate" />
+      <URI N="LicenseUri">http://aka.ms/azps-license</URI>
+      <Nil N="ProjectUri" />
+      <Nil N="IconUri" />
+      <Obj N="Tags" RefId="1">
+        <TN RefId="1">
+          <T>System.Object[]</T>
+          <T>System.Array</T>
+          <T>System.Object</T>
+        </TN>
+        <LST>
+          <S>Exchange</S>
+          <S>ExchangeOnline</S>
+          <S>EXO</S>
+          <S>EXOV2</S>
+          <S>EXOV3</S>
+          <S>Mailbox</S>
+          <S>Management</S>
+          <S>PSModule</S>
+        </LST>
+      </Obj>
+      <Obj N="Includes" RefId="2">
+        <TN RefId="2">
+          <T>System.Collections.Hashtable</T>
+          <T>System.Object</T>
+        </TN>
+        <DCT>
+          <En>
+            <S N="Key">DscResource</S>
+            <Obj N="Value" RefId="3">
+              <TNRef RefId="1" />
+              <LST />
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">Command</S>
+            <Obj N="Value" RefId="4">
+              <TNRef RefId="1" />
+              <LST>
+                <S>Add-VivaModuleFeaturePolicy</S>
+                <S>Add-VivaOrgInsightsDelegatedRole</S>
+                <S>Add-WorkforceInsightsDelegationAccess</S>
+                <S>Get-ConnectionInformation</S>
+                <S>Get-DefaultTenantBriefingConfig</S>
+                <S>Get-DefaultTenantMyAnalyticsFeatureConfig</S>
+                <S>Get-EXOCasMailbox</S>
+                <S>Get-EXOMailbox</S>
+                <S>Get-EXOMailboxFolderPermission</S>
+                <S>Get-EXOMailboxFolderStatistics</S>
+                <S>Get-EXOMailboxPermission</S>
+                <S>Get-EXOMailboxStatistics</S>
+                <S>Get-EXOMobileDeviceStatistics</S>
+                <S>Get-EXORecipient</S>
+                <S>Get-EXORecipientPermission</S>
+                <S>Get-MyAnalyticsFeatureConfig</S>
+                <S>Get-UserBriefingConfig</S>
+                <S>Get-VivaFeatureCategory</S>
+                <S>Get-VivaInsightsSettings</S>
+                <S>Get-VivaModuleFeature</S>
+                <S>Get-VivaModuleFeatureEnablement</S>
+                <S>Get-VivaModuleFeaturePolicy</S>
+                <S>Get-VivaOrgInsightsDelegatedRole</S>
+                <S>Get-WorkforceInsightsDelegationAccess</S>
+                <S>Remove-VivaModuleFeaturePolicy</S>
+                <S>Remove-VivaOrgInsightsDelegatedRole</S>
+                <S>Remove-WorkforceInsightsDelegationAccess</S>
+                <S>Set-DefaultTenantBriefingConfig</S>
+                <S>Set-DefaultTenantMyAnalyticsFeatureConfig</S>
+                <S>Set-MyAnalyticsFeatureConfig</S>
+                <S>Set-UserBriefingConfig</S>
+                <S>Set-VivaInsightsSettings</S>
+                <S>Update-VivaModuleFeaturePolicy</S>
+                <S>Connect-ExchangeOnline</S>
+                <S>Connect-IPPSSession</S>
+                <S>Disconnect-ExchangeOnline</S>
+              </LST>
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">Function</S>
+            <Obj N="Value" RefId="5">
+              <TNRef RefId="1" />
+              <LST>
+                <S>Connect-ExchangeOnline</S>
+                <S>Connect-IPPSSession</S>
+                <S>Disconnect-ExchangeOnline</S>
+              </LST>
+            </Obj>
+          </En>
+          <En>
+            <S N="Key">Workflow</S>
+            <Ref N="Value" RefId="3" />
+          </En>
+          <En>
+            <S N="Key">RoleCapability</S>
+            <Ref N="Value" RefId="3" />
+          </En>
+          <En>
+            <S N="Key">Cmdlet</S>
+            <Obj N="Value" RefId="6">
+              <TNRef RefId="1" />
+              <LST>
+                <S>Add-VivaModuleFeaturePolicy</S>
+                <S>Add-VivaOrgInsightsDelegatedRole</S>
+                <S>Add-WorkforceInsightsDelegationAccess</S>
+                <S>Get-ConnectionInformation</S>
+                <S>Get-DefaultTenantBriefingConfig</S>
+                <S>Get-DefaultTenantMyAnalyticsFeatureConfig</S>
+                <S>Get-EXOCasMailbox</S>
+                <S>Get-EXOMailbox</S>
+                <S>Get-EXOMailboxFolderPermission</S>
+                <S>Get-EXOMailboxFolderStatistics</S>
+                <S>Get-EXOMailboxPermission</S>
+                <S>Get-EXOMailboxStatistics</S>
+                <S>Get-EXOMobileDeviceStatistics</S>
+                <S>Get-EXORecipient</S>
+                <S>Get-EXORecipientPermission</S>
+                <S>Get-MyAnalyticsFeatureConfig</S>
+                <S>Get-UserBriefingConfig</S>
+                <S>Get-VivaFeatureCategory</S>
+                <S>Get-VivaInsightsSettings</S>
+                <S>Get-VivaModuleFeature</S>
+                <S>Get-VivaModuleFeatureEnablement</S>
+                <S>Get-VivaModuleFeaturePolicy</S>
+                <S>Get-VivaOrgInsightsDelegatedRole</S>
+                <S>Get-WorkforceInsightsDelegationAccess</S>
+                <S>Remove-VivaModuleFeaturePolicy</S>
+                <S>Remove-VivaOrgInsightsDelegatedRole</S>
+                <S>Remove-WorkforceInsightsDelegationAccess</S>
+                <S>Set-DefaultTenantBriefingConfig</S>
+                <S>Set-DefaultTenantMyAnalyticsFeatureConfig</S>
+                <S>Set-MyAnalyticsFeatureConfig</S>
+                <S>Set-UserBriefingConfig</S>
+                <S>Set-VivaInsightsSettings</S>
+                <S>Update-VivaModuleFeaturePolicy</S>
+              </LST>
+            </Obj>
+          </En>
+        </DCT>
+      </Obj>
+      <Nil N="PowerShellGetFormatVersion" />
+      <S N="ReleaseNotes">---------------------------------------------------------------------------------------------_x000D__x000A_What is new in this release:_x000D__x000A__x000D__x000A_v3.10.1 :_x000D__x000A_    1. Fixed certificate-based authentication (CBA) flow bugs and few other minor performance issues._x000D__x000A__x000D__x000A_---------------------------------------------------------------------------------------------_x000D__x000A_Previous Releases:_x000D__x000A__x000D__x000A_v3.10.0 :_x000D__x000A_    1. Starting with this version of the module, the minimum required version of PowerShell 7 is now 7.6. Windows PowerShell 5.1 is not affected._x000D__x000A_    2. Fixed an issue where certificate-based authentication failed in Connect-IPPSSession when using the -EnableSearchOnlySession switch._x000D__x000A__x000D__x000A_v3.9.2 :_x000D__x000A_    1. Added cmdlets: Add-WorkforceInsightsDelegationAccess, Get-WorkforceInsightsDelegationAccess, Remove-WorkforceInsightsDelegationAccess for Workforce Insights delegation._x000D__x000A_    2. Introduced-EXOModuleBasePath switch in Connect-ExchangeOnline to store temporary EXO module files in a custom path._x000D__x000A_    3. Deprecated UseRpsSession parameter from Connect-ExchangeOnline and Connect-IPPSSession._x000D__x000A__x000D__x000A_v3.9.0 :_x000D__x000A_    1. Introduce -EnableSearchOnlySession switch in Connect-IPPSSession cmdlet, which enables certain eDiscovery and related cmdlets that connect to other M365 services_x000D__x000A_    _x000D__x000A_v3.8.1 :_x000D__x000A_    1. Support for the MemberIds parameter in Get-VivaModuleFeaturePolicy cmdlet, allowing administrators to filter policies based on specific users or groups._x000D__x000A_    2. Support for the Detailed parameter in Get-VivaModuleFeatureEnablement cmdlet, enhancing the response with detailed information about the policies that apply to the user and which of those are actually effective in determining the enablement._x000D__x000A_    3. Added Client-side logging for Connect-IPPSSession._x000D__x000A__x000D__x000A_v3.8.0 :_x000D__x000A_    1. Support for providing an Access Token with Connect-IPPSSession._x000D__x000A_    2. Get-VivaModuleFeature now returns information about ParentFeature, ChildFeature, and PolicyModes. These values represents parent and child features of a Viva App feature along with available enablement modes for policies for the feature.  _x000D__x000A_    3. Added a new parameter IsUserOptedInByDefault in Add-VivaModuleFeaturePolicy and Update-VivaModuleFeaturePolicy cmdlets and its return value in all VivaModuleFeaturePolicy cmdlets. The value represents if by default, users are opted in/out by the policy if the user has not set a preference. This parameter can be used to set up complex policies, such as keeping the feature enabled in your tenant while opting out the impacted users by default, effectively soft disabling the feature for those users._x000D__x000A_    4. Deprecated Get-VivaFeatureCategory cmdlet and all category-related parameters and return values (CategoryId, IsCategoryEnabled)._x000D__x000A_v3.7.2 :_x000D__x000A_    1. Added a new parameter -DisableWAM to the Connect-ExchangeOnline cmdlet, which disables the Web Account Manager (WAM)._x000D__x000A_v3.7.1 :_x000D__x000A_    1. Introduced a new property named ExoExchangeSecurityDescriptor in Get-ExoMailbox response, that is similar to ExchangeSecurityDescriptor property in Get-Mailbox response._x000D__x000A_    2. Added new cmdlets Add-VivaOrgInsightsDelegatedRole, Get-VivaOrgInsightsDelegatedRole, and Remove-VivaOrgInsightsDelegatedRole for supporting Viva Org Insights Delegation feature._x000D__x000A_ _x000D__x000A_---------------------------------------------------------------------------------------------</S>
+      <Obj N="Dependencies" RefId="7">
+        <TNRef RefId="1" />
+        <LST>
+          <Obj RefId="8">
+            <TN RefId="3">
+              <T>System.Collections.Specialized.OrderedDictionary</T>
+              <T>System.Object</T>
+            </TN>
+            <DCT>
+              <En>
+                <S N="Key">Name</S>
+                <S N="Value">PackageManagement</S>
+              </En>
+              <En>
+                <S N="Key">MinimumVersion</S>
+                <S N="Value">1.0.0.1</S>
+              </En>
+              <En>
+                <S N="Key">CanonicalId</S>
+                <S N="Value">nuget:PackageManagement/1.0.0.1</S>
+              </En>
+            </DCT>
+          </Obj>
+          <Obj RefId="9">
+            <TNRef RefId="3" />
+            <DCT>
+              <En>
+                <S N="Key">Name</S>
+                <S N="Value">PowerShellGet</S>
+              </En>
+              <En>
+                <S N="Key">MinimumVersion</S>
+                <S N="Value">1.0.0.1</S>
+              </En>
+              <En>
+                <S N="Key">CanonicalId</S>
+                <S N="Value">nuget:PowerShellGet/1.0.0.1</S>
+              </En>
+            </DCT>
+          </Obj>
+        </LST>
+      </Obj>
+      <S N="RepositorySourceLocation">https://www.powershellgallery.com/api/v2</S>
+      <S N="Repository">PSGallery</S>
+      <S N="PackageManagementProvider">NuGet</S>
+      <Obj N="AdditionalMetadata" RefId="10">
+        <TN RefId="4">
+          <T>System.Management.Automation.PSCustomObject</T>
+          <T>System.Object</T>
+        </TN>
+        <MS>
+          <S N="copyright">(c) 2021 Microsoft. All rights reserved.</S>
+          <S N="description">This is a General Availability (GA) release of the Exchange Online Powershell V3 module. Exchange Online cmdlets in this module are REST-backed and do not require Basic Authentication to be enabled in WinRM. REST-based connections in Windows require the PowerShellGet module, and by dependency, the PackageManagement module._x000D__x000A_Please check the documentation here - https://aka.ms/exov3-module._x000D__x000A_For issues related to the module, contact Microsoft support.</S>
+          <S N="requireLicenseAcceptance">False</S>
+          <S N="releaseNotes">---------------------------------------------------------------------------------------------_x000D__x000A_What is new in this release:_x000D__x000A__x000D__x000A_v3.10.1 :_x000D__x000A_    1. Fixed certificate-based authentication (CBA) flow bugs and few other minor performance issues._x000D__x000A__x000D__x000A_---------------------------------------------------------------------------------------------_x000D__x000A_Previous Releases:_x000D__x000A__x000D__x000A_v3.10.0 :_x000D__x000A_    1. Starting with this version of the module, the minimum required version of PowerShell 7 is now 7.6. Windows PowerShell 5.1 is not affected._x000D__x000A_    2. Fixed an issue where certificate-based authentication failed in Connect-IPPSSession when using the -EnableSearchOnlySession switch._x000D__x000A__x000D__x000A_v3.9.2 :_x000D__x000A_    1. Added cmdlets: Add-WorkforceInsightsDelegationAccess, Get-WorkforceInsightsDelegationAccess, Remove-WorkforceInsightsDelegationAccess for Workforce Insights delegation._x000D__x000A_    2. Introduced-EXOModuleBasePath switch in Connect-ExchangeOnline to store temporary EXO module files in a custom path._x000D__x000A_    3. Deprecated UseRpsSession parameter from Connect-ExchangeOnline and Connect-IPPSSession._x000D__x000A__x000D__x000A_v3.9.0 :_x000D__x000A_    1. Introduce -EnableSearchOnlySession switch in Connect-IPPSSession cmdlet, which enables certain eDiscovery and related cmdlets that connect to other M365 services_x000D__x000A_    _x000D__x000A_v3.8.1 :_x000D__x000A_    1. Support for the MemberIds parameter in Get-VivaModuleFeaturePolicy cmdlet, allowing administrators to filter policies based on specific users or groups._x000D__x000A_    2. Support for the Detailed parameter in Get-VivaModuleFeatureEnablement cmdlet, enhancing the response with detailed information about the policies that apply to the user and which of those are actually effective in determining the enablement._x000D__x000A_    3. Added Client-side logging for Connect-IPPSSession._x000D__x000A__x000D__x000A_v3.8.0 :_x000D__x000A_    1. Support for providing an Access Token with Connect-IPPSSession._x000D__x000A_    2. Get-VivaModuleFeature now returns information about ParentFeature, ChildFeature, and PolicyModes. These values represents parent and child features of a Viva App feature along with available enablement modes for policies for the feature.  _x000D__x000A_    3. Added a new parameter IsUserOptedInByDefault in Add-VivaModuleFeaturePolicy and Update-VivaModuleFeaturePolicy cmdlets and its return value in all VivaModuleFeaturePolicy cmdlets. The value represents if by default, users are opted in/out by the policy if the user has not set a preference. This parameter can be used to set up complex policies, such as keeping the feature enabled in your tenant while opting out the impacted users by default, effectively soft disabling the feature for those users._x000D__x000A_    4. Deprecated Get-VivaFeatureCategory cmdlet and all category-related parameters and return values (CategoryId, IsCategoryEnabled)._x000D__x000A_v3.7.2 :_x000D__x000A_    1. Added a new parameter -DisableWAM to the Connect-ExchangeOnline cmdlet, which disables the Web Account Manager (WAM)._x000D__x000A_v3.7.1 :_x000D__x000A_    1. Introduced a new property named ExoExchangeSecurityDescriptor in Get-ExoMailbox response, that is similar to ExchangeSecurityDescriptor property in Get-Mailbox response._x000D__x000A_    2. Added new cmdlets Add-VivaOrgInsightsDelegatedRole, Get-VivaOrgInsightsDelegatedRole, and Remove-VivaOrgInsightsDelegatedRole for supporting Viva Org Insights Delegation feature._x000D__x000A_ _x000D__x000A_---------------------------------------------------------------------------------------------</S>
+          <S N="isLatestVersion">True</S>
+          <S N="isAbsoluteLatestVersion">True</S>
+          <S N="versionDownloadCount">79721</S>
+          <S N="downloadCount">74377012</S>
+          <S N="packageSize">21682678</S>
+          <S N="published">7/24/2026 9:57:50 AM +08:00</S>
+          <S N="created">7/24/2026 9:57:50 AM +08:00</S>
+          <S N="lastUpdated">7/28/2026 1:00:01 AM +08:00</S>
+          <S N="tags">Exchange ExchangeOnline EXO EXOV2 EXOV3 Mailbox Management PSModule PSCmdlet_Add-VivaModuleFeaturePolicy PSCommand_Add-VivaModuleFeaturePolicy PSCmdlet_Add-VivaOrgInsightsDelegatedRole PSCommand_Add-VivaOrgInsightsDelegatedRole PSCmdlet_Add-WorkforceInsightsDelegationAccess PSCommand_Add-WorkforceInsightsDelegationAccess PSCmdlet_Get-ConnectionInformation PSCommand_Get-ConnectionInformation PSCmdlet_Get-DefaultTenantBriefingConfig PSCommand_Get-DefaultTenantBriefingConfig PSCmdlet_Get-DefaultTenantMyAnalyticsFeatureConfig PSCommand_Get-DefaultTenantMyAnalyticsFeatureConfig PSCmdlet_Get-EXOCasMailbox PSCommand_Get-EXOCasMailbox PSCmdlet_Get-EXOMailbox PSCommand_Get-EXOMailbox PSCmdlet_Get-EXOMailboxFolderPermission PSCommand_Get-EXOMailboxFolderPermission PSCmdlet_Get-EXOMailboxFolderStatistics PSCommand_Get-EXOMailboxFolderStatistics PSCmdlet_Get-EXOMailboxPermission PSCommand_Get-EXOMailboxPermission PSCmdlet_Get-EXOMailboxStatistics PSCommand_Get-EXOMailboxStatistics PSCmdlet_Get-EXOMobileDeviceStatistics PSCommand_Get-EXOMobileDeviceStatistics PSCmdlet_Get-EXORecipient PSCommand_Get-EXORecipient PSCmdlet_Get-EXORecipientPermission PSCommand_Get-EXORecipientPermission PSCmdlet_Get-MyAnalyticsFeatureConfig PSCommand_Get-MyAnalyticsFeatureConfig PSCmdlet_Get-UserBriefingConfig PSCommand_Get-UserBriefingConfig PSCmdlet_Get-VivaFeatureCategory PSCommand_Get-VivaFeatureCategory PSCmdlet_Get-VivaInsightsSettings PSCommand_Get-VivaInsightsSettings PSCmdlet_Get-VivaModuleFeature PSCommand_Get-VivaModuleFeature PSCmdlet_Get-VivaModuleFeatureEnablement PSCommand_Get-VivaModuleFeatureEnablement PSCmdlet_Get-VivaModuleFeaturePolicy PSCommand_Get-VivaModuleFeaturePolicy PSCmdlet_Get-VivaOrgInsightsDelegatedRole PSCommand_Get-VivaOrgInsightsDelegatedRole PSCmdlet_Get-WorkforceInsightsDelegationAccess PSCommand_Get-WorkforceInsightsDelegationAccess PSCmdlet_Remove-VivaModuleFeaturePolicy PSCommand_Remove-VivaModuleFeaturePolicy PSCmdlet_Remove-VivaOrgInsightsDelegatedRole PSCommand_Remove-VivaOrgInsightsDelegatedRole PSCmdlet_Remove-WorkforceInsightsDelegationAccess PSCommand_Remove-WorkforceInsightsDelegationAccess PSCmdlet_Set-DefaultTenantBriefingConfig PSCommand_Set-DefaultTenantBriefingConfig PSCmdlet_Set-DefaultTenantMyAnalyticsFeatureConfig PSCommand_Set-DefaultTenantMyAnalyticsFeatureConfig PSCmdlet_Set-MyAnalyticsFeatureConfig PSCommand_Set-MyAnalyticsFeatureConfig PSCmdlet_Set-UserBriefingConfig PSCommand_Set-UserBriefingConfig PSCmdlet_Set-VivaInsightsSettings PSCommand_Set-VivaInsightsSettings PSCmdlet_Update-VivaModuleFeaturePolicy PSCommand_Update-VivaModuleFeaturePolicy PSIncludes_Cmdlet PSFunction_Connect-ExchangeOnline PSCommand_Connect-ExchangeOnline PSFunction_Connect-IPPSSession PSCommand_Connect-IPPSSession PSFunction_Disconnect-ExchangeOnline PSCommand_Disconnect-ExchangeOnline PSIncludes_Function</S>
+          <S N="developmentDependency">False</S>
+          <S N="updated">2026-07-28T01:00:01Z</S>
+          <S N="NormalizedVersion">3.10.1</S>
+          <S N="Authors">Microsoft Corporation</S>
+          <S N="IsPrerelease">false</S>
+          <S N="ItemType">Module</S>
+          <S N="FileList">ExchangeOnlineManagement.nuspec|ExchangeOnlineManagement.psd1|en-US\ExchangeOnlineManagement-help.xml|en-US\Microsoft.Exchange.Management.ExoPowershellGalleryModule.dll-Help.xml|en-US\Microsoft.Exchange.Management.RestApiClient.dll-Help.xml|license.txt|netCore\Azure.Core.dll|netCore\ExchangeOnlineManagement.psm1|netCore\Microsoft.ApplicationInsights.dll|netCore\Microsoft.Bcl.AsyncInterfaces.dll|netCore\Microsoft.Bcl.Cryptography.dll|netCore\Microsoft.Bcl.HashCode.dll|netCore\Microsoft.Exchange.Management.AdminApiProvider.dll|netCore\Microsoft.Exchange.Management.AdminApiProvider.xml|netCore\Microsoft.Exchange.Management.ExoPowershellGalleryModule.deps.json|netCore\Microsoft.Exchange.Management.ExoPowershellGalleryModule.dll|netCore\Microsoft.Exchange.Management.ExoPowershellGalleryModule.xml|netCore\Microsoft.Exchange.Management.RestApiClient.dll|netCore\Microsoft.Exchange.Management.RestApiClient.xml|netCore\Microsoft.Extensions.ObjectPool.dll|netCore\Microsoft.Identity.Client.Broker.dll|netCore\Microsoft.Identity.Client.NativeInterop.dll|netCore\Microsoft.Identity.Client.dll|netCore\Microsoft.IdentityModel.Abstractions.dll|netCore\Microsoft.IdentityModel.JsonWebTokens.dll|netCore\Microsoft.IdentityModel.Logging.dll|netCore\Microsoft.IdentityModel.Tokens.dll|netCore\Microsoft.OData.Client.dll|netCore\Microsoft.OData.Core.dll|netCore\Microsoft.OData.Edm.dll|netCore\Microsoft.Online.CSE.RestApiPowerShellModule.Instrumentation.dll|netCore\Microsoft.Online.CSE.RestApiPowerShellModule.Instrumentation.xml|netCore\Microsoft.Spatial.dll|netCore\Microsoft.Win32.Registry.AccessControl.dll|netCore\Newtonsoft.Json.dll|netCore\System.CodeDom.dll|netCore\System.Collections.Immutable.dll|netCore\System.Configuration.ConfigurationManager.dll|netCore\System.Diagnostics.DiagnosticSource.dll|netCore\System.Diagnostics.EventLog.dll|netCore\System.Diagnostics.PerformanceCounter.dll|netCore\System.DirectoryServices.dll|netCore\System.Formats.Asn1.dll|netCore\System.IO.Pipelines.dll|netCore\System.IdentityModel.Tokens.Jwt.dll|netCore\System.Management.dll|netCore\System.Memory.Data.dll|netCore\System.Security.Cryptography.Pkcs.dll|netCore\System.Security.Cryptography.ProtectedData.dll|netCore\System.Security.Permissions.dll|netCore\System.Text.Encoding.CodePages.dll|netCore\System.Text.Encodings.Web.dll|netCore\System.Text.Json.dll|netCore\System.Windows.Extensions.dll|netCore\msvcp140.dll|netCore\ref\Microsoft.Exchange.Management.ExoPowershellGalleryModule.dll|netCore\runtimes\osx-arm64\native\msalruntime_arm64.dylib|netCore\runtimes\osx-x64\native\msalruntime.dylib|netCore\runtimes\win-arm64\native\msalruntime_arm64.dll|netCore\runtimes\win-x64\native\msalruntime.dll|netCore\runtimes\win-x86\native\msalruntime_x005F_x86.dll|netCore\vcruntime140.dll|netCore\vcruntime140_1.dll|netFramework\Azure.Core.dll|netFramework\Create-SelfSignedCertificate.ps1|netFramework\ExchangeOnlineManagement.psm1|netFramework\GenPsdFile.pl|netFramework\Microsoft.Bcl.AsyncInterfaces.dll|netFramework\Microsoft.Bcl.Cryptography.dll|netFramework\Microsoft.Bcl.HashCode.dll|netFramework\Microsoft.Bcl.TimeProvider.dll|netFramework\Microsoft.Exchange.Management.AdminApiProvider.dll|netFramework\Microsoft.Exchange.Management.AdminApiProvider.xml|netFramework\Microsoft.Exchange.Management.ExoPowershellGalleryModule.dll|netFramework\Microsoft.Exchange.Management.ExoPowershellGalleryModule.xml|netFramework\Microsoft.Exchange.Management.RestApiClient.dll|netFramework\Microsoft.Exchange.Management.RestApiClient.xml|netFramework\Microsoft.Extensions.ObjectPool.dll|netFramework\Microsoft.Identity.Client.Broker.dll|netFramework\Microsoft.Identity.Client.NativeInterop.dll|netFramework\Microsoft.Identity.Client.dll|netFramework\Microsoft.IdentityModel.Abstractions.dll|netFramework\Microsoft.IdentityModel.JsonWebTokens.dll|netFramework\Microsoft.IdentityModel.Logging.dll|netFramework\Microsoft.IdentityModel.Tokens.dll|netFramework\Microsoft.OData.Client.dll|netFramework\Microsoft.OData.Core.dll|netFramework\Microsoft.OData.Edm.dll|netFramework\Microsoft.Online.CSE.RestApiPowerShellModule.Instrumentation.dll|netFramework\Microsoft.Online.CSE.RestApiPowerShellModule.Instrumentation.xml|netFramework\Microsoft.Spatial.dll|netFramework\Newtonsoft.Json.dll|netFramework\System.Buffers.dll|netFramework\System.Collections.Immutable.dll|netFramework\System.Configuration.ConfigurationManager.dll|netFramework\System.Diagnostics.DiagnosticSource.dll|netFramework\System.Formats.Asn1.dll|netFramework\System.IO.Pipelines.dll|netFramework\System.IdentityModel.Tokens.Jwt.dll|netFramework\System.Management.Automation.dll|netFramework\System.Memory.Data.dll|netFramework\System.Memory.dll|netFramework\System.Numerics.Vectors.dll|netFramework\System.Runtime.CompilerServices.Unsafe.dll|netFramework\System.Text.Encodings.Web.dll|netFramework\System.Text.Json.dll|netFramework\System.Threading.Tasks.Extensions.dll|netFramework\msvcp140.dll|netFramework\ref\Microsoft.Exchange.Management.ExoPowershellGalleryModule.dll|netFramework\runtimes\win-arm64\native\msalruntime_arm64.dll|netFramework\runtimes\win-x64\native\msalruntime.dll|netFramework\runtimes\win-x86\native\msalruntime_x005F_x86.dll|netFramework\vcruntime140.dll|netFramework\vcruntime140_1.dll</S>
+          <S N="GUID">B5ECED50-AFA4-455B-847A-D8FB64140A22</S>
+          <S N="PowerShellVersion">3.0</S>
+          <S N="CompanyName">Microsoft Corporation</S>
+        </MS>
+      </Obj>
+      <S N="InstalledLocation">C:\Users\tisun\AppData\Local\Temp\exo3101\ExchangeOnlineManagement\3.10.1</S>
+    </MS>
+  </Obj>
+</Objs>

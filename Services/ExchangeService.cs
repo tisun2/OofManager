@@ -31,6 +31,7 @@ public class ExchangeService : IExchangeService, IAsyncDisposable
     private static readonly TimeSpan AutoConnectFailureCooldown = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ExoModuleCacheRetention = TimeSpan.FromDays(7);
     private static readonly TimeSpan CachedMailboxRefreshDelay = TimeSpan.FromSeconds(30);
+    private static int _exoModuleCacheCleanupStarted;
 
     private Runspace? _runspace;
     private PowerShell? _ps;
@@ -431,6 +432,7 @@ $connectParams = @{{
                 : Path.Combine(localAppData, "OofManager");
             var basePath = Path.Combine(baseRoot, "ExoModuleCache");
             Directory.CreateDirectory(basePath);
+            ScheduleExoModuleCacheCleanup(basePath);
             return basePath;
         }
         catch (Exception ex)
@@ -902,8 +904,11 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         var settings = new OofSettings
         {
             Status = status,
-            InternalReply = HtmlToPlainText(DecodeBase64String(root.GetProperty("InternalMessageBase64").GetString())),
-            ExternalReply = HtmlToPlainText(DecodeBase64String(root.GetProperty("ExternalMessageBase64").GetString())),
+            // Sanitized body fragments, not plain text: the reply editor is
+            // rich-text, and Exchange is the source of the HTML it edits.
+            // Anything outside the allowlist is stripped on the way in.
+            InternalReply = ReplyHtml.ToEditorFragment(DecodeBase64String(root.GetProperty("InternalMessageBase64").GetString())),
+            ExternalReply = ReplyHtml.ToEditorFragment(DecodeBase64String(root.GetProperty("ExternalMessageBase64").GetString())),
             ExternalAudienceAll = root.GetProperty("ExternalAudience").GetString() != "Known",
         };
 
@@ -1028,8 +1033,11 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
         var audience = settings.ExternalAudienceAll ? "All" : "Known";
         var upn = EscapePowerShellSingleQuotedString(_targetMailboxIdentity ?? _userPrincipalName!);
-        var internalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(PlainTextToHtml(settings.InternalReply)));
-        var externalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(PlainTextToHtml(settings.ExternalReply)));
+        // EnsureHtml re-sanitizes and wraps in the <html><body> envelope. It
+        // also upgrades plain text saved by pre-rich-text builds, so a reply
+        // restored from an old pref or template still goes out as valid HTML.
+        var internalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(ReplyHtml.EnsureHtml(settings.InternalReply)));
+        var externalMsgBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(ReplyHtml.EnsureHtml(settings.ExternalReply)));
 
         var state = expectedState;
         var sb = new StringBuilder();
@@ -1246,14 +1254,25 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         if (Directory.Exists(moduleRoot))
         {
             var netFxSegment = Path.DirectorySeparatorChar + "netFramework" + Path.DirectorySeparatorChar;
+            // Order by parsed module version, not by string: an ordinal sort ranks
+            // "3.9.2" above "3.10.1", so an in-place upgrade that leaves the old
+            // version folder behind would keep loading the outdated module.
             hit = Directory.GetFiles(moduleRoot, "ExchangeOnlineManagement.psm1", SearchOption.AllDirectories)
                 .Where(p => p.IndexOf(netFxSegment, StringComparison.OrdinalIgnoreCase) >= 0 && File.Exists(p))
-                .OrderByDescending(p => p, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(ParseExoModuleVersion)
+                .ThenByDescending(p => p, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
         }
         _cachedEagerPsm1Path = hit ?? string.Empty;
         SyncLogger.Write($"SignIn Exchange module psm1: {(_cachedEagerPsm1Path.Length == 0 ? "<bundled module not found>" : _cachedEagerPsm1Path)}");
         return _cachedEagerPsm1Path.Length == 0 ? null : _cachedEagerPsm1Path;
+    }
+
+    // ...\Modules\ExchangeOnlineManagement\<version>\netFramework\ExchangeOnlineManagement.psm1
+    private static Version ParseExoModuleVersion(string psm1Path)
+    {
+        var versionDir = Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(psm1Path)) ?? string.Empty);
+        return Version.TryParse(versionDir, out var parsed) ? parsed : new Version(0, 0);
     }
 
     private static string BuildExchangeModuleImportScript(string? moduleTarget)
@@ -1279,7 +1298,7 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         try
         {
             Directory.CreateDirectory(basePath);
-            CleanupOldExoModuleCacheDirectories(basePath);
+            ScheduleExoModuleCacheCleanup(basePath);
         }
         catch (Exception ex)
         {
@@ -1290,6 +1309,23 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         _exoModuleBasePath = basePath;
         SyncLogger.Write($"SignIn EXO module base path: {_exoModuleBasePath}");
         return _exoModuleBasePath;
+    }
+
+    // Both the eager (returning-user) and regular connect paths compute the cache
+    // path, and the eager path usually wins the race, so the sweep has to be wired
+    // to both or it effectively never runs. Kept off the caller's thread and to a
+    // single pass per process: it is pure housekeeping and must never delay sign-in.
+    private static void ScheduleExoModuleCacheCleanup(string basePath)
+    {
+        if (Interlocked.Exchange(ref _exoModuleCacheCleanupStarted, 1) != 0) return;
+        Task.Run(() =>
+        {
+            try { CleanupOldExoModuleCacheDirectories(basePath); }
+            catch (Exception ex)
+            {
+                SyncLogger.Write($"SignIn EXO module cache cleanup failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        });
     }
 
     private static void CleanupOldExoModuleCacheDirectories(string basePath)
@@ -1421,25 +1457,6 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
 
     // ---------- Helpers ----------
 
-    // Compiled once per process; the LoadAsync code path runs each of these
-    // up to 11 times (internal+external reply), so caching saves a measurable
-    // chunk of CPU on every refresh.
-    private static readonly RegexOptions CompiledFast = RegexOptions.Compiled | RegexOptions.CultureInvariant;
-    private static readonly Regex RxComments = new(@"<!--.*?-->", CompiledFast | RegexOptions.Singleline);
-    private static readonly Regex RxScriptStyle = new(@"<\s*(script|style)[^>]*>.*?<\s*/\s*\1\s*>", CompiledFast | RegexOptions.IgnoreCase | RegexOptions.Singleline);
-    private static readonly Regex RxBr = new(@"<\s*br\s*/?\s*>", CompiledFast | RegexOptions.IgnoreCase);
-    private static readonly Regex RxBlockClose = new(@"</\s*(p|div|li|tr|table|h[1-6])\s*>", CompiledFast | RegexOptions.IgnoreCase);
-    private static readonly Regex RxCellClose = new(@"</\s*(td|th)\s*>", CompiledFast | RegexOptions.IgnoreCase);
-    private static readonly Regex RxLiOpen = new(@"<\s*li[^>]*>", CompiledFast | RegexOptions.IgnoreCase);
-    private static readonly Regex RxAnyTag = new(@"<[^>]+>", CompiledFast);
-    private static readonly Regex RxBidi = new(@"[\u200E\u200F\u061C\u202A-\u202E\u2066-\u2069]", CompiledFast);
-    private static readonly Regex RxZeroWidth = new(@"[\u200B-\u200D\uFEFF\u2060]", CompiledFast);
-    private static readonly Regex RxSoftHyphen = new(@"[\u00AD\u2028\u2029]", CompiledFast);
-    private static readonly Regex RxUnicodeSpaces = new(@"[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]", CompiledFast);
-    private static readonly Regex RxRunOfSpaces = new(@"[ \f\v]+", CompiledFast);
-    private static readonly Regex RxSpacesAroundNl = new(@" *\n *", CompiledFast);
-    private static readonly Regex RxBlankLines = new(@"\n{3,}", CompiledFast);
-
     private static string EscapePowerShellSingleQuotedString(string value)
     {
         return value.Replace("'", "''");
@@ -1461,41 +1478,4 @@ $oof = Get-MailboxAutoReplyConfiguration -Identity '{upn}'
         return trimmed;
     }
 
-    private static string HtmlToPlainText(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var text = value;
-        text = RxComments.Replace(text, string.Empty);
-        text = RxScriptStyle.Replace(text, string.Empty);
-        text = RxBr.Replace(text, "\n");
-        text = RxBlockClose.Replace(text, "\n");
-        text = RxCellClose.Replace(text, " ");
-        text = RxLiOpen.Replace(text, "- ");
-        text = RxAnyTag.Replace(text, string.Empty);
-        text = WebUtility.HtmlDecode(text);
-
-        text = RxBidi.Replace(text, string.Empty);
-        text = RxZeroWidth.Replace(text, string.Empty);
-        text = RxSoftHyphen.Replace(text, string.Empty);
-
-        text = RxUnicodeSpaces.Replace(text, " ");
-        text = text.Replace("\t", " ");
-        text = text.Replace("\r\n", "\n").Replace("\r", "\n");
-        text = RxRunOfSpaces.Replace(text, " ");
-        text = RxSpacesAroundNl.Replace(text, "\n");
-        text = RxBlankLines.Replace(text, "\n\n");
-        return text.Trim();
-    }
-
-    private static string PlainTextToHtml(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var encoded = WebUtility.HtmlEncode(value.Trim());
-        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
-        return $"<html><body>{encoded}</body></html>";
-    }
 }

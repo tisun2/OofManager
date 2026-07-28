@@ -441,8 +441,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _suppressModeReplySwap = true;
         try
         {
-            if (savedInternal is not null) InternalReply = savedInternal;
-            if (savedExternal is not null) ExternalReply = savedExternal;
+            // Same-era upgrade as ApplyTemplate: prefs written by pre-rich-text
+            // builds are plain text.
+            if (savedInternal is not null) InternalReply = ReplyHtml.ToEditorFragment(savedInternal);
+            if (savedExternal is not null) ExternalReply = ReplyHtml.ToEditorFragment(savedExternal);
         }
         finally
         {
@@ -636,8 +638,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void ApplyTemplate(OofTemplate template)
     {
-        InternalReply = template.InternalReply;
-        ExternalReply = template.ExternalReply;
+        // Templates saved before the editor became rich-text hold plain text;
+        // ToEditorFragment upgrades those in place so an old template still
+        // loads as valid (if unformatted) markup.
+        InternalReply = ReplyHtml.ToEditorFragment(template.InternalReply);
+        ExternalReply = ReplyHtml.ToEditorFragment(template.ExternalReply);
         StatusMessage = $"Loaded template \u201c{template.Name}\u201d";
     }
 
@@ -1931,19 +1936,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             var allMatch = workdaysMatch && triggerMatches;
 
-            // Reply text + audience diff. Generator wraps the user's plain
-            // text via CloudSchedulePackageGenerator.PlainTextToHtml, so run
-            // the same transform locally and string-equal the result. Older
-            // flows without these fields populated (shouldn't happen — the
-            // generator always writes them — but guard anyway) show "(n/a)".
-            var localInternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(InternalReply ?? string.Empty);
-            var localExternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(ExternalReply ?? string.Empty);
+            // Reply text + audience diff. The generator ships the reply through
+            // ReplyHtml.EnsureHtml, so run the same transform locally. Both
+            // sides are then normalized before comparing: flows deployed by
+            // older builds carry the same markup with different incidental
+            // whitespace, and that must not read as real drift.
+            var localInternalHtml = ReplyHtml.EnsureHtml(InternalReply);
+            var localExternalHtml = ReplyHtml.EnsureHtml(ExternalReply);
             const string localAudience = "all"; // VM hard-codes externalAudienceAll: true when generating
 
             bool internalMatches = result.InternalReplyHtml != null
-                && string.Equals(result.InternalReplyHtml, localInternalHtml, StringComparison.Ordinal);
+                && string.Equals(ReplyHtml.Normalize(result.InternalReplyHtml), ReplyHtml.Normalize(localInternalHtml), StringComparison.Ordinal);
             bool externalMatches = result.ExternalReplyHtml != null
-                && string.Equals(result.ExternalReplyHtml, localExternalHtml, StringComparison.Ordinal);
+                && string.Equals(ReplyHtml.Normalize(result.ExternalReplyHtml), ReplyHtml.Normalize(localExternalHtml), StringComparison.Ordinal);
             bool audienceMatches = result.ExternalAudience != null
                 && string.Equals(result.ExternalAudience, localAudience, StringComparison.OrdinalIgnoreCase);
             if (result.InternalReplyHtml != null && !internalMatches) allMatch = false;
@@ -2094,13 +2099,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             // (or pushes empty when no pre-vacation snapshot exists). Only
             // the Start flow carries the user's current InternalReply /
             // ExternalReply, so compare just that one.
-            var localInternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(InternalReply ?? string.Empty);
-            var localExternalHtml = CloudSchedulePackageGenerator.PlainTextToHtml(ExternalReply ?? string.Empty);
+            var localInternalHtml = ReplyHtml.EnsureHtml(InternalReply);
+            var localExternalHtml = ReplyHtml.EnsureHtml(ExternalReply);
             const string localAudience = "all";
             bool internalMatches = startResult.InternalReplyHtml != null
-                && string.Equals(startResult.InternalReplyHtml, localInternalHtml, StringComparison.Ordinal);
+                && string.Equals(ReplyHtml.Normalize(startResult.InternalReplyHtml), ReplyHtml.Normalize(localInternalHtml), StringComparison.Ordinal);
             bool externalMatches = startResult.ExternalReplyHtml != null
-                && string.Equals(startResult.ExternalReplyHtml, localExternalHtml, StringComparison.Ordinal);
+                && string.Equals(ReplyHtml.Normalize(startResult.ExternalReplyHtml), ReplyHtml.Normalize(localExternalHtml), StringComparison.Ordinal);
             bool audienceMatches = startResult.ExternalAudience != null
                 && string.Equals(startResult.ExternalAudience, localAudience, StringComparison.OrdinalIgnoreCase);
 

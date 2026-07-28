@@ -3,6 +3,7 @@
       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
       xmlns:ui="http://schemas.modernwpf.com/2019"
       xmlns:models="clr-namespace:OofManager.Wpf.Models"
+      xmlns:views="clr-namespace:OofManager.Wpf.Views"
       Background="{DynamicResource ApplicationPageBackgroundThemeBrush}"
       Title="OOF Manager">
     <Page.Resources>
@@ -753,14 +754,10 @@
                             <TextBlock Grid.Row="0" Text="🏢 Internal Reply" FontSize="14" FontWeight="SemiBold"/>
                             <TextBlock Grid.Row="1" Text="Sent to people inside your organization" FontSize="12" Opacity="0.6"
                                        VerticalAlignment="Center" Margin="0,4,0,8"/>
-                            <TextBox Grid.Row="2"
-                                     Text="{Binding InternalReply, UpdateSourceTrigger=PropertyChanged}"
-                                     Height="180"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     ui:ControlHelper.PlaceholderText="Enter the internal auto-reply message..."
-                                     FontSize="14"/>
+                            <views:HtmlEditor Grid.Row="2"
+                                              Html="{Binding InternalReply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Height="180"
+                                              Placeholder="Enter the internal auto-reply message..."/>
                         </Grid>
 
                         <Grid Grid.Column="2">
@@ -772,14 +769,10 @@
                             <TextBlock Grid.Row="0" Text="🌐 External Reply" FontSize="14" FontWeight="SemiBold"/>
                             <TextBlock Grid.Row="1" Text="Sent to anyone outside your organization" FontSize="12" Opacity="0.6"
                                        VerticalAlignment="Center" Margin="0,4,0,8"/>
-                            <TextBox Grid.Row="2"
-                                     Text="{Binding ExternalReply, UpdateSourceTrigger=PropertyChanged}"
-                                     Height="180"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     ui:ControlHelper.PlaceholderText="Enter the external auto-reply message..."
-                                     FontSize="14"/>
+                            <views:HtmlEditor Grid.Row="2"
+                                              Html="{Binding ExternalReply, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                              Height="180"
+                                              Placeholder="Enter the external auto-reply message..."/>
                         </Grid>
                     </Grid>
 

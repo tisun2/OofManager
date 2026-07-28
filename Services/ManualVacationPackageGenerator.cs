@@ -269,8 +269,8 @@ public static class ManualVacationPackageGenerator
             autoReplyStart: autoReplyStart,
             autoReplyEnd: autoReplyEnd,
             audience: externalAudienceAll ? "all" : "contactsOnly",
-            internalReply: PlainTextToHtml(internalReply),
-            externalReply: PlainTextToHtml(externalReply),
+            internalReply: ReplyHtml.EnsureHtml(internalReply),
+            externalReply: ReplyHtml.EnsureHtml(externalReply),
             scheduleFlowEnvironmentId: scheduleFlowEnvironmentId,
             scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName);
 
@@ -282,8 +282,8 @@ public static class ManualVacationPackageGenerator
             scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName,
             weeklySchedule: weeklySchedule,
             weeklyAudience: weeklyExternalAudienceAll ? "all" : "contactsOnly",
-            weeklyInternalReply: PlainTextToHtml(weeklyInternalReply ?? string.Empty),
-            weeklyExternalReply: PlainTextToHtml(weeklyExternalReply ?? string.Empty));
+            weeklyInternalReply: ReplyHtml.EnsureHtml(weeklyInternalReply ?? string.Empty),
+            weeklyExternalReply: ReplyHtml.EnsureHtml(weeklyExternalReply ?? string.Empty));
 
         var solutionXml = BuildSolutionXml(generateManaged, identity, solutionVersion);
         var customizationsXml = BuildCustomizationsXml(identity, hasScheduleFlowTarget);
@@ -1081,16 +1081,6 @@ public static class ManualVacationPackageGenerator
         (guid[1], guid[2]) = (guid[2], guid[1]);
         (guid[4], guid[5]) = (guid[5], guid[4]);
         (guid[6], guid[7]) = (guid[7], guid[6]);
-    }
-
-    private static string PlainTextToHtml(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var encoded = WebUtility.HtmlEncode(value.Trim());
-        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
-        return $"<html><body>{encoded}</body></html>";
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

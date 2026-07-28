@@ -3,7 +3,7 @@
 ; Output: Installer\Output\OofManagerSetup.exe
 
 #define MyAppName "OOF Manager"
-#define MyAppVersion "1.1.17"
+#define MyAppVersion "1.1.18"
 #define MyAppPublisher "OOF Manager"
 #define MyAppExeName "OofManager.exe"
 
@@ -50,6 +50,10 @@ Source: "Prerequisites\powerapps-cli-1.0.msi"; DestDir: "{tmp}"; Flags: ignoreve
 Type: files; Name: "{app}\OofManager.Wpf.exe"
 Type: files; Name: "{app}\OofManager.Wpf.exe.config"
 Type: files; Name: "{app}\OofManager.Wpf.pdb"
+; The bundled ExchangeOnlineManagement module moved to 3.10.1 (3.9.2 lacks the
+; JsonTypedConverter type the Exchange Online service-generated cmdlet module
+; now calls). Remove the stale version folder so the app can't load it.
+Type: filesandordirs; Name: "{app}\Modules\ExchangeOnlineManagement\3.9.2"
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

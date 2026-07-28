@@ -212,8 +212,8 @@ public static class CloudSchedulePackageGenerator
             startExpr: startExpr,
             endExpr: endExpr,
             audience: externalAudienceAll ? "all" : "contactsOnly",
-            internalReply: PlainTextToHtml(internalReply),
-            externalReply: PlainTextToHtml(externalReply),
+            internalReply: ReplyHtml.EnsureHtml(internalReply),
+            externalReply: ReplyHtml.EnsureHtml(externalReply),
             schedule: schedule);
 
         var solutionXml = BuildSolutionXml(generateManaged, identity, solutionVersion);
@@ -899,22 +899,6 @@ public static class CloudSchedulePackageGenerator
         (guid[1], guid[2]) = (guid[2], guid[1]);
         (guid[4], guid[5]) = (guid[5], guid[4]);
         (guid[6], guid[7]) = (guid[7], guid[6]);
-    }
-
-    /// <summary>
-    /// Wraps a plain-text reply in a minimal HTML envelope, the same shape
-    /// ExchangeService produces on the local PowerShell path. Without this
-    /// the Office 365 connector accepts the value but Outlook renders the
-    /// reply as a single line because the field expects HTML markup.
-    /// </summary>
-    public static string PlainTextToHtml(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var encoded = WebUtility.HtmlEncode(value.Trim());
-        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
-        return $"<html><body>{encoded}</body></html>";
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

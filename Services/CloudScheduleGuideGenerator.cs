@@ -133,8 +133,6 @@ public static class CloudScheduleGuideGenerator
         var startTimeExpression = BuildPerDowTimestampExpression(startHopDays, startH, startM, tzId);
         var endTimeExpression = BuildPerDowTimestampExpression(hopDays, nextStartH, nextStartM, tzId);
 
-        var internalEsc = Escape(internalReply);
-        var externalEsc = Escape(externalReply);
         var userEsc = Escape(userEmail);
         var audienceLabel = externalAudienceAll ? "All" : "Known (contacts only)";
         var weeklySummary = BuildWeeklyScheduleSummary(schedule);
@@ -293,24 +291,24 @@ public static class CloudScheduleGuideGenerator
     <p class=""hint"">The Copy button puts an HTML-wrapped version on your clipboard so paragraph breaks survive when Outlook renders the reply.</p>
     <div class=""copy-row"">
       <pre id=""internal-pre"">");
-        sb.Append(Escape(internalReply));
+        sb.Append(Escape(ReplyHtml.ToPlainText(internalReply)));
         sb.Append(@"</pre>
       <button class=""copy"" data-target=""internal"">Copy</button>
     </div>
     <textarea id=""internal"" style=""display:none"">");
-        sb.Append(Escape(PlainTextToHtml(internalReply)));
+        sb.Append(Escape(ReplyHtml.EnsureHtml(internalReply)));
         sb.Append(@"</textarea>
 
     <h4>External reply message</h4>
     <p class=""hint"">The Copy button puts an HTML-wrapped version on your clipboard so paragraph breaks survive when Outlook renders the reply.</p>
     <div class=""copy-row"">
       <pre id=""external-pre"">");
-        sb.Append(Escape(externalReply));
+        sb.Append(Escape(ReplyHtml.ToPlainText(externalReply)));
         sb.Append(@"</pre>
       <button class=""copy"" data-target=""external"">Copy</button>
     </div>
     <textarea id=""external"" style=""display:none"">");
-        sb.Append(Escape(PlainTextToHtml(externalReply)));
+        sb.Append(Escape(ReplyHtml.EnsureHtml(externalReply)));
         sb.Append(@"</textarea>
   </div>
 
@@ -436,22 +434,4 @@ public static class CloudScheduleGuideGenerator
     };
 
     private static string Escape(string s) => string.IsNullOrEmpty(s) ? string.Empty : WebUtility.HtmlEncode(s);
-
-    /// <summary>
-    /// Wraps a plain-text reply in the same minimal HTML envelope
-    /// CloudSchedulePackageGenerator emits for the package path and that
-    /// ExchangeService produces on the local PowerShell path. Without
-    /// this, the Office 365 Outlook connector accepts the value but
-    /// Outlook flattens newlines into a single paragraph because the
-    /// reply field expects HTML markup.
-    /// </summary>
-    private static string PlainTextToHtml(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        var encoded = WebUtility.HtmlEncode(value.Trim());
-        encoded = encoded.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "<br>");
-        return $"<html><body>{encoded}</body></html>";
-    }
 }
