@@ -52,8 +52,15 @@
                               ToolTip="Font"
                               SelectionChanged="OnFontFamilyChanged"/>
 
+                    <!-- ModernWpf's ComboBox template is a 2-column Grid whose
+                         chevron column is a fixed 38px, on top of a 12px left
+                         padding. Anything narrower than 38 + padding + content
+                         squeezes the star column away and the right border
+                         stops being drawn, so these two keep a floor of 68 and
+                         trade the default padding down to buy content space. -->
                     <ComboBox x:Name="FontSizeBox"
-                              Width="58" Height="26" Margin="0,0,6,0"
+                              Width="68" MinWidth="68" Height="26" Margin="0,0,4,0"
+                              Padding="8,0,0,0"
                               FontSize="12"
                               ToolTip="Font size (pt)"
                               SelectionChanged="OnFontSizeChanged"/>
@@ -67,17 +74,18 @@
                         <TextBlock Text="I" FontStyle="Italic"/>
                     </ToggleButton>
                     <ToggleButton x:Name="UnderlineButton" Style="{StaticResource ToolStripToggle}"
-                                  ToolTip="Underline (Ctrl+U)" Click="OnUnderlineClick" Margin="0,0,6,0">
+                                  ToolTip="Underline (Ctrl+U)" Click="OnUnderlineClick" Margin="0,0,4,0">
                         <TextBlock Text="U" TextDecorations="Underline"/>
                     </ToggleButton>
 
                     <ComboBox x:Name="ColorBox"
-                              Width="52" Height="26" Margin="0,0,6,0"
+                              Width="68" MinWidth="68" Height="26" Margin="0,0,4,0"
+                              Padding="8,0,0,0"
                               ToolTip="Text color"
                               SelectionChanged="OnColorChanged">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
-                                <Border Width="24" Height="12" CornerRadius="2"
+                                <Border Width="20" Height="12" CornerRadius="2"
                                         BorderBrush="{DynamicResource SystemControlForegroundBaseMediumBrush}"
                                         BorderThickness="1"
                                         Background="{Binding Brush}"
@@ -93,7 +101,7 @@
                     <Button Style="{StaticResource ToolStripButton}"
                             Command="EditingCommands.ToggleNumbering"
                             CommandTarget="{Binding ElementName=Editor}"
-                            ToolTip="Numbered list" Content="1." FontSize="11" Margin="0,0,6,0"/>
+                            ToolTip="Numbered list" Content="1." FontSize="11" Margin="0,0,4,0"/>
 
                     <Button Style="{StaticResource ToolStripButton}"
                             ToolTip="Insert or edit link (Ctrl+K)" Content="🔗"
