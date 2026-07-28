@@ -17,6 +17,6 @@ ReleaseDate: 2026-07-28
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/tisun2/OofManager/releases/download/v1.1.18/OofManagerSetup.exe
-    InstallerSha256: 4F301EF2EB1E6BC5B54CCAC4C318969A32F1FE0774970C47FCAD30803C2430F2
+    InstallerSha256: 95C7852425B06F39341D303C5C6B9B381AEE3678227224CC20C1363D55C77825
 ManifestType: installer
 ManifestVersion: 1.10.0
