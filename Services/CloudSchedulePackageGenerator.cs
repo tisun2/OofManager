@@ -180,15 +180,11 @@ public static class CloudSchedulePackageGenerator
         var solutionVersion = BuildSolutionVersion(generatedAt);
 
         var tzId = TimeZoneInfo.Local.Id;
-        // Trigger fires at the latest start-of-shift across all workdays, so by
-        // the time the flow runs on any given day that day's shift has already
-        // begun. Firing earlier (e.g. at the earliest start) would let the
-        // flow overwrite the still-active OOF window the previous day set to
-        // extend until this day's start, clearing OOF early on later-starting
-        // days. The OOF window itself is still future-dated per day in the
-        // action body via per-dow lookup (start = that day's end-of-shift,
-        // end = next workday's start-of-shift).
-        var triggerEnd = ComputeRepresentativeStart(schedule);
+        // Trigger at the earliest end-of-shift so schedule or reply changes
+        // made during the workday are applied before off-hours begin. Days
+        // with a later end still get their own future-dated OOF start from
+        // the per-day lookup in the action body.
+        var triggerEnd = ComputeRepresentativeEnd(schedule);
 
         var weekDays = new[]
         {
@@ -719,29 +715,16 @@ public static class CloudSchedulePackageGenerator
         return sb.ToString();
     }
 
-    private static TimeSpan ComputeRepresentativeStart(WorkScheduleSnapshot s)
+    private static TimeSpan ComputeRepresentativeEnd(WorkScheduleSnapshot s)
     {
-        // Latest start-of-shift across all workdays. The flow must not fire
-        // before a given day's own shift has begun, otherwise it would
-        // overwrite (and thereby clear) the still-active OOF window that the
-        // previous day's run set to extend until this day's start. Example:
-        // Wed 07:00-17:00, Thu 09:00-17:00. Wednesday's run sets the window
-        // [Wed 17:00 -> Thu 09:00], so OOF stays on through Thu 09:00. If the
-        // trigger fired at the earliest start (07:00) on Thursday it would
-        // overwrite that with [Thu 17:00 -> Fri 09:00] at 07:00, turning OOF
-        // off two hours early (07:00-09:00 wrongly counted as working time).
-        // Triggering at the LATEST start guarantees that by the time the flow
-        // runs each day, that day's shift has already begun, so clearing the
-        // window is harmless. For normal schedules the latest start is always
-        // within every workday's hours.
-        TimeSpan? latest = null;
+        TimeSpan? earliest = null;
         foreach (DayOfWeek d in Enum.GetValues(typeof(DayOfWeek)))
         {
             if (!s.IsWorkday(d)) continue;
-            var start = s.GetStart(d);
-            if (latest == null || start > latest.Value) latest = start;
+            var end = s.GetEnd(d);
+            if (earliest == null || end < earliest.Value) earliest = end;
         }
-        return latest ?? new TimeSpan(9, 0, 0);
+        return earliest ?? new TimeSpan(17, 30, 0);
     }
 
     private static string BuildReadme(string userEmail, CloudScheduleIdentity identity)
