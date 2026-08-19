@@ -1541,8 +1541,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            var startOn = await EnsureManualVacationFlowOnAsync(pkg.StartFlowDisplayName, "Vacation Start");
-            var endOn   = await EnsureManualVacationFlowOnAsync(pkg.EndFlowDisplayName, "Vacation End");
+            var batchProgress = new Progress<string>(message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    SetVacationFlowsBannerProgress("Importing", message);
+            });
+            var ensure = await _powerAutomate.EnsureOofManagerFlowsOnAsync(
+                MailboxIdentity,
+                UserDisplayName,
+                new[] { pkg.StartFlowDisplayName, pkg.EndFlowDisplayName },
+                progress: batchProgress);
+            var startOn = ToVacationEnsureResult(ensure, pkg.StartFlowDisplayName, "Vacation Start");
+            var endOn = ToVacationEnsureResult(ensure, pkg.EndFlowDisplayName, "Vacation End");
 
             var bothOn = startOn.IsReady && endOn.IsReady;
             if (!bothOn)
@@ -1569,11 +1579,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var pauseNote = hasScheduleTarget
                 ? "Pause/resume of your Weekly Schedule flow is wired."
                 : "AutoReply-only build — toggle the Weekly Schedule flow once first if you also want pause/resume.";
-            // Settle the banner to the real On/Off state, then append the
-            // version + pause-note so the single banner carries the full
-            // result (no separate top status line needed).
-            await RefreshVacationFlowsStatusAsync();
-            VacationFlowsBannerDetail = $"{prefix} v{pkg.SolutionVersion} imported. {VacationFlowsBannerDetail} {pauseNote}";
+            // The batch operation already returned independently verified final
+            // states for both flows, so update the banner directly instead of
+            // launching two more status-check processes.
+            VacationFlowsStateText = "On";
+            VacationFlowsBannerDetail = $"{prefix} v{pkg.SolutionVersion} imported. Vacation Start and Vacation End flows are on. {pauseNote}";
         }
         catch (Exception ex)
         {
@@ -1586,18 +1596,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    private static (bool IsReady, string Message) ToVacationEnsureResult(PowerAutomateFlowBatchResult batch, string displayName, string label)
+    {
+        var item = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        if (item is null) return (false, $"{label} returned no result.");
+        return item.Outcome == PowerAutomateOutcome.Success && item.State == PowerAutomateFlowState.On
+            ? (true, $"{label} is on.")
+            : (false, $"{label} could not be confirmed on: {item.Message}");
+    }
+
     /// <summary>
-    /// Turns on a freshly-imported manual-vacation flow. Calls Enable
-    /// directly instead of status-then-enable: a flow that's already On
-    /// makes Enable a cheap no-op, and a freshly-imported flow can briefly
-    /// be invisible to <c>Get-Flow</c> while Power Automate finishes
-    /// registering it — the status check returning <c>NotFound</c> in that
-    /// window would otherwise make us bail without ever calling Enable.
-    /// One quick retry after a short delay covers the registration lag.
-    /// After Enable reports success, the live flow state is re-read: an
-    /// accepted Enable still leaves the flow Off when a connection reference
-    /// (e.g. shared_flowmanagement) is unbound, so we only report ready when
-    /// the flow actually came up On.
+    /// Legacy single-flow fallback retained for callers that cannot use the
+    /// batch Vacation operation. The normal setup path batches Start and End.
     /// </summary>
     private async Task<(bool IsReady, string Message)> EnsureManualVacationFlowOnAsync(string expectedFlowDisplayName, string label)
     {
@@ -1626,15 +1636,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (enable.Outcome != PowerAutomateOutcome.Success)
                 return (false, $"{label} could not be turned on: {enable.Message}");
 
-            // Enable being ACCEPTED is not proof the flow is actually On.
-            // When a connection reference is unbound — most often
-            // shared_flowmanagement (Power Automate Management), which the
-            // vacation flows use but the weekly flow doesn't, so it's
-            // typically unbound the first time — the Enable API silently
-            // leaves the flow Off. Re-read the live state and only report
-            // ready if it truly came up On, so the caller's "flows still Off"
-            // branch can deep-link the user to bind connections (mirrors the
-            // weekly EnsureCloudScheduleFlowOnAfterImportAsync verify step).
+            if (enable.State == PowerAutomateFlowState.On)
+                return (true, $"{label} is on.");
+            if (enable.State == PowerAutomateFlowState.Off)
+                return (false, $"{label} is still Off (a connection reference is probably unbound): {enable.Message}");
+
+            // Only an inconclusive operation result needs a separate status
+            // process; known On/Off states were freshly verified in the script.
             var verify = await _powerAutomate.GetOofManagerFlowStatusAsync(
                 upn, displayName, expectedFlowDisplayName, progress: statusProgress);
             return verify.State == PowerAutomateFlowState.On

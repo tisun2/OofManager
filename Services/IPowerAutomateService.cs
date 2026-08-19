@@ -14,18 +14,22 @@ public sealed class PowerAutomateResult
         PowerAutomateOutcome outcome,
         string message,
         IReadOnlyList<string> flowDisplayNames,
-        IReadOnlyList<PowerAutomateFlowReference>? flowReferences = null)
+        IReadOnlyList<PowerAutomateFlowReference>? flowReferences = null,
+        PowerAutomateFlowState state = PowerAutomateFlowState.Unknown)
     {
         Outcome = outcome;
         Message = message;
         FlowDisplayNames = flowDisplayNames;
         FlowReferences = flowReferences ?? Array.Empty<PowerAutomateFlowReference>();
+        State = state;
     }
 
     public PowerAutomateOutcome Outcome { get; }
     public string Message { get; }
     public IReadOnlyList<string> FlowDisplayNames { get; }
     public IReadOnlyList<PowerAutomateFlowReference> FlowReferences { get; }
+    public PowerAutomateFlowState State { get; }
+    public bool IsStateKnown => State is PowerAutomateFlowState.On or PowerAutomateFlowState.Off;
 }
 
 public sealed class PowerAutomateFlowReference
@@ -40,6 +44,38 @@ public sealed class PowerAutomateFlowReference
     public string EnvironmentName { get; }
     public string FlowName { get; }
     public string DisplayName { get; }
+}
+
+public sealed class PowerAutomateFlowBatchItem
+{
+    public PowerAutomateFlowBatchItem(string displayName, PowerAutomateOutcome outcome, PowerAutomateFlowState state, string message, PowerAutomateFlowReference? flowReference = null)
+    {
+        DisplayName = displayName;
+        Outcome = outcome;
+        State = state;
+        Message = message;
+        FlowReference = flowReference;
+    }
+
+    public string DisplayName { get; }
+    public PowerAutomateOutcome Outcome { get; }
+    public PowerAutomateFlowState State { get; }
+    public string Message { get; }
+    public PowerAutomateFlowReference? FlowReference { get; }
+}
+
+public sealed class PowerAutomateFlowBatchResult
+{
+    public PowerAutomateFlowBatchResult(PowerAutomateOutcome outcome, string message, IReadOnlyList<PowerAutomateFlowBatchItem> items)
+    {
+        Outcome = outcome;
+        Message = message;
+        Items = items;
+    }
+
+    public PowerAutomateOutcome Outcome { get; }
+    public string Message { get; }
+    public IReadOnlyList<PowerAutomateFlowBatchItem> Items { get; }
 }
 
 public enum PowerAutomateFlowState
@@ -236,6 +272,7 @@ public interface IPowerAutomateService
 {    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
     Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
     Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
+    Task<PowerAutomateFlowBatchResult> EnsureOofManagerFlowsOnAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>
     /// Fetches the deployed cloud flow's Logic Apps definition and decodes

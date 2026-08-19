@@ -30,8 +30,10 @@ public sealed class PowerAutomateService : IPowerAutomateService
     private const string FlowCacheEnvironmentIdKey = "PowerAutomate.Flow.Environment.Id";
     private const string FlowCacheDisplayNameKey = "PowerAutomate.Flow.DisplayName";
     private const string FlowCacheNameKey = "PowerAutomate.Flow.Name";
+    private const string FlowReferencesCacheV2Key = "PowerAutomate.Flow.References.V2";
 
     private readonly IPreferencesService _prefs;
+    private readonly object _flowCacheGate = new();
 
     public PowerAutomateService(IPreferencesService prefs)
     {
@@ -46,6 +48,9 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
     public Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
         => RunOperationAsync("Enable-Flow", upnHint, displayNameHint, expectedFlowDisplayName, progress, ct);
+
+    public Task<PowerAutomateFlowBatchResult> EnsureOofManagerFlowsOnAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress = null, CancellationToken ct = default)
+        => RunEnsureFlowsOnBatchAsync(upnHint, displayNameHint, expectedFlowDisplayNames, progress, ct);
 
     public async Task<CloudScheduleDefinitionResult> GetCloudScheduleDefinitionAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -422,60 +427,122 @@ public sealed class PowerAutomateService : IPowerAutomateService
         var normalizedUpn = NormalizeCacheUpn(upnHint);
         if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName)) return null;
 
-        var cachedUpn = _prefs.GetString(FlowCacheUpnKey);
-        if (!string.Equals(cachedUpn, normalizedUpn, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        var cachedDisplayName = _prefs.GetString(FlowCacheDisplayNameKey);
-        if (!string.Equals(cachedDisplayName, expectedFlowDisplayName, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        var environmentId = _prefs.GetString(FlowCacheEnvironmentIdKey);
-        if (string.IsNullOrWhiteSpace(environmentId)) return null;
-
-        if (!string.IsNullOrWhiteSpace(expectedEnvironmentId) &&
-            !string.Equals(environmentId, expectedEnvironmentId, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        var flowName = _prefs.GetString(FlowCacheNameKey);
-        if (string.IsNullOrWhiteSpace(flowName)) return null;
-
-        return new CachedFlowReference(environmentId!.Trim(), flowName!.Trim(), cachedDisplayName!.Trim());
+        lock (_flowCacheGate)
+        {
+            var cache = LoadFlowReferenceCache(normalizedUpn);
+            var entry = cache.Entries.FirstOrDefault(e =>
+                string.Equals(e.DisplayName, expectedFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            if (entry is null || string.IsNullOrWhiteSpace(entry.EnvironmentName) || string.IsNullOrWhiteSpace(entry.FlowName)) return null;
+            if (!string.IsNullOrWhiteSpace(expectedEnvironmentId) &&
+                !string.Equals(entry.EnvironmentName, expectedEnvironmentId, StringComparison.OrdinalIgnoreCase)) return null;
+            return new CachedFlowReference(entry.EnvironmentName, entry.FlowName, entry.DisplayName);
+        }
     }
 
     private void SaveFlowReferenceCache(string? upnHint, string expectedFlowDisplayName, IReadOnlyList<PowerAutomateFlowReference> flowReferences)
     {
         var normalizedUpn = NormalizeCacheUpn(upnHint);
-        if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName)) return;
+        if (normalizedUpn is null) return;
 
-        var flowReference = flowReferences.FirstOrDefault(f =>
+        var valid = flowReferences.Where(f =>
             !string.IsNullOrWhiteSpace(f.EnvironmentName) &&
             !string.IsNullOrWhiteSpace(f.FlowName) &&
-            string.Equals(f.DisplayName, expectedFlowDisplayName, StringComparison.OrdinalIgnoreCase));
-        if (flowReference is null) return;
+            !string.IsNullOrWhiteSpace(f.DisplayName)).ToArray();
+        if (valid.Length == 0) return;
 
-        using var batch = _prefs.BeginBatch();
-        _prefs.Set(FlowCacheUpnKey, normalizedUpn);
-        _prefs.Set(FlowCacheEnvironmentIdKey, flowReference.EnvironmentName.Trim());
-        _prefs.Set(FlowCacheDisplayNameKey, flowReference.DisplayName.Trim());
-        _prefs.Set(FlowCacheNameKey, flowReference.FlowName.Trim());
+        lock (_flowCacheGate)
+        {
+            var cache = LoadFlowReferenceCache(normalizedUpn);
+            foreach (var reference in valid)
+                UpsertFlowReference(cache, reference.DisplayName, reference.EnvironmentName, reference.FlowName);
+            SaveFlowReferenceCache(cache);
+        }
     }
 
     private void SaveImportedFlowCandidateCache(string? upnHint, string expectedFlowDisplayName, CloudScheduleImportResult result)
     {
         var normalizedUpn = NormalizeCacheUpn(upnHint);
-        if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName)) return;
-        if (string.IsNullOrWhiteSpace(result.EnvironmentId) || string.IsNullOrWhiteSpace(result.WorkflowId)) return;
-        if (GetCachedFlowReference(upnHint, expectedFlowDisplayName, result.EnvironmentId) != null) return;
+        if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName) ||
+            string.IsNullOrWhiteSpace(result.EnvironmentId) || string.IsNullOrWhiteSpace(result.WorkflowId)) return;
 
-        using var batch = _prefs.BeginBatch();
-        _prefs.Set(FlowCacheUpnKey, normalizedUpn);
-        _prefs.Set(FlowCacheEnvironmentIdKey, result.EnvironmentId!.Trim());
-        _prefs.Set(FlowCacheDisplayNameKey, expectedFlowDisplayName.Trim());
-        _prefs.Set(FlowCacheNameKey, result.WorkflowId!.Trim());
+        lock (_flowCacheGate)
+        {
+            var cache = LoadFlowReferenceCache(normalizedUpn);
+            if (!cache.Entries.Any(e => string.Equals(e.DisplayName, expectedFlowDisplayName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(e.EnvironmentName, result.EnvironmentId, StringComparison.OrdinalIgnoreCase)))
+            {
+                UpsertFlowReference(cache, expectedFlowDisplayName, result.EnvironmentId!, result.WorkflowId!);
+                SaveFlowReferenceCache(cache);
+            }
+        }
+    }
+
+    private void RemoveCachedFlowReference(string? upnHint, string expectedFlowDisplayName)
+    {
+        var normalizedUpn = NormalizeCacheUpn(upnHint);
+        if (normalizedUpn is null || string.IsNullOrWhiteSpace(expectedFlowDisplayName)) return;
+        lock (_flowCacheGate)
+        {
+            var cache = LoadFlowReferenceCache(normalizedUpn);
+            if (cache.Entries.RemoveAll(e => string.Equals(e.DisplayName, expectedFlowDisplayName, StringComparison.OrdinalIgnoreCase)) > 0)
+                SaveFlowReferenceCache(cache);
+        }
+    }
+
+    private FlowReferenceCacheV2 LoadFlowReferenceCache(string normalizedUpn)
+    {
+        FlowReferenceCacheV2? cache = null;
+        var json = _prefs.GetString(FlowReferencesCacheV2Key);
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try { cache = JsonSerializer.Deserialize<FlowReferenceCacheV2>(json!); }
+            catch { _prefs.Set(FlowReferencesCacheV2Key, (string?)null); }
+        }
+        if (cache is null || !string.Equals(cache.Upn, normalizedUpn, StringComparison.OrdinalIgnoreCase))
+            cache = new FlowReferenceCacheV2 { Upn = normalizedUpn };
+
+        // One-time migration of the legacy singleton entry for this account.
+        var legacyUpn = _prefs.GetString(FlowCacheUpnKey);
+        var legacyEnv = _prefs.GetString(FlowCacheEnvironmentIdKey);
+        var legacyDisplay = _prefs.GetString(FlowCacheDisplayNameKey);
+        var legacyName = _prefs.GetString(FlowCacheNameKey);
+        if (string.Equals(legacyUpn, normalizedUpn, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(legacyEnv) && !string.IsNullOrWhiteSpace(legacyDisplay) && !string.IsNullOrWhiteSpace(legacyName))
+        {
+            UpsertFlowReference(cache, legacyDisplay!, legacyEnv!, legacyName!);
+            SaveFlowReferenceCache(cache);
+        }
+        ClearLegacyFlowReferenceCache();
+        return cache;
+    }
+
+    private void SaveFlowReferenceCache(FlowReferenceCacheV2 cache)
+    {
+        _prefs.Set(FlowReferencesCacheV2Key, JsonSerializer.Serialize(cache));
+    }
+
+    private static void UpsertFlowReference(FlowReferenceCacheV2 cache, string displayName, string environmentName, string flowName)
+    {
+        cache.Entries.RemoveAll(e => string.Equals(e.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        cache.Entries.Add(new FlowReferenceCacheEntry
+        {
+            DisplayName = displayName.Trim(),
+            EnvironmentName = environmentName.Trim(),
+            FlowName = flowName.Trim(),
+        });
     }
 
     private void ClearFlowReferenceCache()
+    {
+        lock (_flowCacheGate)
+        {
+            using var batch = _prefs.BeginBatch();
+            _prefs.Set(FlowReferencesCacheV2Key, (string?)null);
+            ClearLegacyFlowReferenceCache();
+        }
+    }
+
+    private void ClearLegacyFlowReferenceCache()
     {
         _prefs.Set(FlowCacheUpnKey, (string?)null);
         _prefs.Set(FlowCacheEnvironmentIdKey, (string?)null);
@@ -512,6 +579,19 @@ public sealed class PowerAutomateService : IPowerAutomateService
         public string? EnvironmentDisplayName { get; }
     }
 
+    private sealed class FlowReferenceCacheV2
+    {
+        public string Upn { get; set; } = string.Empty;
+        public List<FlowReferenceCacheEntry> Entries { get; set; } = new();
+    }
+
+    private sealed class FlowReferenceCacheEntry
+    {
+        public string DisplayName { get; set; } = string.Empty;
+        public string EnvironmentName { get; set; } = string.Empty;
+        public string FlowName { get; set; } = string.Empty;
+    }
+
     private sealed class CachedFlowReference
     {
         public CachedFlowReference(string environmentName, string flowName, string displayName)
@@ -539,7 +619,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
         if (result.Outcome == PowerAutomateOutcome.Success)
             SaveFlowReferenceCache(upnHint, expectedFlowDisplayName, result.FlowReferences);
         else if (result.Outcome == PowerAutomateOutcome.NoFlowFound)
-            ClearFlowReferenceCache();
+            RemoveCachedFlowReference(upnHint, expectedFlowDisplayName);
         return result;
     }
 
@@ -550,11 +630,69 @@ public sealed class PowerAutomateService : IPowerAutomateService
         if (result.Outcome == PowerAutomateOutcome.Success)
             SaveFlowReferenceCache(upnHint, expectedFlowDisplayName, result.FlowReferences);
         else if (result.Outcome == PowerAutomateOutcome.NoFlowFound)
-            ClearFlowReferenceCache();
+            RemoveCachedFlowReference(upnHint, expectedFlowDisplayName);
         return result;
     }
 
-    private Task<ChildResult> RunFlowScriptAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct, IProgress<string>? progress = null, bool interactive = true)
+    private async Task<PowerAutomateFlowBatchResult> RunEnsureFlowsOnBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress, CancellationToken ct)
+    {
+        var names = expectedFlowDisplayNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (names.Length == 0)
+            return new PowerAutomateFlowBatchResult(PowerAutomateOutcome.OtherError, "No flow names were supplied.", Array.Empty<PowerAutomateFlowBatchItem>());
+
+        var child = await RunFlowScriptAsync("Ensure-Flows-On", upnHint, displayNameHint, names[0], ct, progress, expectedFlowDisplayNames: names).ConfigureAwait(false);
+        var result = ParseBatchResult(child.Json, child.ExitCode, names);
+        var references = result.Items.Where(i => i.FlowReference != null).Select(i => i.FlowReference!).ToArray();
+        if (references.Length > 0) SaveFlowReferenceCache(upnHint, string.Empty, references);
+        foreach (var item in result.Items.Where(i => i.Outcome == PowerAutomateOutcome.NoFlowFound))
+            RemoveCachedFlowReference(upnHint, item.DisplayName);
+        return result;
+    }
+
+    private static PowerAutomateFlowBatchResult ParseBatchResult(string? resultJson, int exitCode, IReadOnlyList<string> expectedNames)
+    {
+        if (exitCode == -1 || string.IsNullOrWhiteSpace(resultJson))
+            return new PowerAutomateFlowBatchResult(PowerAutomateOutcome.SignInFailed, "Power Automate batch operation did not complete.",
+                expectedNames.Select(n => new PowerAutomateFlowBatchItem(n, PowerAutomateOutcome.SignInFailed, PowerAutomateFlowState.Unknown, "Operation did not complete.")).ToArray());
+        try
+        {
+            using var doc = JsonDocument.Parse(resultJson!);
+            var root = doc.RootElement;
+            var items = new List<PowerAutomateFlowBatchItem>();
+            if (root.TryGetProperty("BatchItems", out var array) && array.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in array.EnumerateArray())
+                {
+                    var name = el.TryGetProperty("DisplayName", out var n) ? n.GetString() ?? "" : "";
+                    var outcomeText = el.TryGetProperty("Outcome", out var o) ? o.GetString() : null;
+                    var stateText = el.TryGetProperty("State", out var s) ? s.GetString() : null;
+                    var message = el.TryGetProperty("Message", out var m) ? m.GetString() ?? "" : "";
+                    PowerAutomateFlowReference? reference = null;
+                    if (el.TryGetProperty("FlowReference", out var r) && r.ValueKind == JsonValueKind.Object)
+                    {
+                        var env = r.TryGetProperty("EnvironmentName", out var re) ? re.GetString() : null;
+                        var flow = r.TryGetProperty("FlowName", out var rf) ? rf.GetString() : null;
+                        var display = r.TryGetProperty("DisplayName", out var rd) ? rd.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(env) && !string.IsNullOrWhiteSpace(flow) && !string.IsNullOrWhiteSpace(display))
+                            reference = new PowerAutomateFlowReference(env!, flow!, display!);
+                    }
+                    var outcome = outcomeText switch { "Success" => PowerAutomateOutcome.Success, "NoFlowFound" => PowerAutomateOutcome.NoFlowFound, "SignInFailed" => PowerAutomateOutcome.SignInFailed, _ => PowerAutomateOutcome.OtherError };
+                    var state = stateText switch { "On" => PowerAutomateFlowState.On, "Off" => PowerAutomateFlowState.Off, "NotFound" => PowerAutomateFlowState.NotFound, _ => PowerAutomateFlowState.Unknown };
+                    items.Add(new PowerAutomateFlowBatchItem(name, outcome, state, message, reference));
+                }
+            }
+            var overall = items.Count > 0 && items.All(i => i.Outcome == PowerAutomateOutcome.Success && i.State == PowerAutomateFlowState.On)
+                ? PowerAutomateOutcome.Success : PowerAutomateOutcome.OtherError;
+            var overallMessage = root.TryGetProperty("Message", out var msg) ? msg.GetString() ?? "" : "";
+            return new PowerAutomateFlowBatchResult(overall, overallMessage, items);
+        }
+        catch (Exception ex)
+        {
+            return new PowerAutomateFlowBatchResult(PowerAutomateOutcome.OtherError, $"Failed to parse batch result: {ex.Message}", Array.Empty<PowerAutomateFlowBatchItem>());
+        }
+    }
+
+    private Task<ChildResult> RunFlowScriptAsync(string verb, string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct, IProgress<string>? progress = null, bool interactive = true, IReadOnlyList<string>? expectedFlowDisplayNames = null)
     {
         var cachedEnvironment = GetCachedImportEnvironment(upnHint);
         var cachedFlowReference = GetCachedFlowReference(upnHint, expectedFlowDisplayName, cachedEnvironment?.EnvironmentId);
@@ -574,6 +712,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
             // at solution-import time and doesn't preserve the one we stamped
             // into solution.xml.
             ["OOFMGR_PA_FLOWDISPLAYNAME"]   = expectedFlowDisplayName ?? string.Empty,
+            ["OOFMGR_PA_FLOWDISPLAYNAMES"]  = expectedFlowDisplayNames is { Count: > 0 } ? JsonSerializer.Serialize(expectedFlowDisplayNames) : string.Empty,
             ["OOFMGR_PA_CACHED_ENVID"]      = cachedEnvironment?.EnvironmentId ?? cachedFlowReference?.EnvironmentName ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVDISPLAY"] = cachedEnvironment?.EnvironmentDisplayName ?? string.Empty,
             ["OOFMGR_PA_CACHED_FLOWNAME"]   = cachedFlowReference?.FlowName ?? string.Empty,
@@ -789,6 +928,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 ? fEl.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => s.Length > 0).ToArray()
                 : Array.Empty<string>();
             var flowReferences = ReadFlowReferences(root);
+            var stateStr = root.TryGetProperty("State", out var sEl) ? sEl.GetString() : null;
 
             var outcome = outcomeStr switch
             {
@@ -798,7 +938,13 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 "SolutionAwareBlocked" => PowerAutomateOutcome.SolutionAwareBlocked,
                 _ => PowerAutomateOutcome.OtherError,
             };
-            return new PowerAutomateResult(outcome, message, flows, flowReferences);
+            var state = stateStr switch
+            {
+                "On" => PowerAutomateFlowState.On,
+                "Off" => PowerAutomateFlowState.Off,
+                _ => PowerAutomateFlowState.Unknown,
+            };
+            return new PowerAutomateResult(outcome, message, flows, flowReferences, state);
         }
         catch (Exception ex)
         {
@@ -902,6 +1048,22 @@ $ErrorActionPreference = 'Stop'
 $verb            = $env:OOFMGR_PA_VERB
 $prefix          = $env:OOFMGR_PA_PREFIX
 $flowDisplayName = $env:OOFMGR_PA_FLOWDISPLAYNAME
+$flowDisplayNamesJson = $env:OOFMGR_PA_FLOWDISPLAYNAMES
+$flowDisplayNames = @()
+if ($flowDisplayNamesJson) {
+    try {
+        $parsedFlowNames = ConvertFrom-Json -InputObject $flowDisplayNamesJson
+        # Windows PowerShell 5.1 can preserve a JSON array as one nested
+        # Object[] when wrapped directly in @(...). Flatten explicitly.
+        foreach ($parsedFlowName in @($parsedFlowNames)) {
+            foreach ($nameValue in @($parsedFlowName)) {
+                if ($nameValue) { $flowDisplayNames += [string]$nameValue }
+            }
+        }
+    } catch { Trace ""flow display-name JSON parse failed: $($_.Exception.Message)"" }
+}
+if ($flowDisplayNames.Count -eq 0 -and $flowDisplayName) { $flowDisplayNames = @($flowDisplayName) }
+$flowDisplayNamesTrace = $flowDisplayNames -join ' | '
 $modulesDir      = $env:OOFMGR_PA_MODULES
 $upn             = $env:OOFMGR_PA_UPN
 $displayName     = $env:OOFMGR_PA_DISPLAYNAME
@@ -933,6 +1095,7 @@ function Report($m) {
         } catch {}
     }
 }
+Trace (""target flow display names: "" + $flowDisplayNamesTrace)
 Trace ""start: pid=$PID verb=$verb prefix='$prefix' flowDisplayName='$flowDisplayName' upn='$upn' displayName='$displayName' cachedEnvId='$cachedEnvId' cachedEnvDisplay='$cachedEnvDisplay' cachedFlowName='$cachedFlowName' modulesDir='$modulesDir'""
 $actionLabel = if ($verb -eq 'Disable-Flow') { 'Turning off' } elseif ($verb -eq 'Enable-Flow') { 'Turning on' } else { 'Checking' }
 Report (""$actionLabel Power Automate flow. Preparing..."")
@@ -966,7 +1129,7 @@ function Get-FlowReferences($flows) {
     return @($refs)
 }
 
-function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @(), $definition = $null) {
+function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @(), $definition = $null, $batchItems = @()) {
     $obj = [ordered]@{
         Outcome = $outcome
         Message = $message
@@ -974,6 +1137,7 @@ function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @(),
         State   = $state
         FlowReferences = @($flowReferences)
         Definition = $definition
+        BatchItems = @($batchItems)
     }
     $json = ($obj | ConvertTo-Json -Compress -Depth 25)
     if ($resultFile) {
@@ -1021,37 +1185,28 @@ try {
         Emit 'SignInFailed' (""Sign-in to Power Automate failed: "" + $_.Exception.Message) @()
     }
 
-    # Walk environments looking for flows whose displayName starts with our
-    # prefix. We CANNOT enumerate every env the user can see — on a large
-    # tenant (e.g. Microsoft corporate) Get-PowerAppEnvironment returns
-    # hundreds of envs the user is merely visible-to, and Get-Flow on each
-    # takes 1.5–3 s, so a naive foreach turns a 10 s click into a 25-minute
-    # hang. We prioritise the most likely environments:
-    #   1) Envs whose DisplayName contains the user's display name OR any
-    #      token derived from the UPN (e.g. 'Tianyue Sun's Environment',
-    #      'Sandy Sun's Environment' — most Microsoft employees have a
-    #      personal dev env named after them, and that's where they import
-    #      maker artefacts).
-    #   2) The tenant's Default environment.
-    #   3) At most $maxOtherEnvs additional envs, capped by total time.
-    # The total budget needs to be generous enough that even on a 600+ env
-    # tenant — where Get-PowerAppEnvironment alone runs ~45 s — there's
-    # still time left to scan ~5-10 candidate envs after the listing.
-    $maxOtherEnvs    = 30
-    $totalBudgetSec  = 180
-    $deadline        = (Get-Date).AddSeconds($totalBudgetSec)
+    # Every flow operation is scoped to the signed-in OOF Manager user's own
+    # Developer environment. The WPF caller supplies the Exchange-resolved
+    # friendly display name (for example 'Sandy Sun'); we require an exact,
+    # case-insensitive environment DisplayName match and never probe Default,
+    # another user's Developer environment, or arbitrary tenant environments.
+    # The exact flow display name remains the second ownership boundary inside
+    # that one environment.
     $matched         = @()
 
     function Add-MatchedFlow($envName, $flow, $sourceLabel) {
         if (-not $flow) { return $false }
         $dn = [string]$flow.DisplayName
         $flowName = [string]$flow.FlowName
-        if ($dn -and $flowName -and $flowDisplayName -and ($dn -ieq $flowDisplayName)) {
+        if ($dn -and $flowName -and ($flowDisplayNames -icontains $dn)) {
+            # Keep the original object so callers can reuse a reliable state
+            # snapshot without immediately issuing the same Get-Flow again.
             $script:matched += [PSCustomObject]@{
                 EnvironmentName = $envName
                 FlowName        = $flowName
                 DisplayName     = $dn
                 Enabled         = $flow.Enabled
+                SourceFlow      = $flow
             }
             Trace ""matched cloud flow by exact displayName via ${sourceLabel}: $dn flowName=$flowName enabled=$($flow.Enabled)""
             return $true
@@ -1077,7 +1232,6 @@ try {
 
     function Scan-Env($envName, $envLabel) {
         if ($matched.Count -gt 0) { return }
-        if ((Get-Date) -gt $deadline) { return }
         try {
             Trace ""before Get-Flow $envLabel=$envName""
             $flows = @(Get-Flow -EnvironmentName $envName -ErrorAction SilentlyContinue)
@@ -1145,89 +1299,97 @@ try {
         })
     }
 
-    function Get-DeveloperAdminEnvsFast() {
+    function Get-CurrentUserDeveloperEnvFast() {
+        if (-not $displayName -or ([string]$displayName).IndexOf('@') -ge 0) {
+            Trace ""cannot select Developer environment: friendly display name is unavailable ('$displayName')""
+            return $null
+        }
+
         $developerEnvs = @()
         try {
-            # This is the first-pass narrow query: unlike Get-PowerAppEnvironment,
-            # it asks the service for Developer envs before we ever enumerate the
-            # whole tenant. Some tenants/API versions may reject this $filter; in
-            # that case we trace and let the existing full-scan fallback handle it.
+            # Ask only for Developer environments, then require an exact friendly-
+            # name match. This avoids enumerating every environment visible in a
+            # large tenant and prevents us from probing another user's flows.
             $developerEnvUri = ""https://{powerAppsEndpoint}/providers/Microsoft.PowerApps/environments?`$expand=permissions&`$filter=properties/environmentSku%20eq%20%27Developer%27&api-version={apiVersion}""
-            Report 'Finding your Developer environments...'
-            Trace 'before fast developer-env query'
+            Report ""Finding your Developer environment '$displayName'...""
+            Trace 'before exact developer-env query'
             $developerResult = InvokeApi -Method GET -Route $developerEnvUri -ErrorAction Stop
             $developerEnvs = @($developerResult.value | ForEach-Object { Convert-RawEnvironment $_ } | Where-Object { $_ -and (Test-DeveloperEnvironment $_) })
-            Trace ""after  fast developer-env query: count=$($developerEnvs.Count)""
+            Trace ""after exact developer-env query: count=$($developerEnvs.Count)""
         } catch {
-            Trace ""fast developer-env query failed: $($_.Exception.Message)""
-            return @()
+            Trace ""exact developer-env query failed: $($_.Exception.Message)""
+            return $null
         }
 
-        $adminDeveloperEnvs = @($developerEnvs | Where-Object { Test-AdminEnvironmentForCurrentUser $_ })
         $exactDeveloperEnvs = @(Get-ExactDisplayNameEnvs $developerEnvs)
-        Trace ""exact-display-name developer envs from fast query: count=$($exactDeveloperEnvs.Count)""
-        Trace ""admin+developer envs from fast query: count=$($adminDeveloperEnvs.Count)""
+        Trace ""exact-display-name Developer environments: count=$($exactDeveloperEnvs.Count) displayName='$displayName'""
+        if ($exactDeveloperEnvs.Count -eq 0) { return $null }
 
-        $orderedDeveloperEnvs = @()
-        $seenDeveloperIds = @{}
-        foreach ($e in $exactDeveloperEnvs) {
-            $id = [string]$e.EnvironmentName
-            if ($id -and -not $seenDeveloperIds.ContainsKey($id)) { $seenDeveloperIds[$id] = $true; $orderedDeveloperEnvs += $e }
-        }
-        foreach ($e in $adminDeveloperEnvs) {
-            $id = [string]$e.EnvironmentName
-            if ($id -and -not $seenDeveloperIds.ContainsKey($id)) { $seenDeveloperIds[$id] = $true; $orderedDeveloperEnvs += $e }
-        }
-        foreach ($e in $developerEnvs) {
-            $id = [string]$e.EnvironmentName
-            if ($id -and -not $seenDeveloperIds.ContainsKey($id)) { $seenDeveloperIds[$id] = $true; $orderedDeveloperEnvs += $e }
-        }
-
-        if ($orderedDeveloperEnvs.Count -gt 0) { return @($orderedDeveloperEnvs) }
-
-        # Permission shape is not consistent across tenants. If the service did
-        # return Developer envs but no obvious admin marker, still scan those
-        # Developer envs first; this keeps the first pass narrow without risking
-        # a false negative caused by a missing/renamed permission key.
-        return @()
+        # Duplicate display names are unusual. Prefer an environment where the
+        # current user has an admin permission; otherwise use the API's first
+        # exact match. In either case exactly one environment is ever scanned.
+        $adminExact = @($exactDeveloperEnvs | Where-Object { Test-AdminEnvironmentForCurrentUser $_ })
+        $selected = if ($adminExact.Count -gt 0) { $adminExact[0] } else { $exactDeveloperEnvs[0] }
+        Trace ""selected current-user Developer environment displayName='$($selected.DisplayName)' id='$($selected.EnvironmentName)' adminExact=$($adminExact.Count -gt 0)""
+        return $selected
     }
 
-    if ($cachedEnvId -and ([string]$cachedEnvId).Trim().Length -gt 0) {
+    # A cached reference is safe only when it belongs to the signed-in user's
+    # exact Developer environment. Never probe a stale/differently named cache.
+    $cacheMatchesCurrentUser = $cachedEnvId -and $cachedEnvDisplay -and $displayName -and
+        (([string]$cachedEnvDisplay).Trim() -ieq ([string]$displayName).Trim())
+    $currentUserEnvironmentChecked = $false
+    $targetEnvironmentId = $null
+    if ($cacheMatchesCurrentUser) {
         $cachedEnvId = ([string]$cachedEnvId).Trim()
-        $cachedLabel = if ($cachedEnvDisplay -and ([string]$cachedEnvDisplay).Trim().Length -gt 0) { ([string]$cachedEnvDisplay).Trim() } else { $cachedEnvId }
+        $targetEnvironmentId = $cachedEnvId
+        $cachedLabel = ([string]$cachedEnvDisplay).Trim()
         $cachedFlowName = if ($cachedFlowName -and ([string]$cachedFlowName).Trim().Length -gt 0) { ([string]$cachedFlowName).Trim() } else { $null }
-        if ($cachedFlowName) {
-            Report ""Checking saved cloud flow in '$cachedLabel'...""
-            Trace ""cached flow candidate displayName='$cachedLabel' envId='$cachedEnvId' flowName='$cachedFlowName'""
-            $null = Try-CachedFlow $cachedEnvId 'cached-flow' $cachedFlowName
+        if ($cachedFlowName -and $verb -ne 'Ensure-Flows-On') {
+            Report ""Checking saved cloud flow in your Developer environment '$cachedLabel'...""
+            Trace ""validated cached flow candidate displayName='$cachedLabel' envId='$cachedEnvId' flowName='$cachedFlowName'""
+            $null = Try-CachedFlow $cachedEnvId 'current-user-cached-flow' $cachedFlowName
         }
 
         if ($matched.Count -eq 0) {
-            Report ""Checking saved environment '$cachedLabel'...""
-            Trace ""cached env candidate displayName='$cachedLabel' id='$cachedEnvId'""
-            Scan-Env $cachedEnvId 'cached-env'
+            Report ""Checking your saved Developer environment '$cachedLabel'...""
+            Trace ""validated cached env candidate displayName='$cachedLabel' id='$cachedEnvId'""
+            $currentUserEnvironmentChecked = $true
+            Scan-Env $cachedEnvId 'current-user-cached-env'
         }
+    } elseif ($cachedEnvId) {
+        Trace ""ignoring cached environment outside current-user scope: cachedDisplay='$cachedEnvDisplay' currentDisplay='$displayName' id='$cachedEnvId'""
     }
 
-    $fastDeveloperAdminEnvs = @()
-    $fastDeveloperScanned = 0
-    if ($matched.Count -eq 0) {
-        $fastDeveloperAdminEnvs = @(Get-DeveloperAdminEnvsFast)
-        if ($fastDeveloperAdminEnvs.Count -gt 0) { Report ""Checking $($fastDeveloperAdminEnvs.Count) Developer environment(s)..."" }
-        foreach ($e in $fastDeveloperAdminEnvs) {
-            if ($matched.Count -gt 0) { break }
-            if ((Get-Date) -gt $deadline) { break }
-            Report ""Checking Developer environment '$($e.DisplayName)'...""
-            Trace ""fast developer/admin env[$fastDeveloperScanned] displayName='$($e.DisplayName)' id='$($e.EnvironmentName)'""
-            Scan-Env $e.EnvironmentName ""fast-developer-admin-env[$fastDeveloperScanned]""
-            $fastDeveloperScanned++
+    $currentUserDeveloperEnv = $null
+    if ($matched.Count -eq 0 -and -not $currentUserEnvironmentChecked) {
+        $currentUserDeveloperEnv = Get-CurrentUserDeveloperEnvFast
+        if ($currentUserDeveloperEnv) {
+            Report ""Checking your Developer environment '$($currentUserDeveloperEnv.DisplayName)'...""
+            $currentUserEnvironmentChecked = $true
+            $targetEnvironmentId = [string]$currentUserDeveloperEnv.EnvironmentName
+            Scan-Env $currentUserDeveloperEnv.EnvironmentName 'current-user-developer-env'
         }
     }
     if ($matched.Count -gt 0) {
-        Trace 'matched before full environment scan; skipping full environment scan'
+        Trace 'matched in current-user Developer environment; no other environments will be checked'
     }
 
-    if ($matched.Count -eq 0) {
+    # Strict scope: all flow operations target only the Developer environment
+    # whose display name exactly matches the signed-in OOF Manager user.
+    if ($matched.Count -eq 0 -and $verb -ne 'Ensure-Flows-On') {
+        if (-not $displayName -or ([string]$displayName).IndexOf('@') -ge 0) {
+            Emit 'NoFlowFound' 'The signed-in user friendly display name is unavailable, so OOF Manager could not identify your Developer environment.' @()
+        }
+        if (-not $currentUserEnvironmentChecked) {
+            Emit 'NoFlowFound' (""No Developer environment named '"" + ([string]$displayName).Trim() + ""' was found for the signed-in OOF Manager user. No other environments were checked."") @()
+        }
+        Emit 'NoFlowFound' (""No flow named '"" + $flowDisplayName + ""' was found in your Developer environment '"" + ([string]$displayName).Trim() + ""'. No other environments were checked."") @()
+    }
+
+    # Legacy broad-scan implementation retained as unreachable reference until
+    # the strict current-user path has been exercised across supported tenants.
+    if ($false) {
 
     # Build a list of name-tokens to match env DisplayNames against.
     # We can't rely on a single accurate ""display name"" hint because the
@@ -1436,6 +1598,35 @@ try {
 
     }
 
+    function Read-SnapshotEnabled([object]$flow) {
+        $result = [pscustomobject]@{ Known = $false; Enabled = $null }
+        try {
+            $source = $flow.SourceFlow
+            if (-not $source) { return $result }
+            $enabledProp = $source.PSObject.Properties['Enabled']
+            $rawState = if ($source.PSObject.Properties['Internal'] -and $source.Internal -and $source.Internal.properties) { [string]$source.Internal.properties.state } else { $null }
+            if ($enabledProp -ne $null -and $enabledProp.Value -is [bool]) {
+                # A direct Get-Flow-by-id object is authoritative. Bulk objects
+                # are also usable when their internal state agrees with Enabled.
+                $stateAgrees = (-not $rawState) -or
+                    ($rawState -ieq 'Started' -and [bool]$enabledProp.Value) -or
+                    ($rawState -ieq 'Stopped' -and -not [bool]$enabledProp.Value)
+                if ($stateAgrees) {
+                    $result.Known = $true
+                    $result.Enabled = [bool]$enabledProp.Value
+                    Trace ""using fetched flow state: $($flow.DisplayName) enabled='$($result.Enabled)' rawState='$rawState'""
+                }
+            }
+        } catch { Trace ""snapshot state read failed for $($flow.DisplayName): $($_.Exception.Message)"" }
+        return $result
+    }
+
+    function Read-CurrentOrSnapshotEnabled([object]$flow) {
+        $snapshot = Read-SnapshotEnabled $flow
+        if ($snapshot.Known) { return $snapshot }
+        return Read-CurrentEnabled $flow
+    }
+
     function Read-CurrentEnabled([object]$flow) {
         $result = [pscustomobject]@{ Known = $false; Enabled = $null }
         try {
@@ -1457,10 +1648,63 @@ try {
         return $result
     }
 
+    if ($verb -eq 'Ensure-Flows-On') {
+        $batchItems = @()
+        $missingNames = @($flowDisplayNames | Where-Object { $name = $_; -not ($matched | Where-Object { $_.DisplayName -ieq $name }) })
+        if ($missingNames.Count -gt 0 -and $currentUserEnvironmentChecked) {
+            Report ""Vacation flows are still registering. Waiting 10 seconds before one retry...""
+            Start-Sleep -Seconds 10
+            $matched = @()
+            Scan-Env $targetEnvironmentId 'batch-registration-retry'
+            $missingNames = @($flowDisplayNames | Where-Object { $name = $_; -not ($matched | Where-Object { $_.DisplayName -ieq $name }) })
+        }
+
+        foreach ($expectedName in $flowDisplayNames) {
+            $f = $matched | Where-Object { $_.DisplayName -ieq $expectedName } | Select-Object -First 1
+            if (-not $f) {
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='NoFlowFound'; State='NotFound'; Message='Flow was not found after the registration retry.'; FlowReference=$null }
+                continue
+            }
+
+            $initial = Read-CurrentOrSnapshotEnabled $f
+            if ($initial.Known -and $initial.Enabled) {
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='On'; Message='Power Automate flow is already on.'; FlowReference=(New-FlowReference $f) }
+                continue
+            }
+
+            try {
+                Report ""Turning '$expectedName' on...""
+                Enable-Flow -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop | Out-Null
+                $verified = $false; $lastKnown = $false; $lastEnabled = $null
+                for ($vi = 0; $vi -lt 3; $vi++) {
+                    $after = Read-CurrentEnabled $f
+                    $lastKnown = $after.Known; $lastEnabled = $after.Enabled
+                    if ($after.Known -and $after.Enabled) { $verified = $true; break }
+                    if (-not $after.Known) { break }
+                    if ($vi -lt 2) { Start-Sleep -Seconds 3 }
+                }
+                if ($verified) {
+                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='On'; Message='Power Automate flow was turned on.'; FlowReference=(New-FlowReference $f) }
+                } elseif (-not $lastKnown) {
+                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='Unknown'; Message='Enable was accepted but the final state could not be read.'; FlowReference=(New-FlowReference $f) }
+                } else {
+                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='OtherError'; State='Off'; Message='Enable was accepted but the flow is still off (a connection reference is probably unbound).'; FlowReference=(New-FlowReference $f) }
+                }
+            } catch {
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='OtherError'; State='Unknown'; Message=$_.Exception.Message; FlowReference=(New-FlowReference $f) }
+            }
+        }
+
+        $allOn = @($batchItems | Where-Object { $_.State -ne 'On' }).Count -eq 0
+        $batchOutcome = if ($allOn) { 'Success' } else { 'OtherError' }
+        $batchMessage = if ($allOn) { 'All requested Power Automate flows are on.' } else { 'One or more requested Power Automate flows could not be confirmed on.' }
+        Emit $batchOutcome $batchMessage @($batchItems | ForEach-Object { $_.DisplayName }) $null (Get-FlowReferences $matched) $null $batchItems
+    }
+
     if ($verb -eq 'Get-Status') {
         foreach ($f in $matched) {
             Report ""Found weekly schedule flow '$($f.DisplayName)'. Reading current state...""
-            $freshState = Read-CurrentEnabled $f
+            $freshState = Read-CurrentOrSnapshotEnabled $f
             if ($freshState.Known) {
                 $state = if ($freshState.Enabled) { 'On' } else { 'Off' }
                 $lowerState = $state.ToLowerInvariant()
@@ -1520,6 +1764,8 @@ try {
     $changed = @()
     $alreadyDesired = @()
     $errors  = @()
+    $finalStateKnown = $false
+    $finalEnabled = $null
     foreach ($f in $matched) {
         try {
             $desiredEnabled = ($verb -eq 'Enable-Flow')
@@ -1531,11 +1777,13 @@ try {
             }
 
             Report ""Checking whether '$($f.DisplayName)' is already $targetState...""
-            $freshState = Read-CurrentEnabled $f
+            $freshState = Read-CurrentOrSnapshotEnabled $f
             if ($freshState.Known -and $freshState.Enabled -eq $desiredEnabled) {
                 Trace ""skip $verb; fresh state already desired: $($f.DisplayName)""
                 Report ""Power Automate flow is already $targetState. Finishing...""
                 $alreadyDesired += $f.DisplayName
+                $finalStateKnown = $true
+                $finalEnabled = $desiredEnabled
                 continue
             }
 
@@ -1572,11 +1820,15 @@ try {
                 Trace ""post-$verb verify OK: $($f.DisplayName) is $targetState""
                 Report 'Power Automate accepted the change. Finishing...'
                 $changed += $f.DisplayName
+                $finalStateKnown = $true
+                $finalEnabled = $desiredEnabled
             } elseif (-not $lastKnown) {
                 Trace ""post-$verb verify inconclusive (state unreadable); treating as accepted: $($f.DisplayName)""
                 Report 'Power Automate accepted the change. Finishing...'
                 $changed += $f.DisplayName
             } else {
+                $finalStateKnown = $true
+                $finalEnabled = [bool]$lastEnabled
                 $actual = if ($lastEnabled) { 'on' } else { 'off' }
                 Trace ""post-$verb verify FAILED: $($f.DisplayName) still $actual, expected $targetState (connection reference likely unbound)""
                 $errors += ($f.DisplayName + "": the change was accepted but the flow is still "" + $actual + "" (a connection reference is probably unbound)."")
@@ -1599,8 +1851,9 @@ try {
     $state = if ($verb -eq 'Disable-Flow') { 'off' } else { 'on' }
     $msg = if ($changed.Count -gt 0) { ""$action Power Automate flow"" } else { ""Power Automate flow is already $state"" }
     if ($errors.Count -gt 0) { $msg = $msg + "" (with "" + $errors.Count + "" partial failure(s): "" + ($errors -join '; ') + "")"" }
+    $resultState = if ($finalStateKnown) { if ($finalEnabled) { 'On' } else { 'Off' } } else { $null }
     Report 'Done.'
-    Emit 'Success' $msg @($changed + $alreadyDesired) $null (Get-FlowReferences $matched)
+    Emit 'Success' $msg @($changed + $alreadyDesired) $resultState (Get-FlowReferences $matched)
 
 } catch {
     Trace ""OUTER CATCH: $($_.Exception.Message)""
@@ -2169,8 +2422,9 @@ try {
             #      now always 400s).
             #   4. Poll the connection status; when it flips to Connected we
             #      close the window. Connected == success.
-            # Returns $true on success. Any failure returns $false so the caller
-            # can fall back to the maker-portal New-connection page.
+            # Returns the connection name after it has reached Connected. Any
+            # failure returns $null so the caller can fall back to the maker-
+            # portal New-connection page.
             function New-OofConnectionInteractive($connector, $envGuid) {
                 # Track the PUT-created connection so any failure path (early
                 # return, exception, cancel) can best-effort delete it instead
@@ -2337,6 +2591,7 @@ try {
                     $global:__oofConnName = $connName
                     $global:__oofEnvGuid = $envGuid
                     $global:__oofPollBusy = $false
+                    $global:__oofConsentAllowed = $false
 
                     # HOW THE CONNECTION ACTUALLY GETS AUTHENTICATED (verified
                     # 2026-07-02 with an isolated harness): it becomes Connected
@@ -2393,6 +2648,20 @@ try {
                             param($s2, $e2)
                             $u = [string]$e2.Uri
                             try { $nav = [Uri]$u; Trace ""consent nav: $($nav.Host)$($nav.AbsolutePath)"" } catch {}
+                            if ($u -match 'consent\.azure-apim\.net/confirm/Allow') {
+                                $global:__oofConsentAllowed = $true
+                                $global:__oofForm.Text = ""Authorization complete — finishing connection ($global:__oofConnector)...""
+                            }
+                            # Both Office 365 and Flow Management currently send
+                            # a successful grant through this misleading terminal
+                            # ErrorHandler page before the connection flips to
+                            # Connected. Suppress only after /confirm/Allow and
+                            # only when the URL carries no explicit error value.
+                            if ($global:__oofConsentAllowed -and $u -match 'global\.consent\.azure-apim\.net/ErrorHandler' -and $u -notmatch '[?&]error=') {
+                                Trace 'suppressing post-Allow consent ErrorHandler navigation while status poll finishes'
+                                $e2.Cancel = $true
+                                return
+                            }
                             if (($u -match 'consent\.azure-apim\.net/redirect' -or $u -match 'consent\.azure-apim\.net/confirm') -and -not $global:__oofPollTimer.Enabled -and -not $global:__oofConnected) {
                                 Trace 'reached apihub consent/redirect stage; starting status poll'
                                 $global:__oofPollTimer.Start()
@@ -2411,7 +2680,7 @@ try {
                     $form.Dispose()
                     if ($wv2Udf) { try { Remove-Item $wv2Udf -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
 
-                    if (-not $global:__oofWv2Ok) { Trace 'WebView2 did not initialize; returning false for portal fallback'; return $false }
+                    if (-not $global:__oofWv2Ok) { Trace 'WebView2 did not initialize; returning null for portal fallback'; return $null }
 
                     # Confirm the final status. The poll normally closes the
                     # window the instant it sees Connected (so the flag is set);
@@ -2431,16 +2700,16 @@ try {
                     }
 
                     if (-not $global:__oofConnected) {
-                        Trace ""connection $connName not Connected (cancelled or consent incomplete); returning false for portal fallback""
-                        return $false
+                        Trace ""connection $connName not Connected (cancelled or consent incomplete); returning null for portal fallback""
+                        return $null
                     }
 
                     $success = $true
                     Trace ""connection $connName is Connected""
-                    return $true
+                    return $connName
                 } catch {
                     Trace ""New-OofConnectionInteractive failed for $connector : $($_.Exception.Message)""
-                    return $false
+                    return $null
                 } finally {
                     if (-not $success -and $createdConn) {
                         try {
@@ -2463,9 +2732,17 @@ try {
             # on timeout we fall back to a plain import + post-import guidance.
             if ($preCreateConn -eq '1' -and $envId -and $missing.Count -gt 0) {
                 Report ""Creating the required connection(s): $($missing -join ', '). A sign-in window will appear...""
+                $pendingCreate = @()
                 foreach ($conn in @($missing)) {
-                    $created = New-OofConnectionInteractive $conn $envId
-                    if (-not $created) {
+                    $createdConnId = New-OofConnectionInteractive $conn $envId
+                    if ($createdConnId) {
+                        # The helper already observed Connected. Use the exact ID
+                        # for deployment settings instead of launching pac again.
+                        $connByConnector[$conn] = [string]$createdConnId
+                        $inv.Present[$conn] = [string]$createdConnId
+                        Trace ""using newly connected connection directly: connector=$conn id=$createdConnId""
+                    } else {
+                        $pendingCreate += $conn
                         $url = ""https://make.powerautomate.com/environments/$envId/connections/available?apiName=$conn""
                         Trace ""programmatic create failed for $conn; opening portal page: $url""
                         try { Start-Process $url | Out-Null } catch { Trace ""Start-Process failed: $($_.Exception.Message)"" }
@@ -2473,19 +2750,15 @@ try {
                     }
                 }
 
-                # Poll until every connector we JUST created has a Connected
-                # connection (so the binding below can use it), or we hit the
-                # wait budget. Only wait on the connectors we created -- not on
-                # any pre-existing-but-not-Connected ones we deliberately reuse.
-                # Check FIRST, then sleep: New-OofConnectionInteractive already
-                # waited for Connected, so the connection is usually visible.
-                $pendingCreate = @($missing)
+                # Only browser-fallback connections need discovery polling. Merge
+                # their inventory without replacing exact IDs returned above.
                 $deadline = (Get-Date).AddMinutes(4)
                 $interval = 5
                 while ($pendingCreate.Count -gt 0 -and (Get-Date) -lt $deadline) {
-                    $inv = Get-ConnInventory
-                    $connByConnector = $inv.Connected
-                    $pendingCreate = @($missing | Where-Object { -not $connByConnector.ContainsKey($_) })
+                    $freshInv = Get-ConnInventory
+                    foreach ($k in $freshInv.Connected.Keys) { $connByConnector[$k] = $freshInv.Connected[$k] }
+                    foreach ($k in $freshInv.Present.Keys) { $inv.Present[$k] = $freshInv.Present[$k] }
+                    $pendingCreate = @($pendingCreate | Where-Object { -not $freshInv.Connected.ContainsKey($_) })
                     if ($pendingCreate.Count -eq 0) { break }
                     Report ""Waiting for connection(s) to be ready: $($pendingCreate -join ', ')...""
                     Start-Sleep -Seconds $interval
