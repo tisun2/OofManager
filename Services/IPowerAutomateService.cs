@@ -166,7 +166,7 @@ public sealed class CloudScheduleDefinitionResult
         PowerAutomateOutcome outcome,
         string message,
         string? flowDisplayName,
-        IReadOnlyList<DayOfWeek>? workDays,
+        IReadOnlyList<DayOfWeek>? triggerDays,
         int? triggerHour,
         int? triggerMinute,
         string? triggerTimeZone,
@@ -181,7 +181,7 @@ public sealed class CloudScheduleDefinitionResult
         Outcome = outcome;
         Message = message;
         FlowDisplayName = flowDisplayName;
-        WorkDays = workDays ?? Array.Empty<DayOfWeek>();
+        TriggerDays = triggerDays ?? Array.Empty<DayOfWeek>();
         TriggerHour = triggerHour;
         TriggerMinute = triggerMinute;
         TriggerTimeZone = triggerTimeZone;
@@ -197,7 +197,7 @@ public sealed class CloudScheduleDefinitionResult
     public PowerAutomateOutcome Outcome { get; }
     public string Message { get; }
     public string? FlowDisplayName { get; }
-    public IReadOnlyList<DayOfWeek> WorkDays { get; }
+    public IReadOnlyList<DayOfWeek> TriggerDays { get; }
     public int? TriggerHour { get; }
     public int? TriggerMinute { get; }
     public string? TriggerTimeZone { get; }
@@ -205,8 +205,8 @@ public sealed class CloudScheduleDefinitionResult
     /// <summary>
     /// One-shot Recurrence trigger anchor (vacation flows) — the absolute
     /// UTC instant at which Power Automate will fire the trigger once.
-    /// Null for weekly-style Cloud Schedule flows (those use hour/minute
-    /// + weekDays instead).
+    /// Null for regular Cloud Schedule flows (those use daily hour/minute
+    /// schedules instead).
     /// </summary>
     public DateTimeOffset? TriggerStartTimeUtc { get; }
 
@@ -214,7 +214,7 @@ public sealed class CloudScheduleDefinitionResult
     /// Per-day work schedule recovered from the sidecar parameter
     /// <c>_oofmgr_source.defaultValue.days</c> we stamp into newer
     /// packages. Null on older flows imported before the sidecar shipped
-    /// — those callers see workday + trigger-time compare only.
+    /// — those callers see trigger-day + trigger-time compare only.
     /// </summary>
     public IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? PerDaySchedule { get; }
     public string? SidecarTimeZone { get; }

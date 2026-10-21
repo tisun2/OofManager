@@ -1854,14 +1854,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private Task EnableCloudScheduleFlowAsync() => RunCloudScheduleFlowToggleAsync(disable: false);
 
     /// <summary>
-    /// Compares the locally-configured Weekly schedule (workdays + earliest
-    /// end-of-day time used as the cloud Recurrence trigger) against what's
+    /// Compares the locally-configured Weekly schedule and daily recurrence
+    /// at the earliest workday end time against what's
     /// actually deployed in the user's Cloud Schedule flow. Reports the diff
     /// in a dialog so the user can spot drift between local and cloud (e.g.
     /// after editing on a different machine, or after fiddling in the Power
-    /// Automate designer). Per-day work hours aren't compared in v1 — they're
-    /// encoded inside Logic Apps nested-if expressions and need either a
-    /// reverse parser or a sidecar metadata field on the generator side.
+    /// Automate designer). Per-day work hours are recovered from the flow's
+    /// sidecar metadata independently of its trigger days.
     /// </summary>
     [RelayCommand]
     private async Task CompareCloudScheduleAsync()
@@ -1922,11 +1921,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             string FmtDays(IEnumerable<DayOfWeek> days) =>
                 string.Join(", ", weekDays.Where(days.Contains).Select(d => d.ToString().Substring(0, 3)));
 
-            var localDaysStr = localWorkdays.Count == 0 ? "(none)" : FmtDays(localWorkdays);
-            var cloudDaysStr = result.WorkDays.Count == 0 ? "(none)" : FmtDays(result.WorkDays);
+            var localDaysStr = FmtDays(weekDays);
+            var cloudDaysStr = result.TriggerDays.Count == 0 ? "(none)" : FmtDays(result.TriggerDays);
             var localTriggerStr = localTriggerEnd.HasValue ? localTriggerEnd.Value.ToString(@"hh\:mm") + " (local)" : "(no workdays)";
 
-            var workdaysMatch = localWorkdays.OrderBy(d => d).SequenceEqual(result.WorkDays.OrderBy(d => d));
+            var triggerDaysMatch = weekDays.OrderBy(d => d).SequenceEqual(result.TriggerDays.OrderBy(d => d));
 
             bool triggerMatches = false;
             if (result.TriggerHour is int ch && result.TriggerMinute is int cm && localTriggerEnd is TimeSpan let)
@@ -1942,7 +1941,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
             }
 
-            var allMatch = workdaysMatch && triggerMatches;
+            var allMatch = triggerDaysMatch && triggerMatches;
 
             // Reply text + audience diff. The generator ships the reply through
             // ReplyHtml.EnsureHtml, so run the same transform locally. Both
@@ -2014,9 +2013,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             var body = headline + "\n\n" +
                        $"Flow: {result.FlowDisplayName ?? expectedFlowDisplayName}\n\n" +
-                       $"  Workdays:\n" +
+                       $"  Trigger days (daily, including non-workdays):\n" +
                        $"    Local: {localDaysStr}\n" +
-                       $"    Cloud: {cloudDaysStr}   {(workdaysMatch ? "✓" : "✗")}\n\n" +
+                       $"    Cloud: {cloudDaysStr}   {(triggerDaysMatch ? "✓" : "✗")}\n\n" +
                        $"  Earliest workday end (= cloud trigger time):\n" +
                        $"    Local: {localTriggerStr}\n" +
                        $"    Cloud: {CloudTriggerLocalString()}   {(triggerMatches ? "✓" : "✗")}\n\n" +

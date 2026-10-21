@@ -9,7 +9,8 @@
 - Configure working days independently.
 - Set different start and end times for each day.
 - Automatically schedule OOF from the end of one workday until the next working period begins.
-- Trigger cloud updates at the earliest configured end-of-day time, allowing changes made during the day to take effect that evening.
+- Trigger cloud updates once every day, including non-workdays, at the earliest configured workday end time.
+- Restore OOF after temporary non-workday overrides until the next configured workday starts, without marking non-workdays as working days.
 
 ### Works Even When Your PC Is Off
 
@@ -44,6 +45,7 @@ Maintain separate messages for colleagues and external senders, making it easy t
 Use **Compare with cloud** to identify differences between the local configuration and the deployed Power Automate flow, including:
 
 - Working days and per-day hours
+- Daily trigger coverage, independently of working days
 - Trigger time
 - Reply content
 - External audience settings

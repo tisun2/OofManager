@@ -182,7 +182,7 @@ public static class CloudScheduleGuideGenerator
 <body>
 <div class=""container"">
   <h1>🌐 OofManager &mdash; Weekly Schedule Setup</h1>
-  <p class=""lede"">Set up a Power Automate scheduled cloud flow so your Out-of-Office window is pushed to Outlook every morning automatically &mdash; even when all of your computers are powered off. Takes about 5 minutes.</p>
+  <p class=""lede"">Set up a Power Automate scheduled cloud flow so your Out-of-Office window is pushed to Outlook every day, including non-workdays &mdash; even when all of your computers are powered off. Takes about 5 minutes.</p>
 
   <div class=""card"">
     <h3 style=""margin-top:0"">Why do I need this?</h3>
@@ -196,7 +196,7 @@ public static class CloudScheduleGuideGenerator
         sb.Append(@"</code></span></div>
     <div class=""field""><span class=""label"">Trigger time (daily)</span><span class=""value""><code>");
         sb.Append(triggerHour.ToString("00") + ":" + triggerMinute.ToString("00"));
-        sb.Append(@"</code> &middot; runs every workday at end of work</span></div>
+        sb.Append(@"</code> &middot; runs every day at the earliest configured workday end time</span></div>
     <div class=""field""><span class=""label"">External audience</span><span class=""value""><code>");
         sb.Append(audienceLabel);
         sb.Append(@"</code></span></div>
@@ -204,6 +204,8 @@ public static class CloudScheduleGuideGenerator
         sb.Append(weeklySummary);
         sb.Append(@"</span></div>
   </div>
+
+  <div class=""callout info"">Non-workdays stay off work. If you temporarily turn off automatic replies to work on a non-workday, this daily run restores OOF until your next configured workday starts. If you keep working past the daily trigger time, turn OOF off again or pause the flow.</div>
 
   <h2>Step-by-step</h2>
 
@@ -320,9 +322,9 @@ public static class CloudScheduleGuideGenerator
 
   <h2>How it works</h2>
   <div class=""card"">
-    <p>Every morning your flow runs at <code>");
+    <p>Every day, including non-workdays, your flow runs at <code>");
         sb.Append(triggerHour.ToString("00") + ":" + triggerMinute.ToString("00"));
-        sb.Append(@"</code> and tells Outlook: &ldquo;Schedule an OOF reply starting now and ending at the next configured start-of-work.&rdquo; Outlook then handles the actual on/off transitions server-side. Because the flow lives in Microsoft 365, none of your computers need to be on for this to keep working.</p>
+        sb.Append(@"</code> and tells Outlook: &ldquo;Schedule an OOF reply from the most recent workday's end-of-work until the next configured start-of-work.&rdquo; A workday with a later end time gets a future-dated start instead. Outlook then handles the actual on/off transitions server-side. Because the flow lives in Microsoft 365, none of your computers need to be on for this to keep working.</p>
     <p>You can keep using OofManager as before. The local app and the cloud flow update the same Outlook auto-reply settings, so whoever runs last wins &mdash; and they all compute the same window from the same schedule, so the result is consistent.</p>
   </div>
 

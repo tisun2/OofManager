@@ -96,12 +96,9 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 return new CloudScheduleDefinitionResult(PowerAutomateOutcome.OtherError,
                     "Cloud flow definition was empty.", flowDisplayName, null, null, null, null);
 
-            // Walk triggers.Recurrence.recurrence.schedule.{weekDays,hours,minutes}
-            // — the only fields we extract in v1. Per-day work hours are
-            // encoded in nested-if expressions inside actions and would
-            // require either reverse-parsing or a sidecar metadata field
-            // (planned for v2).
-            var workDays = new List<DayOfWeek>();
+            // Trigger days are independent of the workdays in the sidecar:
+            // daily flows also restore OOF after non-workday overrides.
+            var triggerDays = new List<DayOfWeek>();
             int? triggerHour = null, triggerMinute = null;
             string? triggerTz = null;
             DateTimeOffset? triggerStartTimeUtc = null;
@@ -113,6 +110,13 @@ public sealed class PowerAutomateService : IPowerAutomateService
                         continue;
                     if (recEl.TryGetProperty("timeZone", out var tzEl) && tzEl.ValueKind == JsonValueKind.String)
                         triggerTz = tzEl.GetString();
+
+                    if (recEl.TryGetProperty("frequency", out var freqEl) && freqEl.ValueKind == JsonValueKind.String &&
+                        string.Equals(freqEl.GetString(), "Day", StringComparison.OrdinalIgnoreCase) &&
+                        recEl.TryGetProperty("interval", out var intervalEl) && intervalEl.TryGetInt32(out var interval) && interval == 1)
+                    {
+                        triggerDays.AddRange((DayOfWeek[])Enum.GetValues(typeof(DayOfWeek)));
+                    }
 
                     // Vacation flows: one-shot Recurrence anchored at a
                     // specific UTC instant via 'startTime'. Parse it so the
@@ -128,12 +132,12 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
                     if (recEl.TryGetProperty("schedule", out var schedEl) && schedEl.ValueKind == JsonValueKind.Object)
                     {
-                        if (schedEl.TryGetProperty("weekDays", out var wdEl) && wdEl.ValueKind == JsonValueKind.Array)
+                        if (triggerDays.Count == 0 && schedEl.TryGetProperty("weekDays", out var wdEl) && wdEl.ValueKind == JsonValueKind.Array)
                         {
                             foreach (var d in wdEl.EnumerateArray())
                             {
                                 if (d.ValueKind == JsonValueKind.String && Enum.TryParse<DayOfWeek>(d.GetString(), true, out var dow))
-                                    workDays.Add(dow);
+                                    triggerDays.Add(dow);
                             }
                         }
                         if (schedEl.TryGetProperty("hours", out var hEl) && hEl.ValueKind == JsonValueKind.Array && hEl.GetArrayLength() > 0)
@@ -156,7 +160,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
             TryReadReplyAction(defEl, out var internalReplyHtml, out var externalReplyHtml, out var externalAudience);
 
-            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, workDays, triggerHour, triggerMinute, triggerTz,
+            return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, triggerDays, triggerHour, triggerMinute, triggerTz,
                 perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen),
                 sidecarTimeZone: sidecarTz,
                 sidecarGeneratedAt: sidecarGen,

@@ -13,6 +13,7 @@ Built with WPF (.NET Framework 4.8), [ModernWpfUI](https://github.com/Kinnara/Mo
 - **Generate & auto-import a Power Automate Solution** — creates `OofManager-CloudSchedule.zip` under the app's local data folder and imports it automatically when possible; if automatic import is blocked, the app opens Power Automate for manual import.
 - **Turn the cloud flow on/off from OOF Manager** — after the solution is imported, the app locates the generated Power Automate flow and lets you enable or disable it without hunting through the Maker portal.
 - **Always-on cloud schedule** — after import, the flow runs inside Microsoft 365 and keeps your OOF schedule rolling forward even when OOF Manager and your computer are closed.
+- **Daily OOF recovery, including non-workdays** — the flow runs once every day at the earliest configured workday end time. If you temporarily disable automatic replies to work on a non-workday, it restores OOF until the next configured workday starts, without changing which days are workdays. If you keep working past the trigger time, disable OOF again or pause the flow.
 - **No manual Power Automate expressions** — the app writes the weekday-aware recurrence logic, local time-zone conversion, start/end window calculations, and Outlook automatic-reply action for you.
 - **No manual HTML reply formatting** — internal and external reply text from the app is converted into HTML that Outlook renders correctly, preserving line breaks in the cloud flow.
 - **Personalized package output** — the generated solution includes your mailbox, local Windows time zone, work schedule, internal reply, external reply, and external-audience setting.
@@ -39,6 +40,8 @@ Creating this flow manually is tedious. A user normally has to:
 
 OOF Manager turns that setup into one generated solution zip, imports it automatically when the tenant allows it, and keeps track of the generated flow afterward. From the desktop app you can refresh the flow state, turn the cloud schedule on or off, and still fall back to the Maker portal when a tenant policy blocks automation.
 
+Existing workday-only flows need to be updated once with **Generate & Import Solution** to enable daily recovery. **Compare with cloud** reports trigger days separately from configured working days and hours, so older workday-only triggers are shown as a mismatch.
+
 ### Connecting the flow (first time vs. later)
 
 The generated flow uses connection references (Office 365 Outlook, and Power Automate Management for vacation flows). A connection reference must be bound to an actual *connection* before the flow can run.
@@ -64,6 +67,9 @@ Grab the latest **`OofManagerSetup.exe`** from the [Releases page](../../release
 ```powershell
 # Restore + build
 dotnet build OofManager.Wpf.csproj -c Release
+
+# Offline cloud-schedule regression checks (Windows PowerShell / .NET Framework)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tools\Test-CloudSchedule.ps1
 
 # Publish (produces a self-contained folder under .\publish\ ready for the installer)
 dotnet publish OofManager.Wpf.csproj -c Release -o publish
