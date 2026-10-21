@@ -31,6 +31,7 @@ public sealed class PowerAutomateService : IPowerAutomateService
     private const string FlowCacheDisplayNameKey = "PowerAutomate.Flow.DisplayName";
     private const string FlowCacheNameKey = "PowerAutomate.Flow.Name";
     private const string FlowReferencesCacheV2Key = "PowerAutomate.Flow.References.V2";
+    private const string ConnectionCacheV1Key = "PowerAutomate.Connection.Cache.V1";
 
     private readonly IPreferencesService _prefs;
     private readonly object _flowCacheGate = new();
@@ -40,8 +41,20 @@ public sealed class PowerAutomateService : IPowerAutomateService
         _prefs = prefs;
     }
 
+    public PowerAutomateFlowReference? TryGetCachedFlowReference(string? upnHint, string expectedFlowDisplayName)
+    {
+        var cachedEnvironment = GetCachedImportEnvironment(upnHint);
+        var cached = GetCachedFlowReference(upnHint, expectedFlowDisplayName, cachedEnvironment?.EnvironmentId);
+        return cached is null
+            ? null
+            : new PowerAutomateFlowReference(cached.EnvironmentName, cached.FlowName, cached.DisplayName);
+    }
+
     public Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null)
         => RunStatusAsync(upnHint, displayNameHint, expectedFlowDisplayName, ct, progress);
+
+    public Task<PowerAutomateFlowBatchResult> GetOofManagerFlowsStatusBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, CancellationToken ct = default, IProgress<string>? progress = null)
+        => RunFlowsBatchVerbAsync("Get-Flows-Status", upnHint, displayNameHint, expectedFlowDisplayNames, progress, ct, interactive: false);
 
     public Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
         => RunOperationAsync("Disable-Flow", upnHint, displayNameHint, expectedFlowDisplayName, progress, ct);
@@ -49,8 +62,11 @@ public sealed class PowerAutomateService : IPowerAutomateService
     public Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
         => RunOperationAsync("Enable-Flow", upnHint, displayNameHint, expectedFlowDisplayName, progress, ct);
 
+    public Task<PowerAutomateFlowBatchResult> SetOofManagerFlowsEnabledBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, bool enabled, IProgress<string>? progress = null, CancellationToken ct = default)
+        => RunFlowsBatchVerbAsync(enabled ? "Enable-Flows-Batch" : "Disable-Flows-Batch", upnHint, displayNameHint, expectedFlowDisplayNames, progress, ct, interactive: true);
+
     public Task<PowerAutomateFlowBatchResult> EnsureOofManagerFlowsOnAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress = null, CancellationToken ct = default)
-        => RunEnsureFlowsOnBatchAsync(upnHint, displayNameHint, expectedFlowDisplayNames, progress, ct);
+        => RunFlowsBatchVerbAsync("Ensure-Flows-On", upnHint, displayNameHint, expectedFlowDisplayNames, progress, ct, interactive: true);
 
     public async Task<CloudScheduleDefinitionResult> GetCloudScheduleDefinitionAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -262,7 +278,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
         bool forceOverwrite,
         IProgress<string>? progress = null,
         CancellationToken ct = default,
-        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null)
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null,
+        IReadOnlyList<string>? expectedFlowDisplayNames = null)
     {
         if (!File.Exists(solutionZipPath))
         {
@@ -271,6 +288,10 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 $"Solution zip not found at '{solutionZipPath}'.",
                 null, null, null, null);
         }
+
+        var targetFlowNames = expectedFlowDisplayNames is { Count: > 0 }
+            ? expectedFlowDisplayNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : (!string.IsNullOrWhiteSpace(expectedFlowDisplayName) ? new[] { expectedFlowDisplayName } : Array.Empty<string>());
 
         var cachedEnvironment = GetCachedImportEnvironment(upnHint);
         if (cachedEnvironment != null)
@@ -286,12 +307,16 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 cachedEnvironment,
                 progress,
                 ct,
-                connectionReferences).ConfigureAwait(false);
+                connectionReferences,
+                targetFlowNames).ConfigureAwait(false);
 
             if (cachedResult.Outcome == CloudScheduleImportOutcome.Success)
             {
                 SaveImportEnvironmentCache(upnHint, cachedResult);
-                SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, cachedResult);
+                SaveConnectionCache(upnHint, cachedResult.EnvironmentId ?? cachedEnvironment.EnvironmentId, cachedResult.BoundConnections);
+                var verifiedRefs = cachedResult.VerifiedFlows.Where(i => i.FlowReference != null).Select(i => i.FlowReference!).ToArray();
+                if (verifiedRefs.Length > 0) SaveFlowReferenceCache(upnHint, string.Empty, verifiedRefs);
+                else SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, cachedResult);
                 return cachedResult;
             }
 
@@ -312,12 +337,16 @@ public sealed class PowerAutomateService : IPowerAutomateService
             null,
             progress,
             ct,
-            connectionReferences).ConfigureAwait(false);
+            connectionReferences,
+            targetFlowNames).ConfigureAwait(false);
 
         if (result.Outcome == CloudScheduleImportOutcome.Success)
         {
             SaveImportEnvironmentCache(upnHint, result);
-            SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, result);
+            SaveConnectionCache(upnHint, result.EnvironmentId, result.BoundConnections);
+            var verifiedRefs = result.VerifiedFlows.Where(i => i.FlowReference != null).Select(i => i.FlowReference!).ToArray();
+            if (verifiedRefs.Length > 0) SaveFlowReferenceCache(upnHint, string.Empty, verifiedRefs);
+            else SaveImportedFlowCandidateCache(upnHint, expectedFlowDisplayName, result);
         }
 
         return result;
@@ -333,7 +362,8 @@ public sealed class PowerAutomateService : IPowerAutomateService
         CachedImportEnvironment? cachedEnvironment,
         IProgress<string>? progress,
         CancellationToken ct,
-        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null)
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null,
+        IReadOnlyList<string>? expectedFlowDisplayNames = null)
     {
         // Serialize the solution's connection references so the import script
         // can try to auto-bind each to an existing connection of the same
@@ -350,6 +380,21 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 connRefsJson = JsonSerializer.Serialize(payload);
         }
 
+        var cachedConnsJson = GetCachedConnectionsJson(upnHint, cachedEnvironment?.EnvironmentId);
+        var flowNamesJson = expectedFlowDisplayNames is { Count: > 0 } ? JsonSerializer.Serialize(expectedFlowDisplayNames) : string.Empty;
+        var cachedFlowMapJson = string.Empty;
+        if (!string.IsNullOrWhiteSpace(cachedEnvironment?.EnvironmentId) && expectedFlowDisplayNames is { Count: > 0 })
+        {
+            var flowMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var dn in expectedFlowDisplayNames)
+            {
+                var r = GetCachedFlowReference(upnHint, dn, cachedEnvironment!.EnvironmentId);
+                if (r != null && !string.IsNullOrWhiteSpace(r.FlowName))
+                    flowMap[dn] = r.FlowName;
+            }
+            if (flowMap.Count == expectedFlowDisplayNames.Count)
+                cachedFlowMapJson = JsonSerializer.Serialize(flowMap);
+        }
         var envVars = new Dictionary<string, string>
         {
             ["OOFMGR_PA_UPN"]          = upnHint ?? string.Empty,
@@ -363,6 +408,9 @@ public sealed class PowerAutomateService : IPowerAutomateService
             ["OOFMGR_PA_CACHED_INSTANCEURL"] = cachedEnvironment?.InstanceUrl ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVID"]       = cachedEnvironment?.EnvironmentId ?? string.Empty,
             ["OOFMGR_PA_CACHED_ENVDISPLAY"]  = cachedEnvironment?.EnvironmentDisplayName ?? string.Empty,
+            ["OOFMGR_PA_CACHED_CONNS"]       = cachedConnsJson,
+            ["OOFMGR_PA_FLOWDISPLAYNAMES"]   = flowNamesJson,
+            ["OOFMGR_PA_CACHED_FLOWMAP"]     = cachedFlowMapJson,
         };
 
         // pac auth + import can take longer than a flow toggle, especially on
@@ -423,7 +471,74 @@ public sealed class PowerAutomateService : IPowerAutomateService
         _prefs.Set(ImportCacheInstanceUrlKey, (string?)null);
         _prefs.Set(ImportCacheEnvironmentIdKey, (string?)null);
         _prefs.Set(ImportCacheEnvironmentDisplayNameKey, (string?)null);
+        _prefs.Set(ConnectionCacheV1Key, (string?)null);
         ClearFlowReferenceCache();
+    }
+
+    private string GetCachedConnectionsJson(string? upnHint, string? environmentId)
+    {
+        var normalizedUpn = NormalizeCacheUpn(upnHint);
+        if (normalizedUpn is null || string.IsNullOrWhiteSpace(environmentId)) return string.Empty;
+
+        var raw = _prefs.GetString(ConnectionCacheV1Key);
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+
+        try
+        {
+            var cache = JsonSerializer.Deserialize<ConnectionCacheV1>(raw!);
+            if (cache is null ||
+                !string.Equals(cache.Upn, normalizedUpn, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(cache.EnvironmentId, environmentId!.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                cache.Connections is null ||
+                cache.Connections.Count == 0)
+            {
+                return string.Empty;
+            }
+            return JsonSerializer.Serialize(cache.Connections);
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private void SaveConnectionCache(string? upnHint, string? environmentId, IReadOnlyDictionary<string, string>? boundConnections)
+    {
+        var normalizedUpn = NormalizeCacheUpn(upnHint);
+        if (normalizedUpn is null || string.IsNullOrWhiteSpace(environmentId) || boundConnections is null || boundConnections.Count == 0)
+            return;
+
+        var trimmedEnv = environmentId!.Trim();
+        ConnectionCacheV1? cache = null;
+        var raw = _prefs.GetString(ConnectionCacheV1Key);
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            try { cache = JsonSerializer.Deserialize<ConnectionCacheV1>(raw!); }
+            catch { cache = null; }
+        }
+
+        if (cache is null ||
+            !string.Equals(cache.Upn, normalizedUpn, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(cache.EnvironmentId, trimmedEnv, StringComparison.OrdinalIgnoreCase))
+        {
+            cache = new ConnectionCacheV1 { Upn = normalizedUpn, EnvironmentId = trimmedEnv };
+        }
+
+        foreach (var kv in boundConnections)
+        {
+            if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                cache.Connections[kv.Key.Trim()] = kv.Value.Trim();
+        }
+
+        if (cache.Connections.Count > 0)
+            _prefs.Set(ConnectionCacheV1Key, JsonSerializer.Serialize(cache));
+    }
+
+    private sealed class ConnectionCacheV1
+    {
+        public string Upn { get; set; } = string.Empty;
+        public string EnvironmentId { get; set; } = string.Empty;
+        public Dictionary<string, string> Connections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private CachedFlowReference? GetCachedFlowReference(string? upnHint, string expectedFlowDisplayName, string? expectedEnvironmentId)
@@ -638,13 +753,13 @@ public sealed class PowerAutomateService : IPowerAutomateService
         return result;
     }
 
-    private async Task<PowerAutomateFlowBatchResult> RunEnsureFlowsOnBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress, CancellationToken ct)
+    private async Task<PowerAutomateFlowBatchResult> RunFlowsBatchVerbAsync(string verb, string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress, CancellationToken ct, bool interactive)
     {
         var names = expectedFlowDisplayNames.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (names.Length == 0)
             return new PowerAutomateFlowBatchResult(PowerAutomateOutcome.OtherError, "No flow names were supplied.", Array.Empty<PowerAutomateFlowBatchItem>());
 
-        var child = await RunFlowScriptAsync("Ensure-Flows-On", upnHint, displayNameHint, names[0], ct, progress, expectedFlowDisplayNames: names).ConfigureAwait(false);
+        var child = await RunFlowScriptAsync(verb, upnHint, displayNameHint, names[0], ct, progress, interactive: interactive, expectedFlowDisplayNames: names).ConfigureAwait(false);
         var result = ParseBatchResult(child.Json, child.ExitCode, names);
         var references = result.Items.Where(i => i.FlowReference != null).Select(i => i.FlowReference!).ToArray();
         if (references.Length > 0) SaveFlowReferenceCache(upnHint, string.Empty, references);
@@ -662,6 +777,17 @@ public sealed class PowerAutomateService : IPowerAutomateService
         {
             using var doc = JsonDocument.Parse(resultJson!);
             var root = doc.RootElement;
+            var rootOutcomeText = root.TryGetProperty("Outcome", out var ro) ? ro.GetString() : null;
+            var overallMessage = root.TryGetProperty("Message", out var msg) ? msg.GetString() ?? "" : "";
+            var rootOutcome = rootOutcomeText switch
+            {
+                "Success" => PowerAutomateOutcome.Success,
+                "NoFlowFound" => PowerAutomateOutcome.NoFlowFound,
+                "SignInFailed" => PowerAutomateOutcome.SignInFailed,
+                "SolutionAwareBlocked" => PowerAutomateOutcome.SolutionAwareBlocked,
+                _ => PowerAutomateOutcome.OtherError,
+            };
+
             var items = new List<PowerAutomateFlowBatchItem>();
             if (root.TryGetProperty("BatchItems", out var array) && array.ValueKind == JsonValueKind.Array)
             {
@@ -685,10 +811,16 @@ public sealed class PowerAutomateService : IPowerAutomateService
                     items.Add(new PowerAutomateFlowBatchItem(name, outcome, state, message, reference));
                 }
             }
-            var overall = items.Count > 0 && items.All(i => i.Outcome == PowerAutomateOutcome.Success && i.State == PowerAutomateFlowState.On)
-                ? PowerAutomateOutcome.Success : PowerAutomateOutcome.OtherError;
-            var overallMessage = root.TryGetProperty("Message", out var msg) ? msg.GetString() ?? "" : "";
-            return new PowerAutomateFlowBatchResult(overall, overallMessage, items);
+
+            if (items.Count == 0)
+            {
+                var fallbackState = rootOutcome == PowerAutomateOutcome.NoFlowFound ? PowerAutomateFlowState.NotFound : PowerAutomateFlowState.Unknown;
+                foreach (var expectedName in expectedNames)
+                    items.Add(new PowerAutomateFlowBatchItem(expectedName, rootOutcome, fallbackState, overallMessage));
+                return new PowerAutomateFlowBatchResult(rootOutcome, overallMessage, items);
+            }
+
+            return new PowerAutomateFlowBatchResult(rootOutcome, overallMessage, items);
         }
         catch (Exception ex)
         {
@@ -700,6 +832,14 @@ public sealed class PowerAutomateService : IPowerAutomateService
     {
         var cachedEnvironment = GetCachedImportEnvironment(upnHint);
         var cachedFlowReference = GetCachedFlowReference(upnHint, expectedFlowDisplayName, cachedEnvironment?.EnvironmentId);
+        if (cachedFlowReference == null && expectedFlowDisplayNames != null)
+        {
+            foreach (var candidateName in expectedFlowDisplayNames)
+            {
+                cachedFlowReference = GetCachedFlowReference(upnHint, candidateName, cachedEnvironment?.EnvironmentId);
+                if (cachedFlowReference != null) break;
+            }
+        }
         var envVars = new Dictionary<string, string>
         {
             ["OOFMGR_PA_VERB"]              = verb,
@@ -804,16 +944,20 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
             }
 
-            using var proc = new Process { StartInfo = psi };
+            using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var exitTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            proc.Exited += (_, _) => exitTcs.TrySetResult(true);
             proc.Start();
+            if (proc.HasExited) exitTcs.TrySetResult(true);
+
             var deadline = DateTime.UtcNow + timeout;
-            var reportedProgressLines = 0;
+            var progressReadOffset = 0L;
 
             using (ct.Register(() => { try { if (!proc.HasExited) proc.Kill(); } catch { } }))
             {
-                while (!proc.HasExited)
+                while (!exitTcs.Task.IsCompleted && !proc.HasExited)
                 {
-                    ReportProgressLines(progressFile, ref reportedProgressLines, progress);
+                    ReportProgressLines(progressFile, ref progressReadOffset, progress);
                     var remaining = deadline - DateTime.UtcNow;
                     if (remaining <= TimeSpan.Zero)
                     {
@@ -821,11 +965,12 @@ public sealed class PowerAutomateService : IPowerAutomateService
                         return new ChildResult(null, -1);
                     }
 
-                    var delay = remaining < TimeSpan.FromMilliseconds(500) ? remaining : TimeSpan.FromMilliseconds(500);
-                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                    var delay = remaining < TimeSpan.FromMilliseconds(250) ? remaining : TimeSpan.FromMilliseconds(250);
+                    await Task.WhenAny(exitTcs.Task, Task.Delay(delay, ct)).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
                 }
                 proc.WaitForExit();
-                ReportProgressLines(progressFile, ref reportedProgressLines, progress);
+                ReportProgressLines(progressFile, ref progressReadOffset, progress);
             }
 
             string? resultJson = null;
@@ -840,20 +985,33 @@ public sealed class PowerAutomateService : IPowerAutomateService
         }
     }
 
-    private static void ReportProgressLines(string progressFile, ref int reportedLineCount, IProgress<string>? progress)
+    private static void ReportProgressLines(string progressFile, ref long readOffset, IProgress<string>? progress)
     {
         if (progress is null || !File.Exists(progressFile)) return;
 
-        string[] lines;
-        try { lines = File.ReadAllLines(progressFile, Encoding.UTF8); }
-        catch { return; }
-
-        for (var i = reportedLineCount; i < lines.Length; i++)
+        try
         {
-            var line = lines[i].Trim();
-            if (!string.IsNullOrWhiteSpace(line)) progress.Report(line);
+            using var fs = new FileStream(progressFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length <= readOffset) return;
+            fs.Seek(readOffset, SeekOrigin.Begin);
+            using var reader = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true);
+            var chunk = reader.ReadToEnd();
+            if (string.IsNullOrEmpty(chunk)) return;
+
+            var lastNewline = chunk.LastIndexOf('\n');
+            if (lastNewline < 0) return;
+
+            var completeSlice = chunk.Substring(0, lastNewline + 1);
+            readOffset += Encoding.UTF8.GetByteCount(completeSlice);
+
+            var lines = completeSlice.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawLine in lines)
+            {
+                var line = rawLine.Trim();
+                if (!string.IsNullOrWhiteSpace(line)) progress.Report(line);
+            }
         }
-        reportedLineCount = lines.Length;
+        catch { }
     }
 
     private static CloudScheduleImportResult ParseImportResult(string? resultJson, int exitCode)
@@ -888,13 +1046,51 @@ public sealed class PowerAutomateService : IPowerAutomateService
                 "TenantBlocked"       => CloudScheduleImportOutcome.TenantBlocked,
                 _                     => CloudScheduleImportOutcome.OtherError,
             };
+            Dictionary<string, string>? boundConns = null;
+            if (root.TryGetProperty("Connections", out var connsEl) && connsEl.ValueKind == JsonValueKind.Object)
+            {
+                boundConns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var prop in connsEl.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(prop.Value.GetString()))
+                        boundConns[prop.Name] = prop.Value.GetString()!;
+                }
+            }
+
+            List<PowerAutomateFlowBatchItem>? verifiedFlows = null;
+            if (root.TryGetProperty("BatchItems", out var batchEl) && batchEl.ValueKind == JsonValueKind.Array)
+            {
+                verifiedFlows = new List<PowerAutomateFlowBatchItem>();
+                foreach (var el in batchEl.EnumerateArray())
+                {
+                    var name = el.TryGetProperty("DisplayName", out var n) ? n.GetString() ?? "" : "";
+                    var outcomeText = el.TryGetProperty("Outcome", out var o) ? o.GetString() : null;
+                    var stateText = el.TryGetProperty("State", out var s) ? s.GetString() : null;
+                    var message = el.TryGetProperty("Message", out var m) ? m.GetString() ?? "" : "";
+                    PowerAutomateFlowReference? reference = null;
+                    if (el.TryGetProperty("FlowReference", out var r) && r.ValueKind == JsonValueKind.Object)
+                    {
+                        var env = r.TryGetProperty("EnvironmentName", out var re) ? re.GetString() : null;
+                        var flow = r.TryGetProperty("FlowName", out var rf) ? rf.GetString() : null;
+                        var display = r.TryGetProperty("DisplayName", out var rd) ? rd.GetString() : null;
+                        if (!string.IsNullOrWhiteSpace(env) && !string.IsNullOrWhiteSpace(flow) && !string.IsNullOrWhiteSpace(display))
+                            reference = new PowerAutomateFlowReference(env!, flow!, display!);
+                    }
+                    var itemOutcome = outcomeText switch { "Success" => PowerAutomateOutcome.Success, "NoFlowFound" => PowerAutomateOutcome.NoFlowFound, "SignInFailed" => PowerAutomateOutcome.SignInFailed, _ => PowerAutomateOutcome.OtherError };
+                    var itemState = stateText switch { "On" => PowerAutomateFlowState.On, "Off" => PowerAutomateFlowState.Off, "NotFound" => PowerAutomateFlowState.NotFound, _ => PowerAutomateFlowState.Unknown };
+                    verifiedFlows.Add(new PowerAutomateFlowBatchItem(name, itemOutcome, itemState, message, reference));
+                }
+            }
+
             return new CloudScheduleImportResult(
                 outcome,
                 Read("Message") ?? string.Empty,
                 Read("EnvironmentId"),
                 Read("EnvironmentDisplayName"),
                 Read("InstanceUrl"),
-                Read("WorkflowId"));
+                Read("WorkflowId"),
+                boundConns,
+                verifiedFlows);
         }
         catch (Exception ex)
         {
@@ -1083,20 +1279,30 @@ $progressFile    = $env:OOFMGR_PA_PROGRESSFILE
 # avoids collisions when multiple Power Automate cmds run concurrently
 # (startup status refreshes overlap with user-triggered compare/toggle).
 $debugLog = Join-Path $env:TEMP (""oofmgr-pa-debug-$PID.log"")
-try { Remove-Item -LiteralPath $debugLog -ErrorAction SilentlyContinue } catch {}
-function Trace($m) {
+$debugWriter = $null
+try {
+    $debugFs = [System.IO.FileStream]::new($debugLog, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $debugWriter = [System.IO.StreamWriter]::new($debugFs, [System.Text.UTF8Encoding]::new($false))
+    $debugWriter.AutoFlush = $true
+} catch {}
+$progressWriter = $null
+if ($progressFile) {
     try {
-        $line = ('{0}  {1}' -f (Get-Date -Format o), $m)
-        Add-Content -LiteralPath $debugLog -Value $line -Encoding UTF8
+        $progFs = [System.IO.FileStream]::new($progressFile, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+        $progressWriter = [System.IO.StreamWriter]::new($progFs, [System.Text.UTF8Encoding]::new($false))
+        $progressWriter.AutoFlush = $true
     } catch {}
+}
+function Trace($m) {
+    if ($debugWriter) {
+        try { $debugWriter.WriteLine(('{0}  {1}' -f (Get-Date -Format o), $m)) } catch {}
+    }
 }
 function Report($m) {
     if (-not $m) { return }
     Trace (""progress: "" + $m)
-    if ($progressFile) {
-        try {
-            [System.IO.File]::AppendAllText($progressFile, ([string]$m) + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-        } catch {}
+    if ($progressWriter) {
+        try { $progressWriter.WriteLine([string]$m) } catch {}
     }
 }
 Trace (""target flow display names: "" + $flowDisplayNamesTrace)
@@ -1148,6 +1354,8 @@ function Emit($outcome, $message, $flows, $state = $null, $flowReferences = @(),
         [System.IO.File]::WriteAllText($resultFile, $json, [System.Text.UTF8Encoding]::new($false))
     }
     Trace ""emit: outcome=$outcome message=$message""
+    if ($progressWriter) { try { $progressWriter.Dispose() } catch {} }
+    if ($debugWriter) { try { $debugWriter.Dispose() } catch {} }
     exit 0
 }
 
@@ -1338,6 +1546,8 @@ try {
         return $selected
     }
 
+    $isBatchVerb = ($verb -in @('Ensure-Flows-On', 'Get-Flows-Status', 'Disable-Flows-Batch', 'Enable-Flows-Batch'))
+
     # A cached reference is safe only when it belongs to the signed-in user's
     # exact Developer environment. Never probe a stale/differently named cache.
     $cacheMatchesCurrentUser = $cachedEnvId -and $cachedEnvDisplay -and $displayName -and
@@ -1349,7 +1559,7 @@ try {
         $targetEnvironmentId = $cachedEnvId
         $cachedLabel = ([string]$cachedEnvDisplay).Trim()
         $cachedFlowName = if ($cachedFlowName -and ([string]$cachedFlowName).Trim().Length -gt 0) { ([string]$cachedFlowName).Trim() } else { $null }
-        if ($cachedFlowName -and $verb -ne 'Ensure-Flows-On') {
+        if ($cachedFlowName -and (-not $isBatchVerb)) {
             Report ""Checking saved cloud flow in your Developer environment '$cachedLabel'...""
             Trace ""validated cached flow candidate displayName='$cachedLabel' envId='$cachedEnvId' flowName='$cachedFlowName'""
             $null = Try-CachedFlow $cachedEnvId 'current-user-cached-flow' $cachedFlowName
@@ -1381,7 +1591,7 @@ try {
 
     # Strict scope: all flow operations target only the Developer environment
     # whose display name exactly matches the signed-in OOF Manager user.
-    if ($matched.Count -eq 0 -and $verb -ne 'Ensure-Flows-On') {
+    if ($matched.Count -eq 0 -and (-not $isBatchVerb)) {
         if (-not $displayName -or ([string]$displayName).IndexOf('@') -ge 0) {
             Emit 'NoFlowFound' 'The signed-in user friendly display name is unavailable, so OOF Manager could not identify your Developer environment.' @()
         }
@@ -1652,57 +1862,183 @@ try {
         return $result
     }
 
-    if ($verb -eq 'Ensure-Flows-On') {
-        $batchItems = @()
-        $missingNames = @($flowDisplayNames | Where-Object { $name = $_; -not ($matched | Where-Object { $_.DisplayName -ieq $name }) })
-        if ($missingNames.Count -gt 0 -and $currentUserEnvironmentChecked) {
-            Report ""Vacation flows are still registering. Waiting 10 seconds before one retry...""
-            Start-Sleep -Seconds 10
-            $matched = @()
-            Scan-Env $targetEnvironmentId 'batch-registration-retry'
+    function Invoke-FlowsToggleParallel([object[]]$flowsToToggle, [bool]$desiredEnabled) {
+        $errorsByName = @{}
+        if (-not $flowsToToggle -or $flowsToToggle.Count -eq 0) { return $errorsByName }
+        $actionSegment = if ($desiredEnabled) { 'start' } else { 'stop' }
+        $targetCmd = if ($desiredEnabled) { 'Enable-Flow' } else { 'Disable-Flow' }
+        $flowEndpoint = if ($global:currentSession -and $global:currentSession.flowEndpoint) { [string]$global:currentSession.flowEndpoint } else { 'api.flow.microsoft.com' }
+        $token = $null
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $token = Get-JwtToken -Audience 'https://service.flow.microsoft.com/'
+        } catch {
+            Trace ""parallel toggle token lookup failed ($($_.Exception.Message)); falling back to sequential cmdlets""
+        }
+
+        if (-not $token) {
+            foreach ($f in $flowsToToggle) {
+                try {
+                    if ($f.EnvironmentName) { & $targetCmd -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop | Out-Null }
+                    else { & $targetCmd -FlowName $f.FlowName -ErrorAction Stop | Out-Null }
+                } catch {
+                    $errorsByName[[string]$f.DisplayName] = $_.Exception.Message
+                }
+            }
+            return $errorsByName
+        }
+
+        $authHeader = if ($token -like 'Bearer *') { [string]$token } else { 'Bearer ' + [string]$token }
+        $pendingTasks = @()
+        foreach ($f in $flowsToToggle) {
+            $dn = [string]$f.DisplayName
+            try {
+                $envSegment = ResolveEnvironment -OverrideId ([string]$f.EnvironmentName)
+                $uri = ""https://$flowEndpoint/providers/Microsoft.ProcessSimple/environments/$envSegment/flows/$($f.FlowName)/$actionSegment`?api-version=2016-11-01""
+                Trace ""starting parallel POST $actionSegment for '$dn' flow=$($f.FlowName)""
+                $req = [System.Net.HttpWebRequest]::Create($uri)
+                $req.Method = 'POST'
+                $req.ContentLength = 0
+                $req.UserAgent = 'PowerShell cmdlets 1.0'
+                $req.Headers.Add('Authorization', $authHeader)
+                $pendingTasks += [pscustomobject]@{
+                    DisplayName = $dn
+                    Task        = $req.GetResponseAsync()
+                }
+            } catch {
+                $errorsByName[$dn] = $_.Exception.Message
+            }
+        }
+
+        foreach ($item in $pendingTasks) {
+            $dn = $item.DisplayName
+            try {
+                $resp = $item.Task.GetAwaiter().GetResult()
+                if ($resp) { try { $resp.Dispose() } catch {} }
+                Trace ""finished parallel POST $actionSegment for '$dn'""
+            } catch {
+                $ex = $_.Exception
+                if ($ex.InnerException) { $ex = $ex.InnerException }
+                Trace ""parallel POST $actionSegment failed for '$dn': $($ex.Message)""
+                $errorsByName[$dn] = $ex.Message
+            }
+        }
+        return $errorsByName
+    }
+
+    if ($verb -in @('Ensure-Flows-On', 'Disable-Flows-Batch', 'Enable-Flows-Batch')) {
+        $desiredEnabled = ($verb -ne 'Disable-Flows-Batch')
+        $targetCmd = if ($desiredEnabled) { 'Enable-Flow' } else { 'Disable-Flow' }
+        $targetStateLabel = if ($desiredEnabled) { 'On' } else { 'Off' }
+        $targetLower = $targetStateLabel.ToLowerInvariant()
+        $batchItemsByName = @{}
+        $toToggle = @()
+
+        if ($verb -eq 'Ensure-Flows-On') {
             $missingNames = @($flowDisplayNames | Where-Object { $name = $_; -not ($matched | Where-Object { $_.DisplayName -ieq $name }) })
+            if ($missingNames.Count -gt 0 -and $currentUserEnvironmentChecked) {
+                Report ""Vacation flows are still registering. Waiting 10 seconds before one retry...""
+                Start-Sleep -Seconds 10
+                $matched = @()
+                Scan-Env $targetEnvironmentId 'batch-registration-retry'
+            }
         }
 
         foreach ($expectedName in $flowDisplayNames) {
             $f = $matched | Where-Object { $_.DisplayName -ieq $expectedName } | Select-Object -First 1
             if (-not $f) {
-                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='NoFlowFound'; State='NotFound'; Message='Flow was not found after the registration retry.'; FlowReference=$null }
+                $notFoundMsg = if ($verb -eq 'Ensure-Flows-On') { 'Flow was not found after the registration retry.' } else { 'Flow was not found.' }
+                $batchItemsByName[$expectedName] = [pscustomobject]@{ DisplayName=$expectedName; Outcome='NoFlowFound'; State='NotFound'; Message=$notFoundMsg; FlowReference=$null }
                 continue
             }
 
             $initial = Read-CurrentOrSnapshotEnabled $f
-            if ($initial.Known -and $initial.Enabled) {
-                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='On'; Message='Power Automate flow is already on.'; FlowReference=(New-FlowReference $f) }
+            if ($initial.Known -and ($initial.Enabled -eq $desiredEnabled)) {
+                $batchItemsByName[$expectedName] = [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State=$targetStateLabel; Message=""Power Automate flow is already $targetLower.""; FlowReference=(New-FlowReference $f) }
                 continue
             }
+            $toToggle += $f
+        }
 
-            try {
-                Report ""Turning '$expectedName' on...""
-                Enable-Flow -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop | Out-Null
-                $verified = $false; $lastKnown = $false; $lastEnabled = $null
-                for ($vi = 0; $vi -lt 3; $vi++) {
-                    $after = Read-CurrentEnabled $f
-                    $lastKnown = $after.Known; $lastEnabled = $after.Enabled
-                    if ($after.Known -and $after.Enabled) { $verified = $true; break }
-                    if (-not $after.Known) { break }
-                    if ($vi -lt 2) { Start-Sleep -Seconds 3 }
+        if ($toToggle.Count -gt 0) {
+            $namesLabel = (@($toToggle | ForEach-Object { ""'$($_.DisplayName)'"" }) -join ', ')
+            Report ""Turning $namesLabel $targetLower...""
+            $toggleErrors = Invoke-FlowsToggleParallel $toToggle $desiredEnabled
+
+            # Verify all toggled flows in one environment scan first before
+            # falling back to per-flow retries.
+            for ($vi = 0; $vi -lt 3; $vi++) {
+                $matched = @()
+                if ($targetEnvironmentId) {
+                    Scan-Env $targetEnvironmentId ""batch-post-toggle-verify[$vi]""
                 }
-                if ($verified) {
-                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='On'; Message='Power Automate flow was turned on.'; FlowReference=(New-FlowReference $f) }
-                } elseif (-not $lastKnown) {
-                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='Unknown'; Message='Enable was accepted but the final state could not be read.'; FlowReference=(New-FlowReference $f) }
+                $allVerified = $true
+                foreach ($tf in $toToggle) {
+                    $dn = [string]$tf.DisplayName
+                    if ($toggleErrors.ContainsKey($dn)) { continue }
+                    $refreshed = $matched | Where-Object { $_.DisplayName -ieq $dn } | Select-Object -First 1
+                    $check = if ($refreshed) { Read-SnapshotEnabled $refreshed } else { Read-CurrentEnabled $tf }
+                    if (-not $check.Known) { $check = Read-CurrentEnabled $tf }
+                    if (-not ($check.Known -and ($check.Enabled -eq $desiredEnabled))) {
+                        $allVerified = $false
+                    }
+                }
+                if ($allVerified) { break }
+                if ($vi -lt 2) { Start-Sleep -Seconds 3 }
+            }
+
+            foreach ($tf in $toToggle) {
+                $dn = [string]$tf.DisplayName
+                if ($toggleErrors.ContainsKey($dn)) {
+                    $batchItemsByName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='OtherError'; State='Unknown'; Message=$toggleErrors[$dn]; FlowReference=(New-FlowReference $tf) }
+                    continue
+                }
+                $refreshed = $matched | Where-Object { $_.DisplayName -ieq $dn } | Select-Object -First 1
+                $after = if ($refreshed) { Read-SnapshotEnabled $refreshed } else { Read-CurrentEnabled $tf }
+                if (-not $after.Known) { $after = Read-CurrentEnabled $tf }
+
+                if ($after.Known -and ($after.Enabled -eq $desiredEnabled)) {
+                    $batchItemsByName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='Success'; State=$targetStateLabel; Message=""Power Automate flow was turned $targetLower.""; FlowReference=(New-FlowReference $tf) }
+                } elseif (-not $after.Known) {
+                    $batchItemsByName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='Success'; State='Unknown'; Message=""$targetCmd was accepted but the final state could not be read.""; FlowReference=(New-FlowReference $tf) }
                 } else {
-                    $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='OtherError'; State='Off'; Message='Enable was accepted but the flow is still off (a connection reference is probably unbound).'; FlowReference=(New-FlowReference $f) }
+                    $actualState = if ($after.Enabled) { 'On' } else { 'Off' }
+                    $batchItemsByName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='OtherError'; State=$actualState; Message=""$targetCmd was accepted but the flow is still $($actualState.ToLowerInvariant()) (a connection reference is probably unbound).""; FlowReference=(New-FlowReference $tf) }
                 }
-            } catch {
-                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='OtherError'; State='Unknown'; Message=$_.Exception.Message; FlowReference=(New-FlowReference $f) }
             }
         }
 
-        $allOn = @($batchItems | Where-Object { $_.State -ne 'On' }).Count -eq 0
-        $batchOutcome = if ($allOn) { 'Success' } else { 'OtherError' }
-        $batchMessage = if ($allOn) { 'All requested Power Automate flows are on.' } else { 'One or more requested Power Automate flows could not be confirmed on.' }
-        Emit $batchOutcome $batchMessage @($batchItems | ForEach-Object { $_.DisplayName }) $null (Get-FlowReferences $matched) $null $batchItems
+        $batchItems = @()
+        foreach ($expectedName in $flowDisplayNames) {
+            if ($batchItemsByName.ContainsKey($expectedName)) {
+                $batchItems += $batchItemsByName[$expectedName]
+            }
+        }
+
+        $allMatchedTarget = @($batchItems | Where-Object { $_.Outcome -ne 'Success' -or $_.State -ne $targetStateLabel }).Count -eq 0
+        $batchOutcome = if ($allMatchedTarget) { 'Success' } else { 'OtherError' }
+        $batchMessage = if ($allMatchedTarget) { ""All requested Power Automate flows are $targetLower."" } else { ""One or more requested Power Automate flows could not be confirmed $targetLower."" }
+        Emit $batchOutcome $batchMessage @($batchItems | ForEach-Object { $_.DisplayName }) $null (Get-FlowReferences $toToggle) $null $batchItems
+    }
+
+    if ($verb -eq 'Get-Flows-Status') {
+        $batchItems = @()
+        foreach ($expectedName in $flowDisplayNames) {
+            $f = $matched | Where-Object { $_.DisplayName -ieq $expectedName } | Select-Object -First 1
+            if (-not $f) {
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='NoFlowFound'; State='NotFound'; Message='Flow was not found.'; FlowReference=$null }
+                continue
+            }
+
+            $stateInfo = Read-CurrentOrSnapshotEnabled $f
+            if ($stateInfo.Known) {
+                $st = if ($stateInfo.Enabled) { 'On' } else { 'Off' }
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State=$st; Message=('Power Automate flow is ' + $st.ToLowerInvariant() + '.'); FlowReference=(New-FlowReference $f) }
+            } else {
+                $batchItems += [pscustomobject]@{ DisplayName=$expectedName; Outcome='OtherError'; State='Unknown'; Message='Power Automate flow was found, but its current state could not be read.'; FlowReference=(New-FlowReference $f) }
+            }
+        }
+        Emit 'Success' 'Batch flow status check complete.' @($batchItems | ForEach-Object { $_.DisplayName }) $null (Get-FlowReferences $matched) $null $batchItems
     }
 
     if ($verb -eq 'Get-Status') {
@@ -1726,18 +2062,24 @@ try {
             $definition = $null
             $defSource = '<none>'
             try {
-                # The bulk Get-Flow -EnvironmentName response returns a thin
-                # flow shape with no Internal.properties — we have to re-fetch
-                # by FlowName to get the full object with definition /
-                # definitionSummary. Read-CurrentEnabled does the same trick
-                # for Get-Status; do it here for the same reason.
-                $full = $null
-                try {
-                    Trace ""before Get-Flow full env=$($f.EnvironmentName) flow=$($f.FlowName)""
-                    $full = Get-Flow -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop
-                    Trace ""after  Get-Flow full""
-                } catch {
-                    Trace ""Get-Flow full FAILED: $($_.Exception.Message)""
+                # If $f was matched via Try-CachedFlow (Get-Flow -FlowName),
+                # $f.SourceFlow already holds the full object with definition /
+                # definitionSummary. Only issue a second Get-Flow when $f came
+                # from a bulk environment scan that omits definition properties.
+                $full = $f.SourceFlow
+                $hasCachedDef = $full -and $full.PSObject.Properties['Internal'] -and $full.Internal -and $full.Internal.properties -and
+                    (($full.Internal.properties.PSObject.Properties['definition'] -and $full.Internal.properties.definition) -or
+                     ($full.Internal.properties.PSObject.Properties['definitionSummary'] -and $full.Internal.properties.definitionSummary))
+                if ($hasCachedDef) {
+                    Trace ""reusing cached full flow object for definition env=$($f.EnvironmentName) flow=$($f.FlowName)""
+                } else {
+                    try {
+                        Trace ""before Get-Flow full env=$($f.EnvironmentName) flow=$($f.FlowName)""
+                        $full = Get-Flow -EnvironmentName $f.EnvironmentName -FlowName $f.FlowName -ErrorAction Stop
+                        Trace ""after  Get-Flow full""
+                    } catch {
+                        Trace ""Get-Flow full FAILED: $($_.Exception.Message)""
+                    }
                 }
                 if ($full -and $full.PSObject.Properties['Internal'] -and $full.Internal -and $full.Internal.properties) {
                     $props = $full.Internal.properties
@@ -1843,19 +2185,19 @@ try {
         }
     }
 
+    $resultState = if ($finalStateKnown) { if ($finalEnabled) { 'On' } else { 'Off' } } else { $null }
     if ($changed.Count -eq 0 -and $alreadyDesired.Count -eq 0 -and $errors.Count -gt 0) {
         $msg = $errors -join '; '
         if ($msg -match 'solution' -or $msg -match 'managed' -or $msg -match 'not.*allowed') {
-            Emit 'SolutionAwareBlocked' $msg @()
+            Emit 'SolutionAwareBlocked' $msg @() $resultState (Get-FlowReferences $matched)
         }
-        Emit 'OtherError' $msg @()
+        Emit 'OtherError' $msg @() $resultState (Get-FlowReferences $matched)
     }
 
     $action = if ($verb -eq 'Disable-Flow') { 'Turned off' } else { 'Turned on' }
     $state = if ($verb -eq 'Disable-Flow') { 'off' } else { 'on' }
     $msg = if ($changed.Count -gt 0) { ""$action Power Automate flow"" } else { ""Power Automate flow is already $state"" }
     if ($errors.Count -gt 0) { $msg = $msg + "" (with "" + $errors.Count + "" partial failure(s): "" + ($errors -join '; ') + "")"" }
-    $resultState = if ($finalStateKnown) { if ($finalEnabled) { 'On' } else { 'Off' } } else { $null }
     Report 'Done.'
     Emit 'Success' $msg @($changed + $alreadyDesired) $resultState (Get-FlowReferences $matched)
 
@@ -1891,22 +2233,46 @@ $preCreateConn = $env:OOFMGR_PA_PRECREATE_CONN
 $cachedInstanceUrl = $env:OOFMGR_PA_CACHED_INSTANCEURL
 $cachedEnvId       = $env:OOFMGR_PA_CACHED_ENVID
 $cachedEnvDisplay  = $env:OOFMGR_PA_CACHED_ENVDISPLAY
+$cachedConnsJson   = $env:OOFMGR_PA_CACHED_CONNS
+$cachedFlowMapJson = $env:OOFMGR_PA_CACHED_FLOWMAP
+$flowDisplayNamesJson = $env:OOFMGR_PA_FLOWDISPLAYNAMES
+$flowDisplayNames = @()
+if ($flowDisplayNamesJson) {
+    try {
+        $parsedFlowNames = ConvertFrom-Json -InputObject $flowDisplayNamesJson
+        foreach ($parsedFlowName in @($parsedFlowNames)) {
+            foreach ($nameValue in @($parsedFlowName)) {
+                if ($nameValue) { $flowDisplayNames += [string]$nameValue }
+            }
+        }
+    } catch {}
+}
 
 $debugLog = Join-Path $env:TEMP 'oofmgr-pa-debug.log'
-try { Remove-Item -LiteralPath $debugLog -ErrorAction SilentlyContinue } catch {}
-function Trace($m) {
+$debugWriter = $null
+try {
+    $debugFs = [System.IO.FileStream]::new($debugLog, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+    $debugWriter = [System.IO.StreamWriter]::new($debugFs, [System.Text.UTF8Encoding]::new($false))
+    $debugWriter.AutoFlush = $true
+} catch {}
+$progressWriter = $null
+if ($progressFile) {
     try {
-        $line = ('{0}  {1}' -f (Get-Date -Format o), $m)
-        Add-Content -LiteralPath $debugLog -Value $line -Encoding UTF8
+        $progFs = [System.IO.FileStream]::new($progressFile, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+        $progressWriter = [System.IO.StreamWriter]::new($progFs, [System.Text.UTF8Encoding]::new($false))
+        $progressWriter.AutoFlush = $true
     } catch {}
+}
+function Trace($m) {
+    if ($debugWriter) {
+        try { $debugWriter.WriteLine(('{0}  {1}' -f (Get-Date -Format o), $m)) } catch {}
+    }
 }
 function Report($m) {
     if (-not $m) { return }
     Trace (""progress: "" + $m)
-    if ($progressFile) {
-        try {
-            [System.IO.File]::AppendAllText($progressFile, ([string]$m) + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
-        } catch {}
+    if ($progressWriter) {
+        try { $progressWriter.WriteLine([string]$m) } catch {}
     }
 }
 Trace ""start: pid=$PID op=import upn='$upn' solName='$solName' workflowId='$workflowId' force='$forceFlag' zip='$zipPath'""
@@ -1918,7 +2284,7 @@ Write-Host '  OofManager is importing your Cloud Schedule flow into Power Automa
 Write-Host '  If a sign-in dialog appears, complete it. This window closes automatically.' -ForegroundColor Cyan
 Write-Host ''
 
-function Emit($outcome, $message, $envId, $envDisplay, $instanceUrl, $wfid) {
+function Emit($outcome, $message, $envId, $envDisplay, $instanceUrl, $wfid, $conns = $null, $batchItems = @()) {
     $obj = [ordered]@{
         Outcome                = $outcome
         Message                = $message
@@ -1926,12 +2292,16 @@ function Emit($outcome, $message, $envId, $envDisplay, $instanceUrl, $wfid) {
         EnvironmentDisplayName = $envDisplay
         InstanceUrl            = $instanceUrl
         WorkflowId             = $wfid
+        Connections            = $conns
+        BatchItems             = @($batchItems)
     }
-    $json = ($obj | ConvertTo-Json -Compress)
+    $json = ($obj | ConvertTo-Json -Compress -Depth 8)
     if ($resultFile) {
         [System.IO.File]::WriteAllText($resultFile, $json, [System.Text.UTF8Encoding]::new($false))
     }
     Trace ""emit: outcome=$outcome message=$message envId=$envId instanceUrl=$instanceUrl wfid=$wfid""
+    if ($progressWriter) { try { $progressWriter.Dispose() } catch {} }
+    if ($debugWriter) { try { $debugWriter.Dispose() } catch {} }
     exit 0
 }
 
@@ -2232,24 +2602,34 @@ try {
     # Let Power Platform CLI own Dataverse auth/import instead of borrowing a
     # Dataverse token from the PowerApps PowerShell module. The latter is blocked
     # in some locked-down tenants with AADSTS65002.
+    # Prefer the underlying tools\pac.exe directly over pac.cmd / pac.launcher.exe
+    # so each pac invocation skips the extra cmd.exe + launcher process hops.
     $pacPath = $null
-    $pacCmd = Get-Command pac -ErrorAction SilentlyContinue
-    if ($pacCmd -and $pacCmd.Source) { $pacPath = [string]$pacCmd.Source }
+    $pacAuthProfilesPath = $null
+    if ($env:LOCALAPPDATA) {
+        $cliRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI'
+        $pacAuthProfilesPath = Join-Path $cliRoot 'authprofiles_v2.json'
+        if (Test-Path -LiteralPath $cliRoot) {
+            $directPacExe = Get-ChildItem -Path $cliRoot -Filter 'pac.exe' -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -First 1
+            if ($directPacExe -and $directPacExe.FullName) { $pacPath = [string]$directPacExe.FullName }
+            if (-not $pacPath) {
+                $msiPacLauncher = Join-Path $cliRoot 'pac.launcher.exe'
+                if (Test-Path -LiteralPath $msiPacLauncher) { $pacPath = $msiPacLauncher }
+            }
+            if (-not $pacPath) {
+                $msiPacCmd = Join-Path $cliRoot 'pac.cmd'
+                if (Test-Path -LiteralPath $msiPacCmd) { $pacPath = $msiPacCmd }
+            }
+        }
+    }
     if (-not $pacPath -and $env:USERPROFILE) {
         $dotnetToolPac = Join-Path $env:USERPROFILE '.dotnet\tools\pac.exe'
         if (Test-Path -LiteralPath $dotnetToolPac) { $pacPath = $dotnetToolPac }
     }
-    if (-not $pacPath -and $env:LOCALAPPDATA) {
-        $msiPacCmd = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI\pac.cmd'
-        if (Test-Path -LiteralPath $msiPacCmd) { $pacPath = $msiPacCmd }
-    }
-    if (-not $pacPath -and $env:LOCALAPPDATA) {
-        $msiPacLauncher = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI\pac.launcher.exe'
-        if (Test-Path -LiteralPath $msiPacLauncher) { $pacPath = $msiPacLauncher }
-    }
-    if (-not $pacPath -and $env:LOCALAPPDATA) {
-        $msiPacExe = Join-Path $env:LOCALAPPDATA 'Microsoft\PowerAppsCLI\pac.exe'
-        if (Test-Path -LiteralPath $msiPacExe) { $pacPath = $msiPacExe }
+    if (-not $pacPath) {
+        $pacCmd = Get-Command pac -ErrorAction SilentlyContinue
+        if ($pacCmd -and $pacCmd.Source) { $pacPath = [string]$pacCmd.Source }
     }
     if (-not $pacPath) {
         Emit 'OtherError' (
@@ -2262,38 +2642,253 @@ try {
     if (-not (Test-Path -LiteralPath $zipPath)) {
         Emit 'OtherError' ""Solution zip missing: $zipPath"" $envId $envDisplay $instance $null
     }
-    $zipBytes = [System.IO.File]::ReadAllBytes($zipPath).Length
+    $zipBytes = (Get-Item -LiteralPath $zipPath).Length
     Trace ""zip size: $zipBytes bytes""
 
-    function Invoke-Pac($stepName, [string[]]$arguments) {
+    $script:paSessionReady = $false
+    $script:flowJwtToken = $null
+    function Ensure-PowerAppsSession {
+        if ($script:paSessionReady) { return $true }
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            $WarningPreference  = 'SilentlyContinue'
+            if (-not (Get-Command Get-Flow -ErrorAction SilentlyContinue)) {
+                if ($modulesDir -and (Test-Path -LiteralPath $modulesDir) -and ($env:PSModulePath -notlike ""*$modulesDir*"")) {
+                    $env:PSModulePath = $modulesDir + ';' + $env:PSModulePath
+                }
+                Trace 'background prewarm: before Import-Module Microsoft.PowerApps.PowerShell'
+                Import-Module Microsoft.PowerApps.PowerShell -DisableNameChecking -ErrorAction Stop | Out-Null
+                Trace 'background prewarm: after  Import-Module Microsoft.PowerApps.PowerShell'
+            }
+            if (-not $global:__oofSignedIn -and (-not $global:currentSession -or $global:currentSession.loggedIn -ne $true)) {
+                Trace ""background prewarm: before Add-PowerAppsAccount upn='$upn'""
+                if ($upn) { Add-PowerAppsAccount -Endpoint prod -Username $upn -ErrorAction Stop | Out-Null }
+                else      { Add-PowerAppsAccount -Endpoint prod -ErrorAction Stop | Out-Null }
+                $global:__oofSignedIn = $true
+                Trace 'background prewarm: after  Add-PowerAppsAccount'
+            }
+            try {
+                $script:flowJwtToken = Get-JwtToken -Audience 'https://service.flow.microsoft.com/'
+            } catch {}
+            $script:paSessionReady = $true
+            return $true
+        } catch {
+            Trace ""Ensure-PowerAppsSession failed: $($_.Exception.Message)""
+            return $false
+        }
+    }
+
+    # --- Fast-path: Direct parallel PATCH of existing flows (~8-10s vs ~60s pac solution import) ---
+    # When all target flows in this package have already been imported into the
+    # user's Developer environment and their runtime FlowName GUIDs are cached,
+    # we can update their workflow definitions and set state='Started' directly
+    # via the Power Automate ProcessSimple API in parallel. If any flow was
+    # deleted in the portal, lacks a required connection reference, or returns
+    # an error, we fall through transparently to the full pac solution import.
+    if ($envId -and $flowDisplayNames.Count -gt 0 -and $cachedFlowMapJson -and ([string]$cachedFlowMapJson).Trim().Length -gt 2) {
+        try {
+            $flowMap = @{}
+            $parsedMap = $cachedFlowMapJson | ConvertFrom-Json
+            if ($parsedMap) {
+                foreach ($p in $parsedMap.PSObject.Properties) {
+                    if ($p.Name -and $p.Value) { $flowMap[[string]$p.Name] = [string]$p.Value }
+                }
+            }
+            $allFlowsMapped = (@($flowDisplayNames | Where-Object { -not $flowMap.ContainsKey($_) }).Count -eq 0)
+            if ($allFlowsMapped) {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+                $zipDefinitions = @{}
+                $zipConnRefKeys = @{}
+                $za = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+                try {
+                    $custEntry = $za.Entries | Where-Object { $_.FullName -ieq 'customizations.xml' } | Select-Object -First 1
+                    if ($custEntry) {
+                        $csr = New-Object System.IO.StreamReader($custEntry.Open())
+                        try { $custXml = [xml]$csr.ReadToEnd() } finally { $csr.Dispose() }
+                        foreach ($wfNode in @($custXml.ImportExportXml.Workflows.Workflow)) {
+                            if (-not $wfNode) { continue }
+                            $wfName = [string]$wfNode.Name
+                            $relJson = ([string]$wfNode.JsonFileName).TrimStart('/')
+                            $wfEntry = $za.Entries | Where-Object { $_.FullName -ieq $relJson } | Select-Object -First 1
+                            if ($wfName -and $wfEntry) {
+                                $wsr = New-Object System.IO.StreamReader($wfEntry.Open())
+                                try { $wfObj = $wsr.ReadToEnd() | ConvertFrom-Json } finally { $wsr.Dispose() }
+                                if ($wfObj -and $wfObj.properties -and $wfObj.properties.definition) {
+                                    $zipDefinitions[$wfName] = $wfObj.properties.definition
+                                    $reqKeys = @()
+                                    if ($wfObj.properties.connectionReferences) {
+                                        $reqKeys = @($wfObj.properties.connectionReferences.PSObject.Properties | ForEach-Object { [string]$_.Name })
+                                    }
+                                    $zipConnRefKeys[$wfName] = $reqKeys
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    $za.Dispose()
+                }
+
+                $allDefsFound = (@($flowDisplayNames | Where-Object { -not $zipDefinitions.ContainsKey($_) }).Count -eq 0)
+                if ($allDefsFound -and (Ensure-PowerAppsSession) -and $script:flowJwtToken) {
+                    Report ""Updating flow definition(s) in '$envDisplay'...""
+                    Trace ""fast PATCH start: env=$envId flows=$($flowDisplayNames -join ' | ')""
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    $flowEndpoint = if ($global:currentSession -and $global:currentSession.flowEndpoint) { [string]$global:currentSession.flowEndpoint } else { 'api.flow.microsoft.com' }
+                    $authHeader = if ($script:flowJwtToken -like 'Bearer *') { [string]$script:flowJwtToken } else { 'Bearer ' + [string]$script:flowJwtToken }
+
+                    $getTasks = @()
+                    foreach ($dn in $flowDisplayNames) {
+                        $fid = $flowMap[$dn]
+                        $uri = ""https://$flowEndpoint/providers/Microsoft.ProcessSimple/environments/$envId/flows/$fid`?api-version=2016-11-01""
+                        $req = [System.Net.HttpWebRequest]::Create($uri)
+                        $req.Method = 'GET'; $req.UserAgent = 'PowerShell cmdlets 1.0'; $req.Headers.Add('Authorization', $authHeader)
+                        $getTasks += [pscustomobject]@{ DisplayName = $dn; FlowId = $fid; Uri = $uri; Task = $req.GetResponseAsync() }
+                    }
+
+                    $existingFlows = @()
+                    $canPatchAll = $true
+                    foreach ($gt in $getTasks) {
+                        $resp = $gt.Task.GetAwaiter().GetResult()
+                        $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())
+                        try { $fObj = $sr.ReadToEnd() | ConvertFrom-Json } finally { $sr.Dispose(); $resp.Dispose() }
+                        if (-not $fObj -or -not $fObj.properties -or ([string]$fObj.properties.displayName -ine $gt.DisplayName)) {
+                            Trace ""fast PATCH abort: flow $($gt.FlowId) displayName mismatch or empty""
+                            $canPatchAll = $false; break
+                        }
+                        $existingConnRefs = $fObj.properties.connectionReferences
+                        $existingKeys = if ($existingConnRefs) { @($existingConnRefs.PSObject.Properties | ForEach-Object { [string]$_.Name }) } else { @() }
+                        foreach ($rk in $zipConnRefKeys[$gt.DisplayName]) {
+                            if ($existingKeys -notcontains $rk -or (-not $existingConnRefs.$rk.connectionName)) {
+                                Trace ""fast PATCH abort: flow '$($gt.DisplayName)' missing bound connectionReference '$rk'""
+                                $canPatchAll = $false; break
+                            }
+                        }
+                        if (-not $canPatchAll) { break }
+                        $existingFlows += [pscustomobject]@{ DisplayName = $gt.DisplayName; FlowId = $gt.FlowId; Uri = $gt.Uri; FlowObj = $fObj }
+                    }
+
+                    if ($canPatchAll -and $existingFlows.Count -eq $flowDisplayNames.Count) {
+                        Trace ""fast PATCH: parallel GET succeeded for $($existingFlows.Count) flow(s); sending parallel PATCH""
+                        $patchTasks = @()
+                        foreach ($ef in $existingFlows) {
+                            $dn = $ef.DisplayName
+                            $bodyObj = @{
+                                properties = @{
+                                    displayName          = [string]$ef.FlowObj.properties.displayName
+                                    definition           = $zipDefinitions[$dn]
+                                    connectionReferences = $ef.FlowObj.properties.connectionReferences
+                                    state                = 'Started'
+                                }
+                            }
+                            $jsonBytes = [System.Text.Encoding]::UTF8.GetBytes(($bodyObj | ConvertTo-Json -Depth 50 -Compress))
+                            $req = [System.Net.HttpWebRequest]::Create($ef.Uri)
+                            $req.Method = 'PATCH'; $req.ContentType = 'application/json; charset=utf-8'; $req.UserAgent = 'PowerShell cmdlets 1.0'
+                            $req.Headers.Add('Authorization', $authHeader); $req.ContentLength = $jsonBytes.Length
+                            $reqStream = $req.GetRequestStream()
+                            try { $reqStream.Write($jsonBytes, 0, $jsonBytes.Length) } finally { $reqStream.Close() }
+                            $patchTasks += [pscustomobject]@{ DisplayName = $dn; FlowId = $ef.FlowId; Task = $req.GetResponseAsync() }
+                        }
+
+                        $fastBatchItems = @()
+                        foreach ($pt in $patchTasks) {
+                            $resp = $pt.Task.GetAwaiter().GetResult()
+                            $sr = New-Object System.IO.StreamReader($resp.GetResponseStream())
+                            try { $resObj = $sr.ReadToEnd() | ConvertFrom-Json } finally { $sr.Dispose(); $resp.Dispose() }
+                            $newState = if ($resObj -and $resObj.properties) { [string]$resObj.properties.state } else { '' }
+                            Trace ""fast PATCH finished: '$($pt.DisplayName)' flow=$($pt.FlowId) state=$newState""
+                            if ($newState -ine 'Started') {
+                                Trace ""fast PATCH state not Started ($newState); falling back to pac import""
+                                $canPatchAll = $false; break
+                            }
+                            $refObj = [ordered]@{ EnvironmentName = [string]$envId; FlowName = [string]$pt.FlowId; DisplayName = [string]$pt.DisplayName }
+                            $fastBatchItems += [pscustomobject]@{ DisplayName = $pt.DisplayName; Outcome = 'Success'; State = 'On'; Message = 'Power Automate flow is on.'; FlowReference = $refObj }
+                        }
+
+                        if ($canPatchAll -and $fastBatchItems.Count -eq $flowDisplayNames.Count) {
+                            Report 'Import complete.'
+                            Emit 'Success' (""Imported solution '"" + $solName + ""' into '"" + $envDisplay + ""'."" ) $envId $envDisplay $instance $workflowId $null $fastBatchItems
+                        }
+                    }
+                }
+            }
+        } catch {
+            Trace ""fast PATCH path skipped ($($_.Exception.Message)); falling back to pac solution import""
+        }
+    }
+
+    function Invoke-Pac($stepName, [string[]]$arguments, [scriptblock]$whileRunning = $null) {
         Trace (""pac "" + ($arguments -join ' '))
-        & $pacPath @arguments 2>&1 | ForEach-Object {
-            $line = [string]$_
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $pacPath
+        $escapedArgs = @($arguments | ForEach-Object {
+            $s = [string]$_
+            if ($s -match '[\s""]') { '""' + ($s -replace '""', '\""') + '""' } else { $s }
+        })
+        $psi.Arguments = ($escapedArgs -join ' ')
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.CreateNoWindow = $true
+
+        $p = New-Object System.Diagnostics.Process
+        $p.StartInfo = $psi
+        $null = $p.Start()
+        $errTask = $p.StandardError.ReadToEndAsync()
+
+        if ($whileRunning) {
+            try { & $whileRunning | Out-Null } catch { Trace ""whileRunning callback failed: $($_.Exception.Message)"" }
+        }
+
+        while (-not $p.StandardOutput.EndOfStream) {
+            $line = $p.StandardOutput.ReadLine()
+            if ($null -eq $line) { break }
             Trace (""pac> "" + $line)
             if ($line -match 'Connected to\.\.\.') { Report $line }
             elseif ($line -match 'Solution Importing') { Report ""Importing solution '$solName' into '$envDisplay'..."" }
-            elseif ($line -match 'Solution Imported successfully') { Report 'Solution imported. Publishing customizations...' }
+            elseif ($line -match 'Solution Imported successfully') { Report 'Solution imported. Verifying flow status...' }
             elseif ($line -match 'Publishing All Customizations') { Report 'Publishing Power Automate customizations...' }
             elseif ($line -match 'Published All Customizations') { Report 'Published customizations. Finishing up...' }
             Write-Host $line
         }
-        $code = $LASTEXITCODE
+        try {
+            $errText = $errTask.GetAwaiter().GetResult()
+            if ($errText) {
+                foreach ($errLine in ($errText -split ""`r?`n"")) {
+                    if ($errLine) { Trace (""pac! "" + $errLine) }
+                }
+            }
+        } catch {}
+        $p.WaitForExit()
+        $code = $p.ExitCode
+        $p.Dispose()
         Trace ""pac $stepName exit=$code""
         return $code
     }
 
-    $authWhoCode = Invoke-Pac 'auth who' @('auth', 'who')
-    if ($authWhoCode -ne 0) {
-        # Microsoft corporate accounts use pac's WAM/OperatingSystem profile;
-        # creating a browser auth profile can be rejected even when WAM works.
-        Trace 'no active pac auth profile; attempting pac auth create'
-        $authCode = Invoke-Pac 'auth create' @('auth', 'create', '--environment', $instance)
-        if ($authCode -ne 0) {
-            Emit 'SignInFailed' (""Automatic Power Automate sign-in failed. Open Power Automate once in your browser, then try again."" ) $envId $envDisplay $instance $null
+    $script:pacAuthEnsured = $false
+    function Ensure-PacAuth {
+        if ($script:pacAuthEnsured) { return }
+        $script:pacAuthEnsured = $true
+        $authWhoCode = Invoke-Pac 'auth who' @('auth', 'who')
+        if ($authWhoCode -ne 0) {
+            # Microsoft corporate accounts use pac's WAM/OperatingSystem profile;
+            # creating a browser auth profile can be rejected even when WAM works.
+            Trace 'no active pac auth profile; attempting pac auth create'
+            $authCode = Invoke-Pac 'auth create' @('auth', 'create', '--environment', $instance)
+            if ($authCode -ne 0) {
+                Emit 'SignInFailed' (""Automatic Power Automate sign-in failed. Open Power Automate once in your browser, then try again."" ) $envId $envDisplay $instance $null
+            }
         }
+    }
+
+    # Only run upfront pac auth check when no persisted pac auth profile file
+    # exists yet; otherwise skip the ~5s 'pac auth who' process and let the
+    # actual connection-list / solution-import command verify auth on demand.
+    if (-not ($pacAuthProfilesPath -and (Test-Path -LiteralPath $pacAuthProfilesPath))) {
+        Ensure-PacAuth
     } else {
-        Trace 'using existing pac auth profile'
-        Report 'Signed in. Uploading solution to Power Automate...'
+        Trace ""found existing pac auth profile file ($pacAuthProfilesPath); skipping upfront 'pac auth who'""
+        Report 'Uploading solution to Power Automate...'
     }
 
     # --- Auto-bind connection references to existing connections ---------
@@ -2306,26 +2901,49 @@ try {
     # run), we skip the settings file and fall back to the manual one-time
     # bind the app already guides the user through.
     $settingsFile = $null
+    $connByConnector = @{}
+    $usedCachedConns = $false
     if ($connRefsJson -and ([string]$connRefsJson).Trim().Length -gt 2) {
         try {
             $connRefs = $connRefsJson | ConvertFrom-Json
             if ($connRefs -and -not ($connRefs -is [System.Array])) { $connRefs = @($connRefs) }
             Trace ""connRefs requested: $($connRefs.Count)""
 
-            # Reads existing connections in the target env. Output columns:
-            # Id | Name | API Id (/providers/.../shared_xxx) | Status. Values
-            # have no embedded spaces: first token = Id, last = Status, the
-            # /providers token = connector. Returns a hashtable:
-            #   Connected = @{connector -> id}  first CONNECTED conn (for binding)
-            #   Present   = @{connector -> id}  first conn of ANY status (for the
-            #                                   'does one already exist' test)
-            #   Ok        = $true/$false         did the list call SUCCEED (so we
-            #                                   can tell 'no connections' apart
-            #                                   from 'could not read connections')
+            # Reads existing connections in the target env. Prefer the in-process
+            # Get-PowerAppConnection cmdlet (~1.2-2s via the already-loaded module)
+            # over spawning 'pac connection list' (~7.4s), falling back to pac only
+            # if the module call fails. Always query live connections when we reach
+            # the full-import path (i.e. fast PATCH was skipped because the flows
+            # don't exist yet), so deleted connections are detected and recreated.
             function Get-ConnInventory {
                 $connected = @{}
                 $present = @{}
                 $ok = $false
+                if ($envId -and (Ensure-PowerAppsSession)) {
+                    try {
+                        Trace ""before Get-PowerAppConnection env=$envId""
+                        $paConns = @(Get-PowerAppConnection -EnvironmentName $envId -ErrorAction Stop)
+                        Trace ""after  Get-PowerAppConnection: count=$($paConns.Count)""
+                        foreach ($c in $paConns) {
+                            if (-not $c) { continue }
+                            $connId = [string]$c.ConnectionName
+                            $connector = [string]$c.ConnectorName
+                            if (-not $connId -or -not $connector) { continue }
+                            $st = $null
+                            try { $st = [string]$c.Statuses[0].status } catch {}
+                            if (-not $st) { try { $st = [string]$c.Internal.properties.statuses[0].status } catch {} }
+                            if (-not $present.ContainsKey($connector)) { $present[$connector] = $connId }
+                            if ($st -ieq 'Connected' -and -not $connected.ContainsKey($connector)) {
+                                $connected[$connector] = $connId
+                            }
+                        }
+                        $ok = $true
+                        return @{ Connected = $connected; Present = $present; Ok = $ok }
+                    } catch {
+                        Trace ""Get-PowerAppConnection failed ($($_.Exception.Message)); falling back to pac connection list""
+                    }
+                }
+
                 $lines = @()
                 try {
                     $lines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
@@ -2333,6 +2951,15 @@ try {
                 } catch {
                     Trace ""pac connection list failed: $($_.Exception.Message)""
                     $ok = $false
+                }
+                if (-not $ok -and (-not $script:pacAuthEnsured)) {
+                    Ensure-PacAuth
+                    try {
+                        $lines = & $pacPath connection list --environment $instance 2>&1 | ForEach-Object { [string]$_ }
+                        $ok = ($LASTEXITCODE -eq 0)
+                    } catch {
+                        $ok = $false
+                    }
                 }
                 foreach ($line in $lines) {
                     $apiToken = ($line -split '\s+' | Where-Object { $_ -like '/providers/*/apis/*' } | Select-Object -First 1)
@@ -2350,13 +2977,18 @@ try {
                 return @{ Connected = $connected; Present = $present; Ok = $ok }
             }
 
+            # Distinct connectors this solution actually needs.
+            $neededConnectors = @($connRefs | ForEach-Object { ($_.connectorId -split '/apis/')[-1] } | Where-Object { $_ } | Select-Object -Unique)
+
+            # Always query the live connection inventory (~1.5s via Get-PowerAppConnection)
+            # when we reach the full-import path (meaning the flows do not exist yet or
+            # fast PATCH fell through). That way, if the user deleted their connections
+            # in Power Automate, $missing is accurately populated and New-OofConnectionInteractive
+            # creates fresh connections instead of binding stale cached IDs.
             $inv = Get-ConnInventory
             $connByConnector = $inv.Connected
             foreach ($k in $connByConnector.Keys) { Trace ""connection Connected: connector=$k id=$($connByConnector[$k])"" }
             foreach ($k in $inv.Present.Keys) { Trace ""connection present(any): connector=$k id=$($inv.Present[$k])"" }
-
-            # Distinct connectors this solution actually needs.
-            $neededConnectors = @($connRefs | ForEach-Object { ($_.connectorId -split '/apis/')[-1] } | Where-Object { $_ } | Select-Object -Unique)
 
             # A connector is 'missing' only when the user has NO connection of
             # that type in ANY status -- not merely because none is currently
@@ -2543,7 +3175,7 @@ try {
                             # The native WebView2Loader.dll ships next to the exe;
                             # ensure it's on PATH so the managed loader finds it.
                             if ($env:Path -notlike ""*$appDir*"") { $env:Path = $appDir + ';' + $env:Path }
-                            $wv2Udf = Join-Path $env:TEMP ('oofmgr-wv2-' + [guid]::NewGuid().ToString('N'))
+                            $wv2Udf = Join-Path $env:TEMP 'oofmgr-wv2-shared'
                             $env:WEBVIEW2_USER_DATA_FOLDER = $wv2Udf
                             Add-Type -AssemblyName System.Windows.Forms | Out-Null
                             Add-Type -Path $coreDll -ErrorAction Stop | Out-Null
@@ -2558,27 +3190,20 @@ try {
                         return $false
                     }
 
-                    # Create the WebView2 environment with OS-primary-account
-                    # SSO enabled. On managed/corporate tenants a Conditional
-                    # Access policy often requires a COMPLIANT DEVICE; an
-                    # embedded webview normally can't present the device state
-                    # and gets ""You can't get there from here"". Enabling OS
-                    # account SSO lets WebView2 use the device-joined account +
-                    # its compliance claim via the Windows account broker, so CA
-                    # passes the same way the system Edge browser does.
-                    $global:__oofWv2Env = $null
-                    try {
-                        # ctor: (additionalBrowserArguments, language,
-                        # targetCompatibleBrowserVersion, allowSingleSignOnUsingOSPrimaryAccount)
-                        $wv2Opts = New-Object Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions -ArgumentList $null, $null, $null, $true
-                        $wv2EnvTask = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $wv2Udf, $wv2Opts)
-                        $spins = 0
-                        while (-not $wv2EnvTask.AsyncWaitHandle.WaitOne(200)) { if (++$spins -gt 150) { throw 'environment create timed out' } }
-                        $global:__oofWv2Env = $wv2EnvTask.GetAwaiter().GetResult()
-                        Trace 'WebView2 environment created (OS-account SSO enabled)'
-                    } catch {
-                        Trace ""WebView2 environment create failed: $($_.Exception.Message)""
-                        return $false
+                    # Create (or reuse across multiple connectors in the same run)
+                    # the WebView2 environment with OS-primary-account SSO enabled.
+                    if (-not $global:__oofWv2Env) {
+                        try {
+                            $wv2Opts = New-Object Microsoft.Web.WebView2.Core.CoreWebView2EnvironmentOptions -ArgumentList $null, $null, $null, $true
+                            $wv2EnvTask = [Microsoft.Web.WebView2.Core.CoreWebView2Environment]::CreateAsync($null, $wv2Udf, $wv2Opts)
+                            $spins = 0
+                            while (-not $wv2EnvTask.AsyncWaitHandle.WaitOne(200)) { if (++$spins -gt 150) { throw 'environment create timed out' } }
+                            $global:__oofWv2Env = $wv2EnvTask.GetAwaiter().GetResult()
+                            Trace 'WebView2 environment created (OS-account SSO enabled)'
+                        } catch {
+                            Trace ""WebView2 environment create failed: $($_.Exception.Message)""
+                            return $false
+                        }
                     }
 
                     $form = New-Object System.Windows.Forms.Form
@@ -2590,6 +3215,7 @@ try {
                     $form.Controls.Add($web)
                     $global:__oofForm = $form
                     $global:__oofConsentLink = $consentLink
+                    $global:__oofUpn = $upn
                     $global:__oofConnected = $false
                     $global:__oofConnector = $connector
                     $global:__oofConnName = $connName
@@ -2614,7 +3240,7 @@ try {
                     # /confirm stage (i.e. past AAD sign-in) so the status calls
                     # don't stutter the password/MFA UI.
                     $global:__oofPollTimer = New-Object System.Windows.Forms.Timer
-                    $global:__oofPollTimer.Interval = 2500
+                    $global:__oofPollTimer.Interval = 1000
                     $global:__oofPollTimer.add_Tick({
                         if ($global:__oofPollBusy) { return }
                         $global:__oofPollBusy = $true
@@ -2652,6 +3278,13 @@ try {
                             param($s2, $e2)
                             $u = [string]$e2.Uri
                             try { $nav = [Uri]$u; Trace ""consent nav: $($nav.Host)$($nav.AbsolutePath)"" } catch {}
+                            if ($global:__oofUpn -and $u -match '^https://login\.(microsoftonline\.com|windows\.net)/[^/]+/oauth2/(v2\.0/)?authorize\?' -and $u -notmatch '[?&]login_hint=') {
+                                $hintedUrl = $u + '&login_hint=' + [Uri]::EscapeDataString([string]$global:__oofUpn)
+                                Trace 'injecting login_hint into OAuth authorize navigation to skip account picker'
+                                $e2.Cancel = $true
+                                $s2.Navigate($hintedUrl)
+                                return
+                            }
                             if ($u -match 'consent\.azure-apim\.net/confirm/Allow') {
                                 $global:__oofConsentAllowed = $true
                                 $global:__oofForm.Text = ""Authorization complete — finishing connection ($global:__oofConnector)...""
@@ -2682,7 +3315,6 @@ try {
                     try { $global:__oofPollTimer.Stop(); $global:__oofMaxTimer.Stop() } catch {}
                     try { $web.Dispose() } catch {}
                     $form.Dispose()
-                    if ($wv2Udf) { try { Remove-Item $wv2Udf -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
 
                     if (-not $global:__oofWv2Ok) { Trace 'WebView2 did not initialize; returning null for portal fallback'; return $null }
 
@@ -2833,28 +3465,204 @@ try {
         }
     }
 
-    $importArgs = @(
-        'solution', 'import',
-        '--path', $zipPath,
-        '--environment', $instance,
-        '--publish-changes',
-        '--max-async-wait-time', '10'
-    )
-    if ($settingsFile) {
-        $importArgs += @('--settings-file', $settingsFile)
-    }
-    if ($forceFlag -eq '1') {
-        $importArgs += '--force-overwrite'
+    # Omit both --publish-changes and --activate-plugins:
+    #   * --publish-changes triggers an org-wide PublishAllXml (~26s).
+    #   * --activate-plugins forces Dataverse to deactivate and serially
+    #     re-activate already-running flows inside ImportSolution (~19.7s).
+    # Instead, we prewarm Microsoft.PowerApps.PowerShell in parallel while
+    # pac.exe runs, then verify/enable any Off flows in parallel right here in
+    # the same process (~1s when already On, ~12s parallel when Off).
+    function Build-ImportArgs($currentSettingsFile) {
+        $argsList = @(
+            'solution', 'import',
+            '--path', $zipPath,
+            '--environment', $instance,
+            '--max-async-wait-time', '10'
+        )
+        if ($currentSettingsFile) {
+            $argsList += @('--settings-file', $currentSettingsFile)
+        }
+        if ($forceFlag -eq '1') {
+            $argsList += '--force-overwrite'
+        }
+        return ,$argsList
     }
 
-    $importCode = Invoke-Pac 'solution import' $importArgs
+    $importArgs = Build-ImportArgs $settingsFile
+    $importCode = Invoke-Pac 'solution import' $importArgs { Ensure-PowerAppsSession }
+
+    # Self-heal if we skipped upfront auth or used cached connection IDs that
+    # became stale (e.g. user deleted and recreated a connection in the portal).
+    if ($importCode -ne 0 -and ((-not $script:pacAuthEnsured) -or $usedCachedConns)) {
+        Trace 'initial import failed; verifying pac auth and refreshing connection inventory before retry'
+        if ($settingsFile) { try { Remove-Item -LiteralPath $settingsFile -ErrorAction SilentlyContinue } catch {} }
+        $settingsFile = $null
+        Ensure-PacAuth
+        if ($usedCachedConns -and $connRefsJson -and ([string]$connRefsJson).Trim().Length -gt 2) {
+            try {
+                $freshInv = Get-ConnInventory
+                $connByConnector = $freshInv.Connected
+                $retryBindings = @()
+                foreach ($cr in $connRefs) {
+                    $logical = [string]$cr.logical
+                    $connectorId = [string]$cr.connectorId
+                    $connectorName = ($connectorId -split '/apis/')[-1]
+                    $bindConnId = if ($connByConnector.ContainsKey($connectorName)) { $connByConnector[$connectorName] }
+                                  elseif ($freshInv.Present.ContainsKey($connectorName)) { $freshInv.Present[$connectorName] }
+                                  else { $null }
+                    if ($bindConnId) {
+                        $retryBindings += [pscustomobject]@{ LogicalName = $logical; ConnectionId = $bindConnId; ConnectorId = $connectorId }
+                    }
+                }
+                if ($retryBindings.Count -gt 0) {
+                    $settings = [ordered]@{ EnvironmentVariables = @(); ConnectionReferences = @($retryBindings) }
+                    $settingsFile = Join-Path $env:TEMP ('oofmgr-deploy-settings-' + [Guid]::NewGuid().ToString('N') + '.json')
+                    [System.IO.File]::WriteAllText($settingsFile, ($settings | ConvertTo-Json -Depth 6), [System.Text.UTF8Encoding]::new($false))
+                }
+            } catch { $settingsFile = $null }
+        }
+        $importArgs = Build-ImportArgs $settingsFile
+        $importCode = Invoke-Pac 'solution import (retry)' $importArgs { Ensure-PowerAppsSession }
+    }
+
     if ($settingsFile) { try { Remove-Item -LiteralPath $settingsFile -ErrorAction SilentlyContinue } catch {} }
     if ($importCode -ne 0) {
         Emit 'ImportFailed' (""Power Automate rejected the solution import for '$solName' in '$envDisplay'."" ) $envId $envDisplay $instance $null
     }
 
+    # Verify and enable imported flows in the same PowerShell process using the
+    # already-prewarmed PowerApps session, avoiding a second child process.
+    $verifiedBatchItems = @()
+    if ($flowDisplayNames.Count -gt 0 -and $envId -and (Ensure-PowerAppsSession)) {
+        try {
+            function Read-BulkFlowState($flowObj) {
+                $res = [pscustomobject]@{ Known = $false; Enabled = $null }
+                if (-not $flowObj) { return $res }
+                $ep = $flowObj.PSObject.Properties['Enabled']
+                $rs = if ($flowObj.PSObject.Properties['Internal'] -and $flowObj.Internal -and $flowObj.Internal.properties) { [string]$flowObj.Internal.properties.state } else { $null }
+                if ($ep -ne $null -and $ep.Value -is [bool]) {
+                    $agrees = (-not $rs) -or ($rs -ieq 'Started' -and [bool]$ep.Value) -or ($rs -ieq 'Stopped' -and -not [bool]$ep.Value)
+                    if ($agrees) { $res.Known = $true; $res.Enabled = [bool]$ep.Value }
+                }
+                return $res
+            }
+
+            Report 'Checking imported flow status...'
+            Trace ""in-process post-import check: env=$envId targets=$($flowDisplayNames -join ' | ')""
+            $envFlows = @(Get-Flow -EnvironmentName $envId -ErrorAction SilentlyContinue)
+            $missingTargets = @($flowDisplayNames | Where-Object { $n = $_; -not ($envFlows | Where-Object { [string]$_.DisplayName -ieq $n }) })
+            if ($missingTargets.Count -gt 0) {
+                Report 'Waiting for newly imported flows to register...'
+                Start-Sleep -Seconds 5
+                $envFlows = @(Get-Flow -EnvironmentName $envId -ErrorAction SilentlyContinue)
+            }
+
+            $byName = @{}
+            $toStart = @()
+            foreach ($expectedName in $flowDisplayNames) {
+                $f = $envFlows | Where-Object { [string]$_.DisplayName -ieq $expectedName } | Select-Object -First 1
+                if (-not $f) {
+                    $byName[$expectedName] = [pscustomobject]@{ DisplayName=$expectedName; Outcome='NoFlowFound'; State='NotFound'; Message='Flow was not found after import.'; FlowReference=$null }
+                    continue
+                }
+                $refObj = [ordered]@{ EnvironmentName = [string]$envId; FlowName = [string]$f.FlowName; DisplayName = [string]$f.DisplayName }
+                $st = Read-BulkFlowState $f
+                if ($st.Known -and $st.Enabled) {
+                    Trace ""post-import flow already On: $expectedName flowName=$($f.FlowName)""
+                    $byName[$expectedName] = [pscustomobject]@{ DisplayName=$expectedName; Outcome='Success'; State='On'; Message='Power Automate flow is on.'; FlowReference=$refObj }
+                } else {
+                    $toStart += $f
+                }
+            }
+
+            if ($toStart.Count -gt 0) {
+                $namesLabel = (@($toStart | ForEach-Object { ""'$($_.DisplayName)'"" }) -join ', ')
+                Report ""Turning $namesLabel on...""
+                $flowEndpoint = if ($global:currentSession -and $global:currentSession.flowEndpoint) { [string]$global:currentSession.flowEndpoint } else { 'api.flow.microsoft.com' }
+                $token = $script:flowJwtToken
+                if (-not $token) {
+                    try {
+                        $token = Get-JwtToken -Audience 'https://service.flow.microsoft.com/'
+                    } catch {}
+                }
+                $startErrors = @{}
+                if ($token) {
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                    $authHeader = if ($token -like 'Bearer *') { [string]$token } else { 'Bearer ' + [string]$token }
+                    $envSegment = ResolveEnvironment -OverrideId $envId
+                    $tasks = @()
+                    foreach ($tf in $toStart) {
+                        $dn = [string]$tf.DisplayName
+                        try {
+                            $uri = ""https://$flowEndpoint/providers/Microsoft.ProcessSimple/environments/$envSegment/flows/$($tf.FlowName)/start`?api-version=2016-11-01""
+                            Trace ""in-process parallel POST start for '$dn' flow=$($tf.FlowName)""
+                            $req = [System.Net.HttpWebRequest]::Create($uri)
+                            $req.Method = 'POST'; $req.ContentLength = 0; $req.UserAgent = 'PowerShell cmdlets 1.0'
+                            $req.Headers.Add('Authorization', $authHeader)
+                            $tasks += [pscustomobject]@{ DisplayName = $dn; Task = $req.GetResponseAsync() }
+                        } catch { $startErrors[$dn] = $_.Exception.Message }
+                    }
+                    foreach ($t in $tasks) {
+                        try {
+                            $resp = $t.Task.GetAwaiter().GetResult()
+                            if ($resp) { try { $resp.Dispose() } catch {} }
+                            Trace ""in-process parallel POST start finished for '$($t.DisplayName)'""
+                        } catch {
+                            $ex = $_.Exception; if ($ex.InnerException) { $ex = $ex.InnerException }
+                            $startErrors[$t.DisplayName] = $ex.Message
+                        }
+                    }
+                } else {
+                    foreach ($tf in $toStart) {
+                        try { Enable-Flow -EnvironmentName $envId -FlowName $tf.FlowName -ErrorAction Stop | Out-Null }
+                        catch { $startErrors[[string]$tf.DisplayName] = $_.Exception.Message }
+                    }
+                }
+
+                for ($vi = 0; $vi -lt 3; $vi++) {
+                    $envFlows = @(Get-Flow -EnvironmentName $envId -ErrorAction SilentlyContinue)
+                    $allOn = $true
+                    foreach ($tf in $toStart) {
+                        $dn = [string]$tf.DisplayName
+                        if ($startErrors.ContainsKey($dn)) { continue }
+                        $rf = $envFlows | Where-Object { [string]$_.DisplayName -ieq $dn } | Select-Object -First 1
+                        $st = Read-BulkFlowState $rf
+                        if (-not ($st.Known -and $st.Enabled)) { $allOn = $false }
+                    }
+                    if ($allOn) { break }
+                    if ($vi -lt 2) { Start-Sleep -Seconds 3 }
+                }
+
+                foreach ($tf in $toStart) {
+                    $dn = [string]$tf.DisplayName
+                    $refObj = [ordered]@{ EnvironmentName = [string]$envId; FlowName = [string]$tf.FlowName; DisplayName = $dn }
+                    if ($startErrors.ContainsKey($dn)) {
+                        $byName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='OtherError'; State='Unknown'; Message=$startErrors[$dn]; FlowReference=$refObj }
+                        continue
+                    }
+                    $rf = $envFlows | Where-Object { [string]$_.DisplayName -ieq $dn } | Select-Object -First 1
+                    $st = Read-BulkFlowState $rf
+                    if ($st.Known -and $st.Enabled) {
+                        $byName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='Success'; State='On'; Message='Power Automate flow was turned on.'; FlowReference=$refObj }
+                    } elseif (-not $st.Known) {
+                        $byName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='Success'; State='Unknown'; Message='Enable was accepted but the final state could not be read.'; FlowReference=$refObj }
+                    } else {
+                        $byName[$dn] = [pscustomobject]@{ DisplayName=$dn; Outcome='OtherError'; State='Off'; Message='Enable was accepted but the flow is still off (a connection reference is probably unbound).'; FlowReference=$refObj }
+                    }
+                }
+            }
+
+            foreach ($expectedName in $flowDisplayNames) {
+                if ($byName.ContainsKey($expectedName)) { $verifiedBatchItems += $byName[$expectedName] }
+            }
+        } catch {
+            Trace ""in-process post-import check failed (caller will fallback): $($_.Exception.Message)""
+            $verifiedBatchItems = @()
+        }
+    }
+
     Report 'Import complete.'
-    Emit 'Success' (""Imported solution '"" + $solName + ""' into '"" + $envDisplay + ""'."" ) $envId $envDisplay $instance $workflowId
+    Emit 'Success' (""Imported solution '"" + $solName + ""' into '"" + $envDisplay + ""'."" ) $envId $envDisplay $instance $workflowId $connByConnector $verifiedBatchItems
 
 } catch {
     Trace ""OUTER CATCH: $($_.Exception.Message)""

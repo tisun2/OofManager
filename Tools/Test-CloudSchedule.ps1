@@ -52,6 +52,12 @@ public sealed class CloudScheduleTestPreferences : IPreferencesService
     public IDisposable BeginBatch() { return new Batch(); }
     private sealed class Batch : IDisposable { public void Dispose() { } }
 }
+
+public sealed class SynchronousTestProgress : IProgress<string>
+{
+    public readonly List<string> Lines = new List<string>();
+    public void Report(string value) { Lines.Add(value); }
+}
 '@
 
 function Assert-Equal($Actual, $Expected, [string]$Message) {
@@ -141,6 +147,99 @@ try {
     $guideBuilder = [OofManager.Wpf.Services.CloudScheduleGuideGenerator].GetMethod('Build', [Reflection.BindingFlags]'NonPublic,Static')
     $guide = $guideBuilder.Invoke($null, @($schedule.PSObject.BaseObject, 'test@example.com', 'Internal', 'External', $true))
     Assert-Equal ($guide -match 'runs every day at the earliest configured workday end time') $true 'Manual guide matches recurrence'
+
+    # Verify PowerAutomateService embedded script syntax and batch/progress helpers.
+    $buildScriptMethod = [OofManager.Wpf.Services.PowerAutomateService].GetMethod('BuildScript', [Reflection.BindingFlags]'NonPublic,Static')
+    $paScript = [string]$buildScriptMethod.Invoke($null, @())
+    $tokens = $null
+    $parseErrors = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseInput($paScript, [ref]$tokens, [ref]$parseErrors)
+    Assert-Equal $parseErrors.Count 0 'PowerAutomateService.BuildScript PowerShell syntax'
+
+    $buildImportScriptMethod = [OofManager.Wpf.Services.PowerAutomateService].GetMethod('BuildImportScript', [Reflection.BindingFlags]'NonPublic,Static')
+    $paImportScript = [string]$buildImportScriptMethod.Invoke($null, @())
+    $importTokens = $null
+    $importParseErrors = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseInput($paImportScript, [ref]$importTokens, [ref]$importParseErrors)
+    Assert-Equal $importParseErrors.Count 0 'PowerAutomateService.BuildImportScript PowerShell syntax'
+    Assert-Equal ($paImportScript.Contains("'--publish-changes'")) $false 'BuildImportScript omits --publish-changes'
+    Assert-Equal ($paImportScript.Contains("'--activate-plugins'")) $false 'BuildImportScript omits --activate-plugins'
+
+    $parseImportMethod = [OofManager.Wpf.Services.PowerAutomateService].GetMethod('ParseImportResult', [Reflection.BindingFlags]'NonPublic,Static')
+    $importResultJson = @{
+        Outcome = 'Success'
+        Message = 'Imported'
+        EnvironmentId = 'env-1'
+        EnvironmentDisplayName = 'Env 1'
+        InstanceUrl = 'https://org.crm.dynamics.com'
+        WorkflowId = 'wf-1'
+        Connections = @{ shared_office365 = 'conn-365'; shared_flowmanagement = 'conn-fm' }
+        BatchItems = @(
+            @{
+                DisplayName = 'OofManager Weekly Schedule (Test)'
+                Outcome = 'Success'
+                State = 'On'
+                Message = 'Power Automate flow is on.'
+                FlowReference = @{ EnvironmentName = 'env-1'; FlowName = 'flow-1'; DisplayName = 'OofManager Weekly Schedule (Test)' }
+            }
+        )
+    } | ConvertTo-Json -Depth 6 -Compress
+    $importParsed = $parseImportMethod.Invoke($null, @([string]$importResultJson, 0))
+    Assert-Equal $importParsed.Outcome.ToString() 'Success' 'Import result outcome'
+    Assert-Equal $importParsed.BoundConnections['shared_office365'] 'conn-365' 'Import result cached office365 connection'
+    Assert-Equal $importParsed.BoundConnections['shared_flowmanagement'] 'conn-fm' 'Import result cached flowmanagement connection'
+    Assert-Equal $importParsed.VerifiedFlows.Count 1 'Import result verified flows count'
+    Assert-Equal $importParsed.VerifiedFlows[0].State.ToString() 'On' 'Import result verified flow state'
+    Assert-Equal $importParsed.VerifiedFlows[0].FlowReference.FlowName 'flow-1' 'Import result verified flow reference'
+
+    $parseBatchMethod = [OofManager.Wpf.Services.PowerAutomateService].GetMethod('ParseBatchResult', [Reflection.BindingFlags]'NonPublic,Static')
+    $batchStatusJson = @{
+        Outcome = 'Success'
+        Message = 'Batch flow status check complete.'
+        BatchItems = @(
+            @{ DisplayName = 'FlowA'; Outcome = 'Success'; State = 'On'; Message = 'On' },
+            @{ DisplayName = 'FlowB'; Outcome = 'Success'; State = 'Off'; Message = 'Off' },
+            @{ DisplayName = 'FlowC'; Outcome = 'NoFlowFound'; State = 'NotFound'; Message = 'Missing' }
+        )
+    } | ConvertTo-Json -Depth 10 -Compress
+    $batchParsed = $parseBatchMethod.Invoke($null, @([string]$batchStatusJson, 0, [string[]]@('FlowA', 'FlowB', 'FlowC')))
+    Assert-Equal $batchParsed.Outcome.ToString() 'Success' 'Batch status outcome'
+    Assert-Equal $batchParsed.Items.Count 3 'Batch status item count'
+    Assert-Equal $batchParsed.Items[0].State.ToString() 'On' 'Batch item A state'
+    Assert-Equal $batchParsed.Items[1].State.ToString() 'Off' 'Batch item B state'
+    Assert-Equal $batchParsed.Items[2].State.ToString() 'NotFound' 'Batch item C state'
+
+    $progressTemp = Join-Path ([IO.Path]::GetTempPath()) ("OofManager-Progress-" + [Guid]::NewGuid() + '.log')
+    try {
+        $reportMethod = [OofManager.Wpf.Services.PowerAutomateService].GetMethod('ReportProgressLines', [Reflection.BindingFlags]'NonPublic,Static')
+        $progressReporter = New-Object SynchronousTestProgress
+        [IO.File]::AppendAllText($progressTemp, "Step 1`r`nStep 2`r`n", [Text.UTF8Encoding]::new($false))
+        $args1 = [object[]]@([string]$progressTemp, [long]0, $progressReporter.PSObject.BaseObject)
+        $null = $reportMethod.Invoke($null, $args1)
+        $offsetAfterFirst = [long]$args1[1]
+        Assert-Equal ($offsetAfterFirst -gt 0) $true 'Incremental progress offset advanced'
+        Assert-Equal ($progressReporter.Lines -join '|') 'Step 1|Step 2' 'First incremental progress read'
+        [IO.File]::AppendAllText($progressTemp, "Step 3`r`n", [Text.UTF8Encoding]::new($false))
+        $args2 = [object[]]@([string]$progressTemp, [long]$offsetAfterFirst, $progressReporter.PSObject.BaseObject)
+        $null = $reportMethod.Invoke($null, $args2)
+        Assert-Equal ([long]$args2[1] -gt $offsetAfterFirst) $true 'Incremental progress offset advanced on second read'
+        Assert-Equal ($progressReporter.Lines -join '|') 'Step 1|Step 2|Step 3' 'Second incremental progress read without duplicate lines'
+    }
+    finally {
+        if (Test-Path $progressTemp) { Remove-Item -LiteralPath $progressTemp }
+    }
+
+    # Verify FlowDocumentHtml.IsEmpty fast path.
+    Add-Type -AssemblyName PresentationFramework
+    $emptyDoc = [OofManager.Wpf.Services.FlowDocumentHtml]::ToHtml($null)
+    Assert-Equal $emptyDoc '' 'Null FlowDocument produces empty HTML'
+    $flowDoc = New-Object System.Windows.Documents.FlowDocument
+    Assert-Equal ([OofManager.Wpf.Services.FlowDocumentHtml]::IsEmpty($flowDoc)) $true 'Empty FlowDocument IsEmpty'
+    [OofManager.Wpf.Services.FlowDocumentHtml]::Load($flowDoc, '<p>   </p>')
+    Assert-Equal ([OofManager.Wpf.Services.FlowDocumentHtml]::IsEmpty($flowDoc)) $true 'Whitespace FlowDocument IsEmpty'
+    [OofManager.Wpf.Services.FlowDocumentHtml]::Load($flowDoc, '<p>Hello <b>world</b></p>')
+    Assert-Equal ([OofManager.Wpf.Services.FlowDocumentHtml]::IsEmpty($flowDoc)) $false 'Populated FlowDocument IsEmpty is false'
+
     Write-Host 'Cloud schedule regression checks passed.'
 }
 finally {

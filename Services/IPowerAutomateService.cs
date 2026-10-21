@@ -136,7 +136,9 @@ public sealed class CloudScheduleImportResult
         string? environmentId,
         string? environmentDisplayName,
         string? instanceUrl,
-        string? workflowId)
+        string? workflowId,
+        IReadOnlyDictionary<string, string>? boundConnections = null,
+        IReadOnlyList<PowerAutomateFlowBatchItem>? verifiedFlows = null)
     {
         Outcome = outcome;
         Message = message;
@@ -144,6 +146,8 @@ public sealed class CloudScheduleImportResult
         EnvironmentDisplayName = environmentDisplayName;
         InstanceUrl = instanceUrl;
         WorkflowId = workflowId;
+        BoundConnections = boundConnections;
+        VerifiedFlows = verifiedFlows ?? Array.Empty<PowerAutomateFlowBatchItem>();
     }
 
     public CloudScheduleImportOutcome Outcome { get; }
@@ -152,6 +156,8 @@ public sealed class CloudScheduleImportResult
     public string? EnvironmentDisplayName { get; }
     public string? InstanceUrl { get; }
     public string? WorkflowId { get; }
+    public IReadOnlyDictionary<string, string>? BoundConnections { get; }
+    public IReadOnlyList<PowerAutomateFlowBatchItem> VerifiedFlows { get; }
 }
 
 /// <summary>
@@ -269,9 +275,13 @@ public sealed class PowerAutomateConnectionReference
 }
 
 public interface IPowerAutomateService
-{    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
+{
+    PowerAutomateFlowReference? TryGetCachedFlowReference(string? upnHint, string expectedFlowDisplayName);
+    Task<PowerAutomateStatusResult> GetOofManagerFlowStatusAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, CancellationToken ct = default, IProgress<string>? progress = null);
+    Task<PowerAutomateFlowBatchResult> GetOofManagerFlowsStatusBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, CancellationToken ct = default, IProgress<string>? progress = null);
     Task<PowerAutomateResult> DisableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
     Task<PowerAutomateResult> EnableOofManagerFlowsAsync(string? upnHint, string? displayNameHint, string expectedFlowDisplayName, IProgress<string>? progress = null, CancellationToken ct = default);
+    Task<PowerAutomateFlowBatchResult> SetOofManagerFlowsEnabledBatchAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, bool enabled, IProgress<string>? progress = null, CancellationToken ct = default);
     Task<PowerAutomateFlowBatchResult> EnsureOofManagerFlowsOnAsync(string? upnHint, string? displayNameHint, IReadOnlyList<string> expectedFlowDisplayNames, IProgress<string>? progress = null, CancellationToken ct = default);
 
     /// <summary>
@@ -301,5 +311,6 @@ public interface IPowerAutomateService
         bool forceOverwrite,
         IProgress<string>? progress = null,
         CancellationToken ct = default,
-        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null);
+        IReadOnlyList<PowerAutomateConnectionReference>? connectionReferences = null,
+        IReadOnlyList<string>? expectedFlowDisplayNames = null);
 }

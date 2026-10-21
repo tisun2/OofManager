@@ -216,8 +216,7 @@ public partial class HtmlEditor : UserControl
 
     private void UpdatePlaceholder()
     {
-        var empty = string.IsNullOrWhiteSpace(
-            new TextRange(Editor.Document.ContentStart, Editor.Document.ContentEnd).Text);
+        var empty = FlowDocumentHtml.IsEmpty(Editor.Document);
         PlaceholderText.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
     }
 

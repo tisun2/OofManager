@@ -365,28 +365,30 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // is allowed to change OOF state". Refresh every dependent caption
         // and binding so the OOF card flips between interactive and read-
         // only mode immediately.
-        WorkScheduleStatus = value ? GetWorkScheduleStatus() : "Work schedule rule disabled";
         OnPropertyChanged(nameof(IsOofAutoManaged));
         OnPropertyChanged(nameof(IsScheduleMode));
         OnPropertyChanged(nameof(IsManualMode));
         OnPropertyChanged(nameof(SyncCardSubtitle));
         OnPropertyChanged(nameof(SyncButtonText));
         OnPropertyChanged(nameof(SyncButtonToolTip));
-        RefreshOofStatusBar();
-
-        // Each mode remembers its own reply text. Pull the now-active
-        // mode's saved copy (if any) into the visible editors. Skipped
-        // during prefs hydration — at that point we have no editor input
-        // yet and OnLoadedAsync's Exchange-state assignment seeds the
-        // current mode's slot.
-        if (!_suppressDirtyTracking)
-            RestoreReplyMessagesForCurrentMode();
 
         // Initial hydration (LoadWorkSchedulePreferences) and error rollbacks
         // pass through the same setter; we only commit for genuine user
         // flips. _suppressDirtyTracking is set during prefs load, and the
         // dedicated _suppressWorkScheduleCommit flag is set by rollbacks.
-        if (_suppressDirtyTracking || _suppressWorkScheduleCommit) return;
+        // During initial hydration, LoadWorkSchedulePreferences computes
+        // WorkScheduleStatus after all 7 days are loaded and LoadAsync
+        // refreshes the OOF status bar, so skip duplicate work here.
+        if (_suppressDirtyTracking) return;
+
+        WorkScheduleStatus = value ? GetWorkScheduleStatus() : "Work schedule rule disabled";
+        RefreshOofStatusBar();
+
+        // Each mode remembers its own reply text. Pull the now-active
+        // mode's saved copy (if any) into the visible editors.
+        RestoreReplyMessagesForCurrentMode();
+
+        if (_suppressWorkScheduleCommit) return;
         _ = CommitWorkScheduleFlipAsync(value);
     }
 
@@ -840,10 +842,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
             // mode it should reflect reality whenever the app is up.
             if (_hasLoadedOnce)
             {
-                // Fire-and-forget, but observe exceptions so a failed cloud-status
-                // probe doesn't silently leave the banner stuck on stale data.
-                _ = SafeRefreshAsync(RefreshCloudScheduleFlowStatusAsync, nameof(RefreshCloudScheduleFlowStatusAsync), _lifetimeCts.Token);
-                _ = SafeRefreshAsync(RefreshVacationFlowsStatusAsync, nameof(RefreshVacationFlowsStatusAsync), _lifetimeCts.Token);
+                // Fire-and-forget a single batched status check for both the
+                // Weekly Schedule flow and the two Vacation flows, so startup
+                // spawns 1 hidden PowerShell child process instead of 3.
+                _ = SafeRefreshAsync(RefreshAllCloudFlowsStatusAsync, nameof(RefreshAllCloudFlowsStatusAsync), _lifetimeCts.Token);
             }
         }
     }
@@ -1251,11 +1253,36 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 connectionReferences: new[]
                 {
                     new PowerAutomateConnectionReference(pkg.ConnectionReferenceLogicalName, pkg.ConnectorId),
-                });
+                },
+                expectedFlowDisplayNames: new[] { pkg.FlowDisplayName });
 
             if (import.Outcome == CloudScheduleImportOutcome.Success)
             {
-                var activation = await EnsureCloudScheduleFlowOnAfterImportAsync(pkg.FlowDisplayName);
+                var inProcItem = import.VerifiedFlows.FirstOrDefault(i =>
+                    string.Equals(i.DisplayName, pkg.FlowDisplayName, StringComparison.OrdinalIgnoreCase));
+                (bool IsReady, string Message) activation;
+                if (inProcItem != null && inProcItem.State == PowerAutomateFlowState.On)
+                {
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.On);
+                    activation = (true, "Power Automate flow is on.");
+                }
+                else if (inProcItem != null && inProcItem.State == PowerAutomateFlowState.Off)
+                {
+                    SetCloudScheduleFlowBanner(PowerAutomateFlowState.Off);
+                    OpenConnectionReferencesPage(import.EnvironmentId, pkg.SolutionUniqueName);
+                    await _dialog.AlertAsync("Bind the flow's connection to turn it on",
+                        "The weekly schedule flow was imported but couldn't be turned on automatically. Usually this means a connection reference inside the solution isn't bound to a connection yet — most often the Office 365 Outlook or Power Automate Management connector, because it's the first time you're using it on this tenant. pac CLI / Dataverse import can't bind it for you.\n\n" +
+                        "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                        "  1. Click the row's ⋯ → Edit\n" +
+                        "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                        "  3. Save\n\n" +
+                        "Then come back here and toggle the weekly schedule flow on. After this one-time setup, re-running 'Set up weekly schedule in cloud' reuses the bound connection automatically.");
+                    activation = (false, "Imported, but the flow's connection reference needs a one-time bind — Connection references page opened.");
+                }
+                else
+                {
+                    activation = await EnsureCloudScheduleFlowOnAfterImportAsync(pkg.FlowDisplayName);
+                }
                 // Settle the lower "Weekly schedule flow" banner to the real
                 // On/Off state, then fold the import summary into its detail
                 // line so the result lives in one banner (no duplicate top line).
@@ -1336,25 +1363,44 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var resolveDisplay = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
             var expectedScheduleFlowDisplayName =
                 CloudSchedulePackageGenerator.ComputeFlowIdentity(resolveUpn ?? string.Empty).FlowDisplayName;
-            SetVacationFlowsBannerProgress("Setting up", "Locating your weekly schedule flow…");
-            try
+
+            // Fast path: reuse the per-flow reference cached in
+            // FlowReferencesCacheV2 (keyed by exact DisplayName, populated at
+            // startup by RefreshAllCloudFlowsStatusAsync and updated on every
+            // Weekly Schedule import/toggle). Only launch a separate
+            // Get-Status child process when the cache has no entry for the
+            // Weekly Schedule flow yet.
+            var cachedScheduleRef = _powerAutomate.TryGetCachedFlowReference(resolveUpn, expectedScheduleFlowDisplayName);
+            if (cachedScheduleRef != null &&
+                !string.IsNullOrWhiteSpace(cachedScheduleRef.EnvironmentName) &&
+                !string.IsNullOrWhiteSpace(cachedScheduleRef.FlowName))
             {
-                var schedStatus = await _powerAutomate.GetOofManagerFlowStatusAsync(
-                    resolveUpn, resolveDisplay, expectedScheduleFlowDisplayName);
-                var reference = schedStatus.FlowReferences.FirstOrDefault(r =>
-                    !string.IsNullOrWhiteSpace(r.EnvironmentName) &&
-                    !string.IsNullOrWhiteSpace(r.FlowName) &&
-                    string.Equals(r.DisplayName, expectedScheduleFlowDisplayName, StringComparison.OrdinalIgnoreCase));
-                if (reference != null)
-                {
-                    scheduleEnvId = reference.EnvironmentName.Trim();
-                    scheduleFlowName = reference.FlowName.Trim();
-                    scheduleFlowDisplayName = reference.DisplayName.Trim();
-                }
+                scheduleEnvId = cachedScheduleRef.EnvironmentName.Trim();
+                scheduleFlowName = cachedScheduleRef.FlowName.Trim();
+                scheduleFlowDisplayName = cachedScheduleRef.DisplayName.Trim();
             }
-            catch
+            else
             {
-                // Couldn't reach Power Automate — fall through to cached prefs.
+                SetVacationFlowsBannerProgress("Setting up", "Locating your weekly schedule flow…");
+                try
+                {
+                    var schedStatus = await _powerAutomate.GetOofManagerFlowStatusAsync(
+                        resolveUpn, resolveDisplay, expectedScheduleFlowDisplayName);
+                    var reference = schedStatus.FlowReferences.FirstOrDefault(r =>
+                        !string.IsNullOrWhiteSpace(r.EnvironmentName) &&
+                        !string.IsNullOrWhiteSpace(r.FlowName) &&
+                        string.Equals(r.DisplayName, expectedScheduleFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+                    if (reference != null)
+                    {
+                        scheduleEnvId = reference.EnvironmentName.Trim();
+                        scheduleFlowName = reference.FlowName.Trim();
+                        scheduleFlowDisplayName = reference.DisplayName.Trim();
+                    }
+                }
+                catch
+                {
+                    // Couldn't reach Power Automate — fall through to legacy cached prefs.
+                }
             }
 
             // Fall back to whatever PowerAutomateService last cached from a
@@ -1532,7 +1578,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 {
                     new PowerAutomateConnectionReference(pkg.OutlookConnRefLogicalName, pkg.OutlookConnectorId),
                     new PowerAutomateConnectionReference(pkg.FlowMgmtConnRefLogicalName, pkg.FlowMgmtConnectorId),
-                });
+                },
+                expectedFlowDisplayNames: new[] { pkg.StartFlowDisplayName, pkg.EndFlowDisplayName });
 
             if (import.Outcome != CloudScheduleImportOutcome.Success)
             {
@@ -1541,16 +1588,32 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 return;
             }
 
-            var batchProgress = new Progress<string>(message =>
+            PowerAutomateFlowBatchResult ensure;
+            var verifiedStart = import.VerifiedFlows.FirstOrDefault(i => string.Equals(i.DisplayName, pkg.StartFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            var verifiedEnd   = import.VerifiedFlows.FirstOrDefault(i => string.Equals(i.DisplayName, pkg.EndFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            if (verifiedStart != null && verifiedEnd != null &&
+                (verifiedStart.State is PowerAutomateFlowState.On or PowerAutomateFlowState.Off) &&
+                (verifiedEnd.State is PowerAutomateFlowState.On or PowerAutomateFlowState.Off))
             {
-                if (!string.IsNullOrWhiteSpace(message))
-                    SetVacationFlowsBannerProgress("Importing", message);
-            });
-            var ensure = await _powerAutomate.EnsureOofManagerFlowsOnAsync(
-                MailboxIdentity,
-                UserDisplayName,
-                new[] { pkg.StartFlowDisplayName, pkg.EndFlowDisplayName },
-                progress: batchProgress);
+                var allReady = verifiedStart.State == PowerAutomateFlowState.On && verifiedEnd.State == PowerAutomateFlowState.On;
+                ensure = new PowerAutomateFlowBatchResult(
+                    allReady ? PowerAutomateOutcome.Success : PowerAutomateOutcome.OtherError,
+                    import.Message,
+                    import.VerifiedFlows);
+            }
+            else
+            {
+                var batchProgress = new Progress<string>(message =>
+                {
+                    if (!string.IsNullOrWhiteSpace(message))
+                        SetVacationFlowsBannerProgress("Importing", message);
+                });
+                ensure = await _powerAutomate.EnsureOofManagerFlowsOnAsync(
+                    MailboxIdentity,
+                    UserDisplayName,
+                    new[] { pkg.StartFlowDisplayName, pkg.EndFlowDisplayName },
+                    progress: batchProgress);
+            }
             var startOn = ToVacationEnsureResult(ensure, pkg.StartFlowDisplayName, "Vacation Start");
             var endOn = ToVacationEnsureResult(ensure, pkg.EndFlowDisplayName, "Vacation End");
 
@@ -1662,55 +1725,56 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         SetCloudScheduleFlowBannerProgress("Checking", "Checking Power Automate flow after import...");
 
-        var statusProgress = new Progress<string>(message =>
+        var enableProgress = new Progress<string>(message =>
         {
             if (string.IsNullOrWhiteSpace(message)) return;
-            var detail = NormalizeCloudScheduleFlowDetail(message);
-            SetCloudScheduleFlowBannerProgress("Checking", detail);
+            SetCloudScheduleFlowBannerProgress("Checking", NormalizeCloudScheduleFlowDetail(message));
         });
 
         try
         {
-            var status = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName, progress: statusProgress);
-            SetCloudScheduleFlowBanner(status.State);
-
-            if (status.State == PowerAutomateFlowState.On)
-            {
-                return (true, "Power Automate flow is on.");
-            }
-
-            if (status.State != PowerAutomateFlowState.Off)
-            {
-                return (false, "Power Automate solution imported, but the flow status could not be confirmed: " + status.Message);
-            }
-
-            SetCloudScheduleFlowBannerProgress("Turning on", "Power Automate flow is off. Turning it on...");
-
-            var enableProgress = new Progress<string>(message =>
-            {
-                if (string.IsNullOrWhiteSpace(message)) return;
-                SetCloudScheduleFlowBannerProgress("Turning on", NormalizeCloudScheduleFlowDetail(message));
-            });
+            // EnableOofManagerFlowsAsync checks the current state first and
+            // skips Enable-Flow when the flow is already On, or turns it On and
+            // verifies the final state in the same child process — avoiding a
+            // separate Get-Status child process before Enable-Flow.
             var enable = await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, enableProgress);
+            if (enable.Outcome == PowerAutomateOutcome.NoFlowFound)
+            {
+                SetCloudScheduleFlowBannerProgress("Checking", "Weekly schedule flow is still registering, waiting 10s before retry...");
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                enable = await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, expectedFlowDisplayName, enableProgress);
+            }
 
             switch (enable.Outcome)
             {
                 case PowerAutomateOutcome.Success:
-                    // Enable was accepted — but on a fresh tenant the flow's
-                    // connection reference (Office 365 Outlook / Power
-                    // Automate Management) may be unbound, in which case the
-                    // Enable API silently refuses to activate it and the flow
-                    // stays Off. Re-read the live state; if it didn't come up,
-                    // deep-link the user to the Connection references page so
-                    // they can do the one-time bind (same fix as the manual
-                    // vacation import path).
+                    // Enable was accepted — and BuildScript() already re-reads
+                    // the live state up to 3 times. Only launch a separate
+                    // verification process when enable.IsStateKnown is false.
                     {
-                        var verify = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName);
-                        SetCloudScheduleFlowBanner(verify.State);
-                        if (verify.State == PowerAutomateFlowState.On)
+                        var verifiedState = enable.IsStateKnown
+                            ? enable.State
+                            : (await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, expectedFlowDisplayName)).State;
+                        SetCloudScheduleFlowBanner(verifiedState);
+                        if (verifiedState == PowerAutomateFlowState.On)
                         {
-                            return (true, "Power Automate flow was off and has been turned on.");
+                            return (true, "Power Automate flow is on.");
                         }
+                        var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
+                        var solutionUniqueName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).SolutionUniqueName;
+                        OpenConnectionReferencesPage(envId, solutionUniqueName);
+                        await _dialog.AlertAsync("Bind the flow's connection to turn it on",
+                            "The weekly schedule flow was imported but couldn't be turned on automatically. Usually this means a connection reference inside the solution isn't bound to a connection yet — most often the Office 365 Outlook or Power Automate Management connector, because it's the first time you're using it on this tenant. pac CLI / Dataverse import can't bind it for you.\n\n" +
+                            "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                            "  1. Click the row's ⋯ → Edit\n" +
+                            "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                            "  3. Save\n\n" +
+                            "Then come back here and toggle the weekly schedule flow on. After this one-time setup, re-running 'Set up weekly schedule in cloud' reuses the bound connection automatically.");
+                        return (false, "Imported, but the flow's connection reference needs a one-time bind — Connection references page opened.");
+                    }
+                case PowerAutomateOutcome.OtherError when enable.State == PowerAutomateFlowState.Off:
+                    {
+                        SetCloudScheduleFlowBanner(PowerAutomateFlowState.Off);
                         var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
                         var solutionUniqueName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).SolutionUniqueName;
                         OpenConnectionReferencesPage(envId, solutionUniqueName);
@@ -2066,8 +2130,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
             var progress = new Progress<string>(m => { if (!string.IsNullOrWhiteSpace(m)) SetVacationFlowsBannerDetailOnly(m); });
 
-            var startResult = await _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.StartFlowDisplayName, progress);
-            var endResult   = await _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.EndFlowDisplayName, progress);
+            var startTask = _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.StartFlowDisplayName, progress);
+            var endTask   = _powerAutomate.GetCloudScheduleDefinitionAsync(upn, displayName, identity.EndFlowDisplayName, progress);
+            await Task.WhenAll(startTask, endTask);
+            var startResult = await startTask;
+            var endResult   = await endTask;
 
             if (startResult.Outcome == PowerAutomateOutcome.NoFlowFound && endResult.Outcome == PowerAutomateOutcome.NoFlowFound)
             {
@@ -2317,6 +2384,53 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private Task EnableVacationFlowsAsync() => RunVacationFlowsToggleAsync(disable: false);
 
+    private async Task RefreshAllCloudFlowsStatusAsync()
+    {
+        if (_isCloudScheduleFlowStatusChecking || _isVacationFlowsStatusChecking) return;
+
+        _isCloudScheduleFlowStatusChecking = true;
+        _isVacationFlowsStatusChecking = true;
+        SetCloudScheduleFlowBannerProgress("Checking", "Checking Power Automate flow...");
+        SetVacationFlowsBannerProgress("Checking", "Checking vacation flows...");
+        try
+        {
+            var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
+            var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
+            var scheduleFlowName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).FlowDisplayName;
+            var vacationIdentity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
+            var statusProgress = new Progress<string>(message =>
+            {
+                if (string.IsNullOrWhiteSpace(message)) return;
+                var detail = NormalizeCloudScheduleFlowDetail(message);
+                SetCloudScheduleFlowBannerProgress("Checking", detail);
+                SetVacationFlowsBannerProgress("Checking", detail);
+            });
+
+            var batch = await _powerAutomate.GetOofManagerFlowsStatusBatchAsync(
+                upn,
+                displayName,
+                new[] { scheduleFlowName, vacationIdentity.StartFlowDisplayName, vacationIdentity.EndFlowDisplayName },
+                progress: statusProgress);
+
+            var schedItem = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, scheduleFlowName, StringComparison.OrdinalIgnoreCase));
+            var startItem = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, vacationIdentity.StartFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            var endItem   = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, vacationIdentity.EndFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+
+            SetCloudScheduleFlowBanner(schedItem?.State ?? PowerAutomateFlowState.Unknown);
+            SetVacationFlowsBanner(startItem?.State ?? PowerAutomateFlowState.Unknown, endItem?.State ?? PowerAutomateFlowState.Unknown);
+        }
+        catch
+        {
+            SetCloudScheduleFlowBanner(PowerAutomateFlowState.Unknown);
+            SetVacationFlowsBanner(PowerAutomateFlowState.Unknown, PowerAutomateFlowState.Unknown);
+        }
+        finally
+        {
+            _isCloudScheduleFlowStatusChecking = false;
+            _isVacationFlowsStatusChecking = false;
+        }
+    }
+
     private async Task RefreshVacationFlowsStatusAsync()
     {
         if (_isVacationFlowsStatusChecking) return;
@@ -2328,10 +2442,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
             var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
             var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
+            var progress = new Progress<string>(message =>
+            {
+                if (!string.IsNullOrWhiteSpace(message))
+                    SetVacationFlowsBannerProgress("Checking", message);
+            });
 
-            var startStatus = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, identity.StartFlowDisplayName);
-            var endStatus   = await _powerAutomate.GetOofManagerFlowStatusAsync(upn, displayName, identity.EndFlowDisplayName);
-            SetVacationFlowsBanner(startStatus.State, endStatus.State);
+            var batch = await _powerAutomate.GetOofManagerFlowsStatusBatchAsync(
+                upn,
+                displayName,
+                new[] { identity.StartFlowDisplayName, identity.EndFlowDisplayName },
+                progress: progress);
+
+            var startItem = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, identity.StartFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            var endItem   = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, identity.EndFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            SetVacationFlowsBanner(startItem?.State ?? PowerAutomateFlowState.Unknown, endItem?.State ?? PowerAutomateFlowState.Unknown);
         }
         catch
         {
@@ -2425,39 +2550,49 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var upn = !string.IsNullOrWhiteSpace(MailboxIdentity) ? MailboxIdentity : UserEmail;
             var displayName = !string.IsNullOrWhiteSpace(UserDisplayName) ? UserDisplayName : null;
             var identity = ManualVacationPackageGenerator.ComputeIdentity(upn ?? string.Empty);
-
-            async Task<PowerAutomateResult> ToggleOneAsync(string flowDisplayName, string label)
+            var progress = new Progress<string>(m =>
             {
-                SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{verbLabel} {label}...");
-                var progress = new Progress<string>(m =>
-                {
-                    if (!string.IsNullOrWhiteSpace(m))
-                        SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", $"{label}: {m}");
-                });
-                return disable
-                    ? await _powerAutomate.DisableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress)
-                    : await _powerAutomate.EnableOofManagerFlowsAsync(upn, displayName, flowDisplayName, progress: progress);
+                if (!string.IsNullOrWhiteSpace(m))
+                    SetVacationFlowsBannerProgress(disable ? "Turning off" : "Turning on", m);
+            });
+
+            // Toggle both Vacation Start and Vacation End in a single child
+            // process (with in-script state verification) instead of spawning
+            // 2 toggle processes + 2 status processes.
+            var batch = await _powerAutomate.SetOofManagerFlowsEnabledBatchAsync(
+                upn,
+                displayName,
+                new[] { identity.StartFlowDisplayName, identity.EndFlowDisplayName },
+                enabled: !disable,
+                progress: progress);
+
+            var startItem = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, identity.StartFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+            var endItem   = batch.Items.FirstOrDefault(i => string.Equals(i.DisplayName, identity.EndFlowDisplayName, StringComparison.OrdinalIgnoreCase));
+
+            var startState = startItem?.State ?? PowerAutomateFlowState.Unknown;
+            var endState   = endItem?.State ?? PowerAutomateFlowState.Unknown;
+            if (startState == PowerAutomateFlowState.Unknown || endState == PowerAutomateFlowState.Unknown)
+            {
+                await RefreshVacationFlowsStatusAsync();
+            }
+            else
+            {
+                SetVacationFlowsBanner(startState, endState);
             }
 
-            var startResult = await ToggleOneAsync(identity.StartFlowDisplayName, "Vacation Start");
-            var endResult   = await ToggleOneAsync(identity.EndFlowDisplayName, "Vacation End");
+            var startOutcome = startItem?.Outcome ?? batch.Outcome;
+            var endOutcome   = endItem?.Outcome ?? batch.Outcome;
+            var bothOk = startOutcome == PowerAutomateOutcome.Success && endOutcome == PowerAutomateOutcome.Success;
 
-            await RefreshVacationFlowsStatusAsync();
-
-            var bothOk = startResult.Outcome == PowerAutomateOutcome.Success && endResult.Outcome == PowerAutomateOutcome.Success;
-
-            // When the user is trying to TURN ON vacation flows and the
-            // PowerShell call reports Success but the flows are still Off
-            // after a refresh, the near-certain cause is that the
-            // shared_flowmanagement connection reference is unbound: pac CLI
-            // / Dataverse import can't auto-bind it on tenants where the
-            // user has never created a Power Automate Management connection
-            // before (which is everyone the first time). Power Automate
-            // accepts the Enable API call but refuses to actually activate
-            // a flow with an unbound connection ref, so the UI symptom is
-            // "Turn on does nothing." Deep-link to the solution's Connection
-            // references page so the user is one click from binding it.
-            if (!disable && bothOk && VacationFlowsStateText != "On")
+            // When the user is trying to TURN ON vacation flows and either the
+            // script verified they stayed Off or a post-refresh still shows
+            // non-On, the near-certain cause is that the shared_flowmanagement
+            // connection reference is unbound.
+            var stayedOffAfterEnable = !disable &&
+                ((bothOk && VacationFlowsStateText != "On") ||
+                 startState == PowerAutomateFlowState.Off ||
+                 endState == PowerAutomateFlowState.Off);
+            if (stayedOffAfterEnable)
             {
                 var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
                 OpenConnectionReferencesPage(envId, identity.SolutionUniqueName);
@@ -2474,7 +2609,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             StatusMessage = bothOk
                 ? string.Empty
-                : $"⚠️ Vacation flows toggle finished with issues. Start: {startResult.Outcome} ({startResult.Message}). End: {endResult.Outcome} ({endResult.Message}).";
+                : $"⚠️ Vacation flows toggle finished with issues. Start: {startOutcome} ({startItem?.Message ?? batch.Message}). End: {endOutcome} ({endItem?.Message ?? batch.Message}).";
         }
         catch (Exception ex)
         {
@@ -2535,26 +2670,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
             switch (result.Outcome)
             {
                 case PowerAutomateOutcome.Success:
-                    SetCloudScheduleFlowBanner(disable ? PowerAutomateFlowState.Off : PowerAutomateFlowState.On);
-                    // Success is already conveyed by the banner switching to
-                    // On/Off plus its detail text — keeping a separate
-                    // "Turned off Power Automate flow: ..." line above just
-                    // duplicates the banner and never auto-clears.
+                    SetCloudScheduleFlowBanner(result.IsStateKnown ? result.State : (disable ? PowerAutomateFlowState.Off : PowerAutomateFlowState.On));
                     StatusMessage = string.Empty;
-                    // When TURNING ON, verify the flow actually came up. If
-                    // Power Automate accepted the Enable call but the flow
-                    // stays Off, the near-certain cause is an unbound
-                    // connection reference (Office 365 Outlook /
-                    // shared_flowmanagement) that the user has never bound on
-                    // this tenant — pac CLI / Dataverse import can't bind it
-                    // automatically and the Enable API silently refuses to
-                    // activate a flow with an unbound connection. This is
-                    // exactly the "toggle did nothing until I turned it on
-                    // once in the portal" symptom: the portal turn-on does
-                    // the one-time bind, after which this toggle works.
                     if (!disable)
                     {
-                        await RefreshCloudScheduleFlowStatusAsync();
+                        // BuildScript() already re-reads the live state up to
+                        // 3 times after Enable-Flow. Only spawn a separate
+                        // status process when result.IsStateKnown is false.
+                        if (!result.IsStateKnown)
+                        {
+                            await RefreshCloudScheduleFlowStatusAsync();
+                        }
                         if (CloudScheduleFlowStateText != "On")
                         {
                             var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
@@ -2569,6 +2695,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
                                 "  3. Save\n\n" +
                                 "Then come back here and toggle the weekly schedule flow on again. After this one-time setup the in-app toggle works directly.");
                         }
+                    }
+                    break;
+                case PowerAutomateOutcome.OtherError when !disable && result.State == PowerAutomateFlowState.Off:
+                    {
+                        SetCloudScheduleFlowBanner(PowerAutomateFlowState.Off);
+                        var envId = _prefs.GetString("PowerAutomate.Import.Environment.Id");
+                        var solutionUniqueName = CloudSchedulePackageGenerator.ComputeFlowIdentity(upn ?? string.Empty).SolutionUniqueName;
+                        OpenConnectionReferencesPage(envId, solutionUniqueName);
+                        StatusMessage = "⚠️ The weekly schedule flow accepted the Turn on but stayed Off — Connection references page opened.";
+                        await _dialog.AlertAsync("Bind the flow's connection",
+                            "The weekly schedule flow accepted the Turn on call but stayed Off. The usual cause is an unbound connection reference (Office 365 Outlook or the Power Automate Management connector) that needs a one-time bind in the portal. This is the same reason the toggle 'does nothing' until you turn the flow on once on the Power Automate website.\n\n" +
+                            "I just opened the Connection references page. For each row whose Status is Off:\n" +
+                            "  1. Click the row's ⋯ → Edit\n" +
+                            "  2. In Connection: pick an existing one, or click '+ New connection' and sign in\n" +
+                            "  3. Save\n\n" +
+                            "Then come back here and toggle the weekly schedule flow on again. After this one-time setup the in-app toggle works directly.");
                     }
                     break;
                 case PowerAutomateOutcome.NoFlowFound:

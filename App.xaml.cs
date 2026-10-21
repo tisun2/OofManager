@@ -51,8 +51,11 @@ public partial class App : Application
         try
         {
             var prefs = Services.GetRequiredService<IPreferencesService>();
-            prefs.Set("WorkSchedule.AutoRefresh", false);
-            prefs.Set("WorkSchedule.BackgroundSync", false);
+            using (prefs.BeginBatch())
+            {
+                prefs.Set("WorkSchedule.AutoRefresh", false);
+                prefs.Set("WorkSchedule.BackgroundSync", false);
+            }
             Services.GetRequiredService<IStartupService>().SetEnabled(false);
         }
         catch (Exception ex)

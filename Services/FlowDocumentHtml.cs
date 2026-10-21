@@ -29,20 +29,69 @@ public static class FlowDocumentHtml
     // ---------- FlowDocument -> HTML ----------
 
     /// <summary>
+    /// Fast check for whether the document contains any non-whitespace text,
+    /// stopping at the very first non-whitespace character without allocating
+    /// a <see cref="TextRange"/> or full-document string on every keystroke.
+    /// </summary>
+    public static bool IsEmpty(FlowDocument? document)
+    {
+        if (document is null) return true;
+        return AreBlocksEmpty(document.Blocks);
+    }
+
+    private static bool AreBlocksEmpty(BlockCollection blocks)
+    {
+        foreach (var block in blocks)
+        {
+            switch (block)
+            {
+                case Paragraph p:
+                    if (!AreInlinesEmpty(p.Inlines)) return false;
+                    break;
+                case List list:
+                    foreach (var item in list.ListItems)
+                    {
+                        if (!AreBlocksEmpty(item.Blocks)) return false;
+                    }
+                    break;
+                case Section s:
+                    if (!AreBlocksEmpty(s.Blocks)) return false;
+                    break;
+            }
+        }
+        return true;
+    }
+
+    private static bool AreInlinesEmpty(InlineCollection inlines)
+    {
+        foreach (var inline in inlines)
+        {
+            switch (inline)
+            {
+                case Run run:
+                    var text = run.Text;
+                    for (var i = 0; i < text.Length; i++)
+                    {
+                        if (!char.IsWhiteSpace(text[i])) return false;
+                    }
+                    break;
+                case Span span:
+                    if (!AreInlinesEmpty(span.Inlines)) return false;
+                    break;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Serializes the document to a sanitized body fragment.
     /// </summary>
     public static string ToHtml(FlowDocument? document)
     {
-        if (document is null) return string.Empty;
-
-        // A document holding only blank paragraphs is an empty reply. Callers
-        // (pref seeding, drift checks, EnsureHtml) all key off an empty string
-        // meaning "nothing to send", so don't hand them "<p><br></p>".
-        if (string.IsNullOrWhiteSpace(new TextRange(document.ContentStart, document.ContentEnd).Text))
-            return string.Empty;
+        if (IsEmpty(document)) return string.Empty;
 
         var sb = new StringBuilder();
-        WriteBlocks(sb, document.Blocks);
+        WriteBlocks(sb, document!.Blocks);
         // Round-trip through the sanitizer so serializer output and wire format
         // can never diverge, and so anything the user pasted that survived into
         // the document still can't escape into the message.
