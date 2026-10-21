@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using OofManager.Wpf.Models;
 
 namespace OofManager.Wpf.Services;
 
@@ -177,13 +178,14 @@ public sealed class PowerAutomateService : IPowerAutomateService
             TryReadReplyAction(defEl, out var internalReplyHtml, out var externalReplyHtml, out var externalAudience);
 
             return new CloudScheduleDefinitionResult(PowerAutomateOutcome.Success, message, flowDisplayName, triggerDays, triggerHour, triggerMinute, triggerTz,
-                perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen),
+                perDaySchedule: TryReadSidecar(defEl, out var sidecarTz, out var sidecarGen, out var sidecarTemplates),
                 sidecarTimeZone: sidecarTz,
                 sidecarGeneratedAt: sidecarGen,
                 triggerStartTimeUtc: triggerStartTimeUtc,
                 internalReplyHtml: internalReplyHtml,
                 externalReplyHtml: externalReplyHtml,
-                externalAudience: externalAudience);
+                externalAudience: externalAudience,
+                templates: sidecarTemplates);
         }
         catch (Exception ex)
         {
@@ -194,15 +196,20 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
     /// <summary>
     /// Decodes the OofManager sidecar metadata stamped by the generator
-    /// under <c>definition.parameters._oofmgr_source.defaultValue.days</c>.
-    /// Returns null when the sidecar is missing (older flow predates the
-    /// sidecar shipping) so the caller can fall back to the workday/trigger
-    /// compare path.
+    /// under <c>definition.parameters._oofmgr_source.defaultValue</c>.
+    /// Returns null when the per-day schedule is missing (older flow or
+    /// vacation flow) while still populating <paramref name="templates"/>
+    /// when present.
     /// </summary>
-    private static IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? TryReadSidecar(JsonElement defEl, out string? tz, out string? generatedAt)
+    private static IReadOnlyDictionary<DayOfWeek, CloudDaySchedule>? TryReadSidecar(
+        JsonElement defEl,
+        out string? tz,
+        out string? generatedAt,
+        out IReadOnlyList<OofTemplate>? templates)
     {
         tz = null;
         generatedAt = null;
+        templates = null;
         if (!defEl.TryGetProperty("parameters", out var paramsEl) || paramsEl.ValueKind != JsonValueKind.Object)
             return null;
         if (!paramsEl.TryGetProperty("_oofmgr_source", out var srcEl) || srcEl.ValueKind != JsonValueKind.Object)
@@ -212,6 +219,36 @@ public sealed class PowerAutomateService : IPowerAutomateService
 
         if (dvEl.TryGetProperty("tz", out var tzEl) && tzEl.ValueKind == JsonValueKind.String) tz = tzEl.GetString();
         if (dvEl.TryGetProperty("generatedAt", out var gEl) && gEl.ValueKind == JsonValueKind.String) generatedAt = gEl.GetString();
+
+        if (dvEl.TryGetProperty("templates", out var tplsEl) && tplsEl.ValueKind == JsonValueKind.Array)
+        {
+            var parsedTemplates = new List<OofTemplate>();
+            foreach (var tEl in tplsEl.EnumerateArray())
+            {
+                if (tEl.ValueKind != JsonValueKind.Object) continue;
+                var name = tEl.TryGetProperty("name", out var nEl) && nEl.ValueKind == JsonValueKind.String ? nEl.GetString() : null;
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                var intReply = tEl.TryGetProperty("internalReply", out var irEl) && irEl.ValueKind == JsonValueKind.String ? irEl.GetString() ?? string.Empty : string.Empty;
+                var extReply = tEl.TryGetProperty("externalReply", out var erEl) && erEl.ValueKind == JsonValueKind.String ? erEl.GetString() ?? string.Empty : string.Empty;
+                var audAll = !tEl.TryGetProperty("externalAudienceAll", out var aaEl) || aaEl.ValueKind != JsonValueKind.False;
+                var updatedAt = DateTime.UtcNow;
+                if (tEl.TryGetProperty("updatedAt", out var upEl) && upEl.ValueKind == JsonValueKind.String &&
+                    DateTimeOffset.TryParse(upEl.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsedUp))
+                {
+                    updatedAt = parsedUp.UtcDateTime;
+                }
+                parsedTemplates.Add(new OofTemplate
+                {
+                    Name = name!.Trim(),
+                    InternalReply = intReply,
+                    ExternalReply = extReply,
+                    ExternalAudienceAll = audAll,
+                    CreatedAt = updatedAt,
+                    UpdatedAt = updatedAt,
+                });
+            }
+            templates = parsedTemplates;
+        }
 
         if (!dvEl.TryGetProperty("days", out var daysEl) || daysEl.ValueKind != JsonValueKind.Object)
             return null;

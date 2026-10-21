@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using OofManager.Wpf.Models;
 
 namespace OofManager.Wpf.Services;
 
@@ -140,8 +141,9 @@ public static class CloudSchedulePackageGenerator
         string externalReply,
         bool externalAudienceAll,
         bool generateManaged = true,
-        string? outputPath = null)
-        => GenerateWithIdentity(schedule, userEmail, internalReply, externalReply, externalAudienceAll, generateManaged, outputPath).Path;
+        string? outputPath = null,
+        IReadOnlyList<OofTemplate>? templates = null)
+        => GenerateWithIdentity(schedule, userEmail, internalReply, externalReply, externalAudienceAll, generateManaged, outputPath, templates).Path;
 
     /// <summary>
     /// Recomputes the per-user flow identifiers (workflow GUID, solution
@@ -171,7 +173,8 @@ public static class CloudSchedulePackageGenerator
         string externalReply,
         bool externalAudienceAll,
         bool generateManaged = true,
-        string? outputPath = null)
+        string? outputPath = null,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         outputPath ??= Path.Combine(Path.GetTempPath(), "OofManager-CloudSchedule.zip");
 
@@ -200,7 +203,8 @@ public static class CloudSchedulePackageGenerator
             audience: externalAudienceAll ? "all" : "contactsOnly",
             internalReply: ReplyHtml.EnsureHtml(internalReply),
             externalReply: ReplyHtml.EnsureHtml(externalReply),
-            schedule: schedule);
+            schedule: schedule,
+            templates: templates);
 
         var solutionXml = BuildSolutionXml(generateManaged, identity, solutionVersion);
         var customizationsXml = BuildCustomizationsXml(identity);
@@ -265,7 +269,8 @@ public static class CloudSchedulePackageGenerator
         string audience,
         string internalReply,
         string externalReply,
-        WorkScheduleSnapshot schedule)
+        WorkScheduleSnapshot schedule,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         var wrapper = new Dictionary<string, object?>
         {
@@ -318,7 +323,7 @@ public static class CloudSchedulePackageGenerator
                         ["_oofmgr_source"] = new Dictionary<string, object?>
                         {
                             ["type"] = "Object",
-                            ["defaultValue"] = BuildSidecarPayload(schedule, tzId),
+                            ["defaultValue"] = BuildSidecarPayload(schedule, tzId, templates),
                         },
                     },
                     ["triggers"] = new Dictionary<string, object?>
@@ -392,7 +397,10 @@ public static class CloudSchedulePackageGenerator
     /// compatible additions are safe; bump <c>version</c> if the shape
     /// changes incompatibly.
     /// </summary>
-    private static Dictionary<string, object?> BuildSidecarPayload(WorkScheduleSnapshot schedule, string tzId)
+    private static Dictionary<string, object?> BuildSidecarPayload(
+        WorkScheduleSnapshot schedule,
+        string tzId,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         var days = new Dictionary<string, object?>();
         foreach (DayOfWeek d in new[] { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday })
@@ -406,13 +414,37 @@ public static class CloudSchedulePackageGenerator
                 ["end"] = $"{end.Hours:D2}:{end.Minutes:D2}",
             };
         }
-        return new Dictionary<string, object?>
+        var payload = new Dictionary<string, object?>
         {
             ["version"] = 1,
             ["tz"] = tzId,
             ["generatedAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             ["days"] = days,
         };
+        if (templates != null)
+        {
+            payload["templates"] = BuildTemplatesSidecarList(templates);
+        }
+        return payload;
+    }
+
+    internal static List<Dictionary<string, object?>> BuildTemplatesSidecarList(IReadOnlyList<OofTemplate>? templates)
+    {
+        var list = new List<Dictionary<string, object?>>();
+        if (templates == null) return list;
+        foreach (var t in templates)
+        {
+            if (t == null || string.IsNullOrWhiteSpace(t.Name)) continue;
+            list.Add(new Dictionary<string, object?>
+            {
+                ["name"] = t.Name.Trim(),
+                ["internalReply"] = t.InternalReply ?? string.Empty,
+                ["externalReply"] = t.ExternalReply ?? string.Empty,
+                ["externalAudienceAll"] = t.ExternalAudienceAll,
+                ["updatedAt"] = t.UpdatedAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            });
+        }
+        return list;
     }
 
     private static Dictionary<string, object?> BuildRecurrenceTrigger(int triggerHour, int triggerMinute, string tzId)

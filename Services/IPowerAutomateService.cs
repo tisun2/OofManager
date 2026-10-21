@@ -1,3 +1,5 @@
+using OofManager.Wpf.Models;
+
 namespace OofManager.Wpf.Services;
 
 public enum PowerAutomateOutcome
@@ -182,7 +184,8 @@ public sealed class CloudScheduleDefinitionResult
         DateTimeOffset? triggerStartTimeUtc = null,
         string? internalReplyHtml = null,
         string? externalReplyHtml = null,
-        string? externalAudience = null)
+        string? externalAudience = null,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         Outcome = outcome;
         Message = message;
@@ -198,6 +201,7 @@ public sealed class CloudScheduleDefinitionResult
         InternalReplyHtml = internalReplyHtml;
         ExternalReplyHtml = externalReplyHtml;
         ExternalAudience = externalAudience;
+        Templates = templates;
     }
 
     public PowerAutomateOutcome Outcome { get; }
@@ -237,6 +241,12 @@ public sealed class CloudScheduleDefinitionResult
     public string? ExternalReplyHtml { get; }
     /// <summary>"all" or "contactsOnly" — whatever was stamped into the action body.</summary>
     public string? ExternalAudience { get; }
+
+    /// <summary>
+    /// Reply templates recovered from <c>_oofmgr_source.defaultValue.templates</c>.
+    /// Null when the deployed cloud flow predates template sidecar embedding.
+    /// </summary>
+    public IReadOnlyList<OofTemplate>? Templates { get; }
 }
 
 public sealed class CloudDaySchedule

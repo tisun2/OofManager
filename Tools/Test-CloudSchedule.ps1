@@ -269,6 +269,34 @@ try {
         $allTemplates = $templateSvc2.GetAllTemplatesAsync().GetAwaiter().GetResult()
         Assert-Equal $allTemplates.Count 1 'Reloaded template count from templates.json'
         Assert-Equal $allTemplates[0].Name 'Synced Template' 'Reloaded template name from templates.json'
+
+        # Verify cloud sidecar template embedding & parsing for both Weekly and Manual Vacation packages.
+        $weeklyZipWithTpl = Join-Path $testRoot 'WeeklyWithTemplates.zip'
+        $null = [OofManager.Wpf.Services.CloudSchedulePackageGenerator]::GenerateWithIdentity(
+            $schedule, 'test@example.com', 'Internal', 'External', $true, $false, $weeklyZipWithTpl, $allTemplates)
+        $wz = [IO.Compression.ZipFile]::OpenRead($weeklyZipWithTpl)
+        try {
+            $we = @($wz.Entries | Where-Object { $_.FullName -like 'Workflows/*.json' })[0]
+            $wsr = New-Object IO.StreamReader($we.Open())
+            try { $wFlow = $wsr.ReadToEnd() | ConvertFrom-Json } finally { $wsr.Dispose() }
+        } finally { $wz.Dispose() }
+        $wParsed = Read-Definition $wFlow.properties.definition
+        Assert-Equal $wParsed.Templates.Count 1 'Weekly cloud sidecar template count'
+        Assert-Equal $wParsed.Templates[0].Name 'Synced Template' 'Weekly cloud sidecar template name'
+
+        $vacZipWithTpl = Join-Path $testRoot 'VacationWithTemplates.zip'
+        $null = [OofManager.Wpf.Services.ManualVacationPackageGenerator]::GenerateWithIdentity(
+            'test@example.com', [datetime]'2026-11-01T09:00:00', [datetime]'2026-11-02T18:00:00',
+            'VacInternal', 'VacExternal', $true, 'env-1', 'flow-1', $schedule, 'WInt', 'WExt', $true, $false, $vacZipWithTpl, $allTemplates)
+        $vz = [IO.Compression.ZipFile]::OpenRead($vacZipWithTpl)
+        try {
+            $ve = @($vz.Entries | Where-Object { $_.Name -like '*Start*' })[0]
+            $vsr = New-Object IO.StreamReader($ve.Open())
+            try { $vFlow = $vsr.ReadToEnd() | ConvertFrom-Json } finally { $vsr.Dispose() }
+        } finally { $vz.Dispose() }
+        $vParsed = Read-Definition $vFlow.properties.definition
+        Assert-Equal $vParsed.Templates.Count 1 'Vacation Start cloud sidecar template count'
+        Assert-Equal $vParsed.Templates[0].Name 'Synced Template' 'Vacation Start cloud sidecar template name'
     }
     finally {
         if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }

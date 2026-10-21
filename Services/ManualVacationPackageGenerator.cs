@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using OofManager.Wpf.Models;
 
 namespace OofManager.Wpf.Services;
 
@@ -231,7 +232,8 @@ public static class ManualVacationPackageGenerator
         string weeklyExternalReply = "",
         bool weeklyExternalAudienceAll = true,
         bool generateManaged = true,
-        string? outputPath = null)
+        string? outputPath = null,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         if (vacationEnd <= vacationStart)
             throw new ArgumentException("vacationEnd must be after vacationStart.", nameof(vacationEnd));
@@ -272,7 +274,8 @@ public static class ManualVacationPackageGenerator
             internalReply: ReplyHtml.EnsureHtml(internalReply),
             externalReply: ReplyHtml.EnsureHtml(externalReply),
             scheduleFlowEnvironmentId: scheduleFlowEnvironmentId,
-            scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName);
+            scheduleFlowRuntimeFlowName: scheduleFlowRuntimeFlowName,
+            templates: templates);
 
         var endFlowJson = BuildVacationEndFlowJson(
             identity: identity,
@@ -381,7 +384,8 @@ public static class ManualVacationPackageGenerator
         string internalReply,
         string externalReply,
         string? scheduleFlowEnvironmentId,
-        string? scheduleFlowRuntimeFlowName)
+        string? scheduleFlowRuntimeFlowName,
+        IReadOnlyList<OofTemplate>? templates = null)
     {
         var hasScheduleTarget =
             !string.IsNullOrWhiteSpace(scheduleFlowEnvironmentId) &&
@@ -478,6 +482,18 @@ public static class ManualVacationPackageGenerator
                 runAfterStep: "Set_up_automatic_replies");
         }
 
+        Dictionary<string, object?>? sidecarPayload = null;
+        if (templates != null)
+        {
+            sidecarPayload = new Dictionary<string, object?>
+            {
+                ["version"] = 1,
+                ["tz"] = tzId,
+                ["generatedAt"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["templates"] = CloudSchedulePackageGenerator.BuildTemplatesSidecarList(templates),
+            };
+        }
+
         return SerializeWorkflowEnvelope(
             displayName: identity.StartFlowDisplayName,
             connectionReferences: connectionReferences,
@@ -485,7 +501,8 @@ public static class ManualVacationPackageGenerator
             // occurrence fires reliably; keep count=1 only for the no-target
             // build, which has no connection to self-disable with.
             trigger: BuildOneShotRecurrence(triggerStartUtc, includeCount: !hasScheduleTarget),
-            actions: actions);
+            actions: actions,
+            sidecarPayload: sidecarPayload);
     }
 
     /// <summary>
@@ -768,8 +785,31 @@ public static class ManualVacationPackageGenerator
         string displayName,
         Dictionary<string, object?> connectionReferences,
         Dictionary<string, object?> trigger,
-        Dictionary<string, object?> actions)
+        Dictionary<string, object?> actions,
+        Dictionary<string, object?>? sidecarPayload = null)
     {
+        var parameters = new Dictionary<string, object?>
+        {
+            ["$connections"] = new Dictionary<string, object?>
+            {
+                ["defaultValue"] = new Dictionary<string, object?>(),
+                ["type"] = "Object",
+            },
+            ["$authentication"] = new Dictionary<string, object?>
+            {
+                ["defaultValue"] = new Dictionary<string, object?>(),
+                ["type"] = "SecureObject",
+            },
+        };
+        if (sidecarPayload != null)
+        {
+            parameters["_oofmgr_source"] = new Dictionary<string, object?>
+            {
+                ["type"] = "Object",
+                ["defaultValue"] = sidecarPayload,
+            };
+        }
+
         var wrapper = new Dictionary<string, object?>
         {
             ["properties"] = new Dictionary<string, object?>
@@ -779,19 +819,7 @@ public static class ManualVacationPackageGenerator
                 {
                     ["$schema"] = "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
                     ["contentVersion"] = "1.0.0.0",
-                    ["parameters"] = new Dictionary<string, object?>
-                    {
-                        ["$connections"] = new Dictionary<string, object?>
-                        {
-                            ["defaultValue"] = new Dictionary<string, object?>(),
-                            ["type"] = "Object",
-                        },
-                        ["$authentication"] = new Dictionary<string, object?>
-                        {
-                            ["defaultValue"] = new Dictionary<string, object?>(),
-                            ["type"] = "SecureObject",
-                        },
-                    },
+                    ["parameters"] = parameters,
                     ["triggers"] = new Dictionary<string, object?>
                     {
                         ["Recurrence"] = trigger,

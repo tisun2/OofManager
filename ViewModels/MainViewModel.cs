@@ -1254,6 +1254,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var outPath = System.IO.Path.Combine(packageDir, "OofManager-CloudSchedule.zip");
 
             SetCloudScheduleFlowBannerProgress("Setting up", "Generating weekly schedule solution…");
+            var templatesSnapshot = Templates.ToList();
             var pkg = await Task.Run(() => CloudSchedulePackageGenerator.GenerateWithIdentity(
                 snapshot,
                 userEmail: MailboxIdentity,
@@ -1261,7 +1262,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 externalReply: ExternalReply,
                 externalAudienceAll: true,
                 generateManaged: false,
-                outputPath: outPath));
+                outputPath: outPath,
+                templates: templatesSnapshot));
 
             SetCloudScheduleFlowBannerProgress("Setting up", $"Generated v{pkg.SolutionVersion}. Importing to Power Automate…");
             var importProgress = new Progress<string>(message =>
@@ -1566,6 +1568,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var weeklySnapshot = new WorkScheduleSnapshot(_prefs);
             var weeklyInternal = _prefs.GetString(GetReplyPrefKey(internalReply: true,  weekly: true)) ?? string.Empty;
             var weeklyExternal = _prefs.GetString(GetReplyPrefKey(internalReply: false, weekly: true)) ?? string.Empty;
+            var templatesSnapshot = Templates.ToList();
             var pkg = await Task.Run(() => ManualVacationPackageGenerator.GenerateWithIdentity(
                 userEmail: MailboxIdentity,
                 vacationStart: startLocal,
@@ -1580,7 +1583,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 weeklyExternalReply: weeklyExternal,
                 weeklyExternalAudienceAll: true,
                 generateManaged: false,
-                outputPath: outPath));
+                outputPath: outPath,
+                templates: templatesSnapshot));
 
             SetVacationFlowsBannerProgress("Importing", $"Generated v{pkg.SolutionVersion}. Importing to Power Automate…");
             var importProgress = new Progress<string>(message =>
@@ -2080,6 +2084,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 if (!perDayAllMatch) allMatch = false;
             }
 
+            var templatesSection = FormatTemplatesComparison(result.Templates, out var templatesMatch);
+            if (!templatesMatch) allMatch = false;
+
             var headline = allMatch ? "✅ Local and cloud match." : "⚠️ Local and cloud differ.";
 
             // Short preview so the dialog stays readable even when the user
@@ -2115,6 +2122,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                           ? "  Per-day hours (from cloud sidecar metadata):\n" + string.Join("\n", perDayLines) + "\n\n"
                           : "  Per-day hours: (cloud flow lacks sidecar metadata — re-run 'Generate & Import Solution' once to enable)\n\n") +
                        replySection +
+                       templatesSection +
                        (allMatch
                           ? "Everything we can check looks consistent."
                           : "If local is the authoritative version, click 'Generate & Import Solution' to push it to the cloud.");
@@ -2122,16 +2130,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
             SetCloudScheduleFlowBannerDetailOnly(
                 allMatch ? "Local and cloud match." : "Local and cloud differ — see dialog.");
             StatusMessage = string.Empty;
-            if (!allMatch && (result.PerDaySchedule != null || result.InternalReplyHtml != null || result.ExternalReplyHtml != null))
+            if (!allMatch && (result.PerDaySchedule != null || result.InternalReplyHtml != null || result.ExternalReplyHtml != null || result.Templates != null))
             {
                 var loadFromCloud = await _dialog.ConfirmAsync(
                     "Compare with cloud",
-                    body + "\n\nOr click 'Load from cloud' to restore the cloud flow's schedule and reply messages onto this PC.",
+                    body + "\n\nOr click 'Load from cloud' to restore the cloud flow's schedule, reply messages, and templates onto this PC.",
                     accept: "Load from cloud",
                     cancel: "Close");
                 if (loadFromCloud)
                 {
                     ApplyCloudScheduleToLocal(result);
+                    await RestoreTemplatesFromCloudAsync(result.Templates);
                 }
             }
             else
@@ -2231,7 +2240,74 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         RefreshOofStatusBar();
-        SetCloudScheduleFlowBannerDetailOnly("✅ Loaded schedule and reply messages from cloud.");
+        SetCloudScheduleFlowBannerDetailOnly("✅ Loaded schedule, reply messages, and templates from cloud.");
+    }
+
+    private string FormatTemplatesComparison(IReadOnlyList<OofTemplate>? cloudTemplates, out bool templatesMatch)
+    {
+        if (cloudTemplates == null)
+        {
+            templatesMatch = true;
+            return "  Templates: (cloud flow has no saved templates yet — re-run Set up in cloud once to include)\n\n";
+        }
+
+        var localList = Templates.ToList();
+        templatesMatch = localList.Count == cloudTemplates.Count;
+        if (templatesMatch)
+        {
+            foreach (var ct in cloudTemplates)
+            {
+                var lt = localList.FirstOrDefault(l => string.Equals(l.Name, ct.Name, StringComparison.OrdinalIgnoreCase));
+                if (lt == null ||
+                    !string.Equals(ReplyHtml.Normalize(ReplyHtml.EnsureHtml(lt.InternalReply)), ReplyHtml.Normalize(ReplyHtml.EnsureHtml(ct.InternalReply)), StringComparison.Ordinal) ||
+                    !string.Equals(ReplyHtml.Normalize(ReplyHtml.EnsureHtml(lt.ExternalReply)), ReplyHtml.Normalize(ReplyHtml.EnsureHtml(ct.ExternalReply)), StringComparison.Ordinal))
+                {
+                    templatesMatch = false;
+                    break;
+                }
+            }
+        }
+
+        static string FormatList(IReadOnlyList<OofTemplate> list) =>
+            list.Count == 0 ? "(none)" : $"{list.Count} ({string.Join(", ", list.Select(t => t.Name))})";
+
+        return "  Templates (from cloud sidecar metadata):\n" +
+               $"    Local: {FormatList(localList)}\n" +
+               $"    Cloud: {FormatList(cloudTemplates)}   {(templatesMatch ? "✓" : "✗")}\n\n";
+    }
+
+    private async Task RestoreTemplatesFromCloudAsync(IReadOnlyList<OofTemplate>? cloudTemplates)
+    {
+        if (cloudTemplates is not { Count: > 0 }) return;
+
+        var existing = await _templateService.GetAllTemplatesAsync();
+        foreach (var ct in cloudTemplates)
+        {
+            if (ct == null || string.IsNullOrWhiteSpace(ct.Name)) continue;
+            var match = existing.FirstOrDefault(e => string.Equals(e.Name, ct.Name, StringComparison.OrdinalIgnoreCase));
+            if (match != null)
+            {
+                match.InternalReply = ct.InternalReply;
+                match.ExternalReply = ct.ExternalReply;
+                match.ExternalAudienceAll = ct.ExternalAudienceAll;
+                await _templateService.SaveTemplateAsync(match);
+            }
+            else
+            {
+                var added = new OofTemplate
+                {
+                    Name = ct.Name.Trim(),
+                    InternalReply = ct.InternalReply,
+                    ExternalReply = ct.ExternalReply,
+                    ExternalAudienceAll = ct.ExternalAudienceAll,
+                };
+                await _templateService.SaveTemplateAsync(added);
+            }
+        }
+
+        var refreshed = await _templateService.GetAllTemplatesAsync();
+        Templates.Clear();
+        foreach (var t in refreshed) Templates.Add(t);
     }
 
     /// <summary>
@@ -2314,6 +2390,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (startResult.InternalReplyHtml != null && !internalMatches) allMatch = false;
             if (startResult.ExternalReplyHtml != null && !externalMatches) allMatch = false;
             if (startResult.ExternalAudience != null && !audienceMatches) allMatch = false;
+            var templatesSection = FormatTemplatesComparison(startResult.Templates, out var templatesMatch);
+            if (!templatesMatch) allMatch = false;
             var headline = allMatch ? "✅ Local and cloud vacation match." : "⚠️ Local and cloud vacation differ.";
 
             static string Preview(string? html)
@@ -2342,6 +2420,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                        $"    Local: {localEnd:yyyy-MM-dd HH:mm}\n" +
                        $"    Cloud: {FormatCloud(endResult)}   {(endMatches ? "✓" : "✗")}\n\n" +
                        replySection +
+                       templatesSection +
                        (allMatch
                           ? "Cloud-side trigger times and reply text line up with your local state."
                           : "If local is the authoritative version, click 🏖️ Set up vacation in cloud to re-import.");
@@ -2349,11 +2428,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             SetVacationFlowsBannerDetailOnly(
                 allMatch ? "Local and cloud vacation match." : "Local and cloud vacation differ — see dialog.");
             StatusMessage = string.Empty;
-            if (!allMatch && (startResult.TriggerStartTimeUtc.HasValue || endResult.TriggerStartTimeUtc.HasValue || startResult.InternalReplyHtml != null || startResult.ExternalReplyHtml != null))
+            if (!allMatch && (startResult.TriggerStartTimeUtc.HasValue || endResult.TriggerStartTimeUtc.HasValue || startResult.InternalReplyHtml != null || startResult.ExternalReplyHtml != null || startResult.Templates != null))
             {
                 var loadFromCloud = await _dialog.ConfirmAsync(
                     "Compare vacation with cloud",
-                    body + "\n\nOr click 'Load from cloud' to restore the cloud vacation window and reply messages onto this PC.",
+                    body + "\n\nOr click 'Load from cloud' to restore the cloud vacation window, reply messages, and templates onto this PC.",
                     accept: "Load from cloud",
                     cancel: "Close");
                 if (loadFromCloud)
@@ -2398,8 +2477,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         _suppressDirtyTracking = false;
                     }
                     SaveLastVacationWindow();
+                    await RestoreTemplatesFromCloudAsync(startResult.Templates);
                     RefreshOofStatusBar();
-                    SetVacationFlowsBannerDetailOnly("✅ Loaded vacation window and reply messages from cloud.");
+                    SetVacationFlowsBannerDetailOnly("✅ Loaded vacation window, reply messages, and templates from cloud.");
                 }
             }
             else
