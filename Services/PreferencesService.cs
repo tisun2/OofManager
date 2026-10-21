@@ -5,10 +5,74 @@ namespace OofManager.Wpf.Services;
 
 public class PreferencesService : IPreferencesService
 {
-    private static readonly string FilePath = Path.Combine(
+    private static readonly string LocalFallbackPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "OofManager",
         "preferences.json");
+
+    private static readonly string FilePath = ResolvePreferencesFilePath();
+
+    /// <summary>
+    /// Resolves the synced storage directory, preferring OneDrive for Business
+    /// (<c>%OneDriveCommercial%\OofManager</c>) or personal OneDrive
+    /// (<c>%OneDrive%\OofManager</c>) when present on this machine, and falling
+    /// back to <c>%LOCALAPPDATA%\OofManager</c> otherwise.
+    /// </summary>
+    public static string ResolveSyncedDataDirectory(string? oneDriveRootOverride = null, string? localAppDataOverride = null)
+    {
+        var candidates = oneDriveRootOverride != null
+            ? new[] { oneDriveRootOverride }
+            : new[]
+            {
+                Environment.GetEnvironmentVariable("OneDriveCommercial"),
+                Environment.GetEnvironmentVariable("OneDrive"),
+                Environment.GetEnvironmentVariable("OneDriveConsumer"),
+            };
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+            var trimmed = candidate!.Trim();
+            try
+            {
+                if (Directory.Exists(trimmed))
+                    return Path.Combine(trimmed, "OofManager");
+            }
+            catch { }
+        }
+
+        var localRoot = !string.IsNullOrWhiteSpace(localAppDataOverride)
+            ? localAppDataOverride!
+            : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine(localRoot, "OofManager");
+    }
+
+    public static string ResolvePreferencesFilePath(string? oneDriveRootOverride = null, string? localAppDataOverride = null)
+    {
+        var syncedDir = ResolveSyncedDataDirectory(oneDriveRootOverride, localAppDataOverride);
+        var targetPath = Path.Combine(syncedDir, "preferences.json");
+        var localRoot = !string.IsNullOrWhiteSpace(localAppDataOverride)
+            ? localAppDataOverride!
+            : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var legacyLocalPath = Path.Combine(localRoot, "OofManager", "preferences.json");
+
+        // One-time seamless migration: if OneDrive is active and doesn't have
+        // preferences.json yet, seed it from %LOCALAPPDATA%\OofManager\preferences.json.
+        if (!string.Equals(targetPath, legacyLocalPath, StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!File.Exists(targetPath) && File.Exists(legacyLocalPath))
+                {
+                    Directory.CreateDirectory(syncedDir);
+                    File.Copy(legacyLocalPath, targetPath, overwrite: false);
+                }
+            }
+            catch { }
+        }
+
+        return targetPath;
+    }
 
     private Dictionary<string, JsonElement> _data = new();
     private bool _loaded;
@@ -24,9 +88,12 @@ public class PreferencesService : IPreferencesService
             if (_loaded) return;
             try
             {
-                if (File.Exists(FilePath))
+                var pathToRead = File.Exists(FilePath)
+                    ? FilePath
+                    : (File.Exists(LocalFallbackPath) ? LocalFallbackPath : FilePath);
+                if (File.Exists(pathToRead))
                 {
-                    var json = File.ReadAllText(FilePath);
+                    var json = File.ReadAllText(pathToRead);
                     _data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json) ?? new();
                 }
             }

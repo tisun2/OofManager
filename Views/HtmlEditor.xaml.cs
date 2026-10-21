@@ -100,6 +100,14 @@ public partial class HtmlEditor : UserControl
         Editor.AddHandler(Hyperlink.RequestNavigateEvent, new RequestNavigateEventHandler(OnRequestNavigate));
 
         Editor.PreviewKeyDown += OnEditorPreviewKeyDown;
+        Editor.LostKeyboardFocus += (_, _) =>
+        {
+            if (_pushTimer.IsEnabled)
+            {
+                _pushTimer.Stop();
+                PushHtml();
+            }
+        };
 
         Loaded += (_, _) =>
         {
@@ -140,6 +148,8 @@ public partial class HtmlEditor : UserControl
         var editor = (HtmlEditor)d;
         if (editor._suppressLoad) return; // echo of our own push
 
+        editor._pushTimer.Stop();
+        editor._pastePending = false;
         editor._suppressPush = true;
         try
         {

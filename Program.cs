@@ -77,18 +77,15 @@ internal static class Program
     }
 
     /// <summary>
-    /// Reads Auth.LastSignedInUpn from %LOCALAPPDATA%\OofManager\preferences.json
-    /// directly, bypassing the DI-resolved PreferencesService so we can use the
-    /// value before App.OnStartup runs. Returns null on any error.
+    /// Reads Auth.LastSignedInUpn from the synced (OneDrive or %LOCALAPPDATA%)
+    /// preferences.json directly, bypassing the DI-resolved PreferencesService
+    /// so we can use the value before App.OnStartup runs. Returns null on any error.
     /// </summary>
     private static string? ReadCachedSignInUpn()
     {
         try
         {
-            var path = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "OofManager",
-                "preferences.json");
+            var path = Services.PreferencesService.ResolvePreferencesFilePath();
             if (!System.IO.File.Exists(path)) return null;
             using var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(path));
             if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;

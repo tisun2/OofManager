@@ -643,9 +643,37 @@ public partial class MainViewModel : ObservableObject, IDisposable
         // Templates saved before the editor became rich-text hold plain text;
         // ToEditorFragment upgrades those in place so an old template still
         // loads as valid (if unformatted) markup.
-        InternalReply = ReplyHtml.ToEditorFragment(template.InternalReply);
-        ExternalReply = ReplyHtml.ToEditorFragment(template.ExternalReply);
+        var nextInternal = ReplyHtml.ToEditorFragment(template.InternalReply);
+        var nextExternal = ReplyHtml.ToEditorFragment(template.ExternalReply);
+
+        SetEditorRepliesForced(nextInternal, nextExternal);
         StatusMessage = $"Loaded template \u201c{template.Name}\u201d";
+    }
+
+    /// <summary>
+    /// Updates <see cref="InternalReply"/> and <see cref="ExternalReply"/> while
+    /// guaranteeing that WPF's <c>PropertyChanged</c> + <c>HtmlEditor.OnHtmlPropertyChanged</c>
+    /// always fire, even when the ViewModel property already held the same string
+    /// (for example when the user edited the RichTextBox and clicked Load before
+    /// the debounce timer pushed, or reloaded the same template/cloud reply).
+    /// </summary>
+    private void SetEditorRepliesForced(string? nextInternal, string? nextExternal)
+    {
+        _suppressModeReplySwap = true;
+        try
+        {
+            if (nextInternal != null && !string.IsNullOrEmpty(nextInternal) && string.Equals(InternalReply, nextInternal, StringComparison.Ordinal))
+                InternalReply = string.Empty;
+            if (nextExternal != null && !string.IsNullOrEmpty(nextExternal) && string.Equals(ExternalReply, nextExternal, StringComparison.Ordinal))
+                ExternalReply = string.Empty;
+        }
+        finally
+        {
+            _suppressModeReplySwap = false;
+        }
+
+        if (nextInternal != null) InternalReply = nextInternal;
+        if (nextExternal != null) ExternalReply = nextExternal;
     }
 
     [RelayCommand]
@@ -2094,7 +2122,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
             SetCloudScheduleFlowBannerDetailOnly(
                 allMatch ? "Local and cloud match." : "Local and cloud differ — see dialog.");
             StatusMessage = string.Empty;
-            await _dialog.AlertAsync("Compare with cloud", body);
+            if (!allMatch && (result.PerDaySchedule != null || result.InternalReplyHtml != null || result.ExternalReplyHtml != null))
+            {
+                var loadFromCloud = await _dialog.ConfirmAsync(
+                    "Compare with cloud",
+                    body + "\n\nOr click 'Load from cloud' to restore the cloud flow's schedule and reply messages onto this PC.",
+                    accept: "Load from cloud",
+                    cancel: "Close");
+                if (loadFromCloud)
+                {
+                    ApplyCloudScheduleToLocal(result);
+                }
+            }
+            else
+            {
+                await _dialog.AlertAsync("Compare with cloud", body);
+            }
         }
         catch (Exception ex)
         {
@@ -2106,6 +2149,89 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             IsBusy = false;
         }
+    }
+
+    private void ApplyCloudScheduleToLocal(CloudScheduleDefinitionResult result)
+    {
+        _suppressDirtyTracking = true;
+        try
+        {
+            if (result.PerDaySchedule != null)
+            {
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Monday, out var mon))
+                {
+                    IsMondayWorkday = mon.IsWorkday;
+                    MondayStartTime = SnapToHalfHour(mon.Start);
+                    MondayEndTime = SnapToHalfHour(mon.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Tuesday, out var tue))
+                {
+                    IsTuesdayWorkday = tue.IsWorkday;
+                    TuesdayStartTime = SnapToHalfHour(tue.Start);
+                    TuesdayEndTime = SnapToHalfHour(tue.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Wednesday, out var wed))
+                {
+                    IsWednesdayWorkday = wed.IsWorkday;
+                    WednesdayStartTime = SnapToHalfHour(wed.Start);
+                    WednesdayEndTime = SnapToHalfHour(wed.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Thursday, out var thu))
+                {
+                    IsThursdayWorkday = thu.IsWorkday;
+                    ThursdayStartTime = SnapToHalfHour(thu.Start);
+                    ThursdayEndTime = SnapToHalfHour(thu.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Friday, out var fri))
+                {
+                    IsFridayWorkday = fri.IsWorkday;
+                    FridayStartTime = SnapToHalfHour(fri.Start);
+                    FridayEndTime = SnapToHalfHour(fri.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Saturday, out var sat))
+                {
+                    IsSaturdayWorkday = sat.IsWorkday;
+                    SaturdayStartTime = SnapToHalfHour(sat.Start);
+                    SaturdayEndTime = SnapToHalfHour(sat.End);
+                }
+                if (result.PerDaySchedule.TryGetValue(DayOfWeek.Sunday, out var sun))
+                {
+                    IsSundayWorkday = sun.IsWorkday;
+                    SundayStartTime = SnapToHalfHour(sun.Start);
+                    SundayEndTime = SnapToHalfHour(sun.End);
+                }
+            }
+
+            using (_prefs.BeginBatch())
+            {
+                string? internalFrag = null;
+                string? externalFrag = null;
+                if (result.InternalReplyHtml != null)
+                {
+                    internalFrag = ReplyHtml.ToEditorFragment(result.InternalReplyHtml);
+                    _prefs.Set(GetReplyPrefKey(internalReply: true, weekly: true), internalFrag);
+                }
+                if (result.ExternalReplyHtml != null)
+                {
+                    externalFrag = ReplyHtml.ToEditorFragment(result.ExternalReplyHtml);
+                    _prefs.Set(GetReplyPrefKey(internalReply: false, weekly: true), externalFrag);
+                }
+                if (IsScheduleMode)
+                {
+                    SetEditorRepliesForced(internalFrag, externalFrag);
+                }
+            }
+
+            SaveWorkSchedulePreferences();
+        }
+        finally
+        {
+            _suppressDirtyTracking = false;
+            HasUnsavedScheduleChanges = false;
+        }
+
+        RefreshOofStatusBar();
+        SetCloudScheduleFlowBannerDetailOnly("✅ Loaded schedule and reply messages from cloud.");
     }
 
     /// <summary>
@@ -2223,7 +2349,63 @@ public partial class MainViewModel : ObservableObject, IDisposable
             SetVacationFlowsBannerDetailOnly(
                 allMatch ? "Local and cloud vacation match." : "Local and cloud vacation differ — see dialog.");
             StatusMessage = string.Empty;
-            await _dialog.AlertAsync("Compare vacation with cloud", body);
+            if (!allMatch && (startResult.TriggerStartTimeUtc.HasValue || endResult.TriggerStartTimeUtc.HasValue || startResult.InternalReplyHtml != null || startResult.ExternalReplyHtml != null))
+            {
+                var loadFromCloud = await _dialog.ConfirmAsync(
+                    "Compare vacation with cloud",
+                    body + "\n\nOr click 'Load from cloud' to restore the cloud vacation window and reply messages onto this PC.",
+                    accept: "Load from cloud",
+                    cancel: "Close");
+                if (loadFromCloud)
+                {
+                    _suppressDirtyTracking = true;
+                    try
+                    {
+                        if (startResult.TriggerStartTimeUtc is DateTimeOffset sUtc)
+                        {
+                            var sLocal = sUtc.ToLocalTime().DateTime;
+                            VacationStartDate = sLocal.Date;
+                            VacationStartTime = SnapToHalfHour(sLocal.TimeOfDay);
+                        }
+                        if (endResult.TriggerStartTimeUtc is DateTimeOffset eUtc)
+                        {
+                            var eLocal = eUtc.ToLocalTime().DateTime;
+                            VacationEndDate = eLocal.Date;
+                            VacationEndTime = SnapToHalfHour(eLocal.TimeOfDay);
+                        }
+                        using (_prefs.BeginBatch())
+                        {
+                            string? internalFrag = null;
+                            string? externalFrag = null;
+                            if (startResult.InternalReplyHtml != null)
+                            {
+                                internalFrag = ReplyHtml.ToEditorFragment(startResult.InternalReplyHtml);
+                                _prefs.Set(GetReplyPrefKey(internalReply: true, weekly: false), internalFrag);
+                            }
+                            if (startResult.ExternalReplyHtml != null)
+                            {
+                                externalFrag = ReplyHtml.ToEditorFragment(startResult.ExternalReplyHtml);
+                                _prefs.Set(GetReplyPrefKey(internalReply: false, weekly: false), externalFrag);
+                            }
+                            if (IsManualMode)
+                            {
+                                SetEditorRepliesForced(internalFrag, externalFrag);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _suppressDirtyTracking = false;
+                    }
+                    SaveLastVacationWindow();
+                    RefreshOofStatusBar();
+                    SetVacationFlowsBannerDetailOnly("✅ Loaded vacation window and reply messages from cloud.");
+                }
+            }
+            else
+            {
+                await _dialog.AlertAsync("Compare vacation with cloud", body);
+            }
         }
         catch (Exception ex)
         {

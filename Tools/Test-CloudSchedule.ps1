@@ -240,6 +240,40 @@ try {
     [OofManager.Wpf.Services.FlowDocumentHtml]::Load($flowDoc, '<p>Hello <b>world</b></p>')
     Assert-Equal ([OofManager.Wpf.Services.FlowDocumentHtml]::IsEmpty($flowDoc)) $false 'Populated FlowDocument IsEmpty is false'
 
+    # Verify OneDrive synced storage path resolution + legacy preferences migration + TemplateService JSON storage.
+    $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("OofManager-OneDriveTest-" + [Guid]::NewGuid().ToString('N'))
+    $fakeOneDrive = Join-Path $testRoot 'OneDrive - Test'
+    $fakeLocalApp = Join-Path $testRoot 'LocalAppData'
+    $legacyOofDir = Join-Path $fakeLocalApp 'OofManager'
+    try {
+        $null = New-Item -ItemType Directory -Path $fakeOneDrive -Force
+        $null = New-Item -ItemType Directory -Path $legacyOofDir -Force
+        $legacyPrefsFile = Join-Path $legacyOofDir 'preferences.json'
+        [IO.File]::WriteAllText($legacyPrefsFile, '{"WorkSchedule.Monday":true}')
+
+        $resolvedPrefsPath = [OofManager.Wpf.Services.PreferencesService]::ResolvePreferencesFilePath($fakeOneDrive, $fakeLocalApp)
+        $expectedOneDrivePrefs = Join-Path $fakeOneDrive 'OofManager\preferences.json'
+        Assert-Equal $resolvedPrefsPath $expectedOneDrivePrefs 'OneDrive preferences path resolution'
+        Assert-Equal (Test-Path -LiteralPath $expectedOneDrivePrefs) $true 'Legacy preferences.json auto-migrated to OneDrive'
+
+        $templateJsonPath = Join-Path $fakeOneDrive 'OofManager\templates.json'
+        $templateSvc = New-Object OofManager.Wpf.Services.TemplateService($templateJsonPath, '')
+        $tpl = New-Object OofManager.Wpf.Models.OofTemplate
+        $tpl.Name = 'Synced Template'
+        $tpl.InternalReply = '<p>Internal</p>'
+        $tpl.ExternalReply = '<p>External</p>'
+        $templateSvc.SaveTemplateAsync($tpl).GetAwaiter().GetResult()
+        Assert-Equal (Test-Path -LiteralPath $templateJsonPath) $true 'templates.json created in OneDrive folder'
+
+        $templateSvc2 = New-Object OofManager.Wpf.Services.TemplateService($templateJsonPath, '')
+        $allTemplates = $templateSvc2.GetAllTemplatesAsync().GetAwaiter().GetResult()
+        Assert-Equal $allTemplates.Count 1 'Reloaded template count from templates.json'
+        Assert-Equal $allTemplates[0].Name 'Synced Template' 'Reloaded template name from templates.json'
+    }
+    finally {
+        if (Test-Path -LiteralPath $testRoot) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
+    }
+
     Write-Host 'Cloud schedule regression checks passed.'
 }
 finally {
